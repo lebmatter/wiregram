@@ -29,6 +29,9 @@ func formatDuration(seconds int) string {
 }
 
 func formatMedia(media tg.MessageMediaClass) string {
+	if label := expiringMediaLabel(media); label != "" {
+		return "[" + label + " — open in an official Telegram app]"
+	}
 	switch m := media.(type) {
 	case nil, *tg.MessageMediaEmpty:
 		return ""
@@ -60,6 +63,23 @@ func formatMedia(media tg.MessageMediaClass) string {
 	default:
 		return "[unsupported media]"
 	}
+}
+
+func expiringMediaLabel(media tg.MessageMediaClass) string {
+	var ttl int
+	switch m := media.(type) {
+	case *tg.MessageMediaPhoto:
+		ttl = m.TTLSeconds
+	case *tg.MessageMediaDocument:
+		ttl = m.TTLSeconds
+	}
+	if ttl == 0x7fffffff {
+		return "view-once media"
+	}
+	if ttl != 0 {
+		return "self-destructing media"
+	}
+	return ""
 }
 
 func photoSize(sizes []tg.PhotoSizeClass) (int, int, int64) {

@@ -104,6 +104,10 @@ open on demand. Static/video stickers work when their format is supported by
 mpv. TGS/Lottie stickers, PDFs, and other non-playable attachments remain text
 representations. No attachment is downloaded just by displaying or selecting it.
 
+View-once and self-destructing photos, videos, and audio are labelled and blocked
+before download. Open them in an official Telegram app; mintg does not yet
+implement their consumption acknowledgements and expiry lifecycle.
+
 Enter opens media in the current terminal. Esc, Ctrl+C, or Ctrl+D closes it and
 returns to the chat. Mintg owns stdin throughout playback; other keys keep the
 inactivity timer alive but do not enter the message draft. Incoming messages
