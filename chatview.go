@@ -177,6 +177,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}()
 	readFailed := false
 	locked := false
+	var emojiEditor *editor
+	var emojiQuery []rune
+	var emojiChoices []emojiOption
+	emojiSelected := 0
 	var confirmDelete *bool
 	var deleteDone <-chan error
 	var editEditor *editor
@@ -213,9 +217,48 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if locked || mediaDone != nil {
 			return
 		}
+		if emojiEditor != nil {
+			hasRecent := len(emojiQuery) == 0 && len(c.recentEmoji()) > 0
+			t.unlock(emojiPickerLines(emojiChoices, emojiSelected, hasRecent))
+			return
+		}
 		lines, readID := c.selectedLines(messages, entry, selected)
 		t.unlock(lines)
 		reads.observe(readID)
+	}
+	finishEmoji := func(value string) error {
+		if emojiEditor == nil {
+			return nil
+		}
+		emojiEditor.close()
+		emojiEditor = nil
+		emojiQuery = nil
+		t.mu.Lock()
+		t.editor = e.line
+		t.mu.Unlock()
+		if value != "" {
+			c.rememberEmoji(value)
+			if _, err := io.WriteString(e.input, value); err != nil {
+				return fmt.Errorf("insert emoji: %w", err)
+			}
+		}
+		return nil
+	}
+	defer func() { _ = finishEmoji("") }()
+	startEmoji := func() {
+		picker, err := t.newEditor("emoji> ", false, nil)
+		if err != nil {
+			t.report(err)
+			return
+		}
+		emojiEditor = picker
+		emojiQuery = nil
+		emojiChoices = c.emojiChoices("")
+		emojiSelected = 0
+		t.mu.Lock()
+		t.editor = picker.line
+		t.mu.Unlock()
+		render()
 	}
 	stopMedia := func() {
 		probing = false
@@ -486,6 +529,45 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				continue
 			}
+			if emojiEditor != nil {
+				switch key {
+				case "\x1b", "\x03", "\x04", "\x1bm", "\x1bM":
+					if err := finishEmoji(""); err != nil {
+						return err
+					}
+				case "\x1b[A", "\x1bOA":
+					if emojiSelected > 0 {
+						emojiSelected--
+					}
+				case "\x1b[B", "\x1bOB":
+					if emojiSelected+1 < len(emojiChoices) {
+						emojiSelected++
+					}
+				case "\r", "\n":
+					if emojiSelected < len(emojiChoices) {
+						if err := finishEmoji(emojiChoices[emojiSelected].value); err != nil {
+							return err
+						}
+					}
+				case "\x7f", "\x08":
+					if len(emojiQuery) > 0 {
+						emojiQuery = emojiQuery[:len(emojiQuery)-1]
+					}
+				case "\x15":
+					emojiQuery = nil
+				default:
+					if !strings.HasPrefix(key, "\x1b") {
+						emojiQuery = appendQuery(emojiQuery, key)
+					}
+				}
+				if emojiEditor != nil {
+					emojiChoices = c.emojiChoices(string(emojiQuery))
+					emojiSelected = min(emojiSelected, max(0, len(emojiChoices)-1))
+					emojiEditor.line.Operation.SetBuffer(string(emojiQuery))
+				}
+				render()
+				continue
+			}
 			if confirmDelete != nil {
 				revoke := *confirmDelete
 				confirmDelete = nil
@@ -504,6 +586,9 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			switch key {
 			case "\x1b", "\x03", "\x04":
 				return nil
+			case "\x1bm", "\x1bM":
+				startEmoji()
+				continue
 			case "\x1bd", "\x1bD", "\x1b\x04":
 				revoke := key == "\x1b\x04"
 				if entry.key.kind != 'u' {

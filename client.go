@@ -49,6 +49,7 @@ type client struct {
 	frequentUsers  []*tg.User
 	contactsLoaded bool
 	frequentLoaded bool
+	emojiRecent    []string
 	active         peerKey
 	pending        []*tg.Message
 	changed        chan struct{}
