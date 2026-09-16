@@ -54,10 +54,16 @@ mode `0600`. Keep both private; never commit them.
 | Chat list | Up / `k` | Select previous chat |
 | Chat list | Down / `j` | Select next chat |
 | Chat list | Enter | Open selected chat |
+| Chat list | `/` | Search users |
 | Chat list | `r` | Refresh chats |
 | Chat list | Alt+D | Delete selected private chat only for you |
 | Chat list | Ctrl+Alt+D | Delete selected private chat for both sides |
 | Chat list | `q` / Ctrl+D | Quit |
+| User search | Type | Filter contacts and search public usernames |
+| User search | Up / Down | Select previous / next user |
+| User search | Enter | Open selected user's chat |
+| User search | Esc | Clear the query, then return to the chat list |
+| User search | Ctrl+C / Ctrl+D | Return to the chat list |
 | Chat | Up / Down | Select previous / next message |
 | Chat | Alt+Up / Alt+Down | Previous / next input-history entry |
 | Chat | Alt+E | Edit selected outgoing text message |

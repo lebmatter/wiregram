@@ -97,6 +97,11 @@ func renderChats(out io.Writer, chats []chat, selected int) {
 	if len(chats) == 0 {
 		fmt.Fprintln(out, "No chats. Press r to refresh or q to quit.")
 	}
+	marker := " "
+	if selected == len(chats) {
+		marker = ">"
+	}
+	fmt.Fprintf(out, "%s     Search users…\n", marker)
 }
 
 // Input is already raw; the application owns terminal state across both modes.
@@ -134,13 +139,15 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat) (int
 				return -1, false, nil
 			case "r":
 				return -1, true, nil
+			case "/":
+				return len(chats), false, nil
 			case "k", "\x1b[A", "\x1bOA":
 				if selected > 0 {
 					selected--
 				}
 				renderChats(t.out(), chats, selected)
 			case "j", "\x1b[B", "\x1bOB":
-				if selected+1 < len(chats) {
+				if selected < len(chats) {
 					selected++
 				}
 				renderChats(t.out(), chats, selected)
@@ -168,9 +175,7 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat) (int
 				}
 				t.report(fmt.Errorf("Delete chat with %s %s? Press y to confirm; any other key cancels.", plain(entry.title), scope))
 			case "\r", "\n":
-				if len(chats) > 0 {
-					return selected, false, nil
-				}
+				return selected, false, nil
 			}
 		}
 	}

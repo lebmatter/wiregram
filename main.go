@@ -104,7 +104,19 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 		if index < 0 {
 			return nil
 		}
-		entry := entries[index]
+		var entry chat
+		if index == len(entries) {
+			var selected bool
+			entry, selected, err = c.searchUsers(ctx, t, entries)
+			if err != nil {
+				return err
+			}
+			if !selected {
+				continue
+			}
+		} else {
+			entry = entries[index]
+		}
 		history := histories[entry.key]
 		if history == nil {
 			history = make([]string, 0)

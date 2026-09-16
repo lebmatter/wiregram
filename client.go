@@ -38,17 +38,21 @@ func keyOf(peer tg.PeerClass) peerKey {
 }
 
 type client struct {
-	telegram *telegram.Client
-	updates  *updates.Manager
-	api      *tg.Client
-	mu       sync.Mutex
-	users    map[int64]*tg.User
-	chats    map[peerKey]string
-	reads    map[peerKey]readState
-	active   peerKey
-	pending  []*tg.Message
-	changed  chan struct{}
-	report   func(error)
+	telegram       *telegram.Client
+	updates        *updates.Manager
+	api            *tg.Client
+	mu             sync.Mutex
+	users          map[int64]*tg.User
+	chats          map[peerKey]string
+	reads          map[peerKey]readState
+	contactUsers   []*tg.User
+	frequentUsers  []*tg.User
+	contactsLoaded bool
+	frequentLoaded bool
+	active         peerKey
+	pending        []*tg.Message
+	changed        chan struct{}
+	report         func(error)
 }
 
 func newClient(cfg config, dir string, report func(error)) (*client, error) {
@@ -104,6 +108,9 @@ func (c *client) remember(users []tg.UserClass, chats []tg.ChatClass) {
 	defer c.mu.Unlock()
 	for _, value := range users {
 		if u, ok := value.(*tg.User); ok {
+			if previous := c.users[u.ID]; previous != nil && !previous.Min && u.Min {
+				continue
+			}
 			c.users[u.ID] = u
 		}
 	}
