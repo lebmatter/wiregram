@@ -157,6 +157,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}
 	selected := len(messages) - 1
 	seen := make(map[int]bool)
+	changedMessages := make(map[int]bool)
 	for _, m := range messages {
 		seen[m.ID] = true
 	}
@@ -181,6 +182,9 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var emojiQuery []rune
 	var emojiChoices []emojiOption
 	emojiSelected := 0
+	emojiReactionMode := false
+	var emojiTarget *tg.Message
+	var reactionDone <-chan reactionResult
 	var confirmDelete *bool
 	var deleteDone <-chan error
 	var editEditor *editor
@@ -219,10 +223,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		}
 		if emojiEditor != nil {
 			hasRecent := len(emojiQuery) == 0 && len(c.recentEmoji()) > 0
-			t.unlock(emojiPickerLines(emojiChoices, emojiSelected, hasRecent))
+			t.unlock(emojiPickerLines(emojiChoices, emojiSelected, hasRecent, emojiReactionMode))
 			return
 		}
-		lines, readID := c.selectedLines(messages, entry, selected)
+		acknowledgeSelected(messages, selected, changedMessages)
+		lines, readID := c.selectedLines(messages, entry, selected, changedMessages)
 		t.unlock(lines)
 		reads.observe(readID)
 	}
@@ -233,6 +238,8 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		emojiEditor.close()
 		emojiEditor = nil
 		emojiQuery = nil
+		emojiReactionMode = false
+		emojiTarget = nil
 		t.mu.Lock()
 		t.editor = e.line
 		t.mu.Unlock()
@@ -245,7 +252,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		return nil
 	}
 	defer func() { _ = finishEmoji("") }()
-	startEmoji := func() {
+	startEmoji := func(reactionMode bool) {
 		picker, err := t.newEditor("emoji> ", false, nil)
 		if err != nil {
 			t.report(err)
@@ -253,7 +260,14 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		}
 		emojiEditor = picker
 		emojiQuery = nil
-		emojiChoices = c.emojiChoices("")
+		emojiReactionMode = reactionMode
+		if reactionMode {
+			emojiTarget = messages[selected]
+			emojiChoices = c.reactionChoices("")
+		} else {
+			emojiTarget = nil
+			emojiChoices = c.emojiChoices("")
+		}
 		emojiSelected = 0
 		t.mu.Lock()
 		t.editor = picker.line
@@ -348,6 +362,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if message.ID != 0 && seen[message.ID] {
 			for i, previous := range messages {
 				if previous.ID == message.ID && message.EditDate >= previous.EditDate {
+					visibleEdit := message.EditDate > 0 && (message.Message != previous.Message || formatMedia(message.Media) != formatMedia(previous.Media))
+					if visibleEdit && i != selected {
+						changedMessages[message.ID] = true
+					}
 					messages[i] = message
 					render()
 					break
@@ -364,6 +382,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			selected = len(messages) - 1
 		}
 		if len(messages) > 30 {
+			delete(changedMessages, messages[0].ID)
 			messages = messages[1:]
 			selected = max(0, selected-1)
 		}
@@ -424,6 +443,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 						break
 					}
 				}
+				delete(changedMessages, editing.ID)
 				finishEdit()
 			}
 			render()
@@ -435,6 +455,24 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				continue
 			}
 			return nil
+		case result := <-reactionDone:
+			reactionDone = nil
+			if result.err != nil {
+				t.report(result.err)
+				render()
+				continue
+			}
+			for index, message := range messages {
+				if message.ID == result.messageID {
+					copy := *message
+					copy.SetReactions(result.reactions)
+					messages[index] = &copy
+					delete(changedMessages, result.messageID)
+					break
+				}
+			}
+			c.rememberEmoji(result.emoticon)
+			render()
 		case next <- text:
 			queue = queue[1:]
 		case result := <-sent:
@@ -444,8 +482,25 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				appendMessage(result.message)
 			}
 		case <-c.changed:
-			for _, m := range c.drain() {
+			incoming, reactions := c.drain()
+			for _, m := range incoming {
 				appendMessage(m)
+			}
+			for _, update := range reactions {
+				for index, message := range messages {
+					if message.ID == update.messageID {
+						if !visibleReactionChange(message, update.reactions) {
+							break
+						}
+						copy := *message
+						copy.SetReactions(update.reactions)
+						messages[index] = &copy
+						if index != selected {
+							changedMessages[message.ID] = true
+						}
+						break
+					}
+				}
 			}
 			render()
 		case <-probe.C:
@@ -545,10 +600,31 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 					}
 				case "\r", "\n":
 					if emojiSelected < len(emojiChoices) {
-						if err := finishEmoji(emojiChoices[emojiSelected].value); err != nil {
+						value := emojiChoices[emojiSelected].value
+						if emojiReactionMode {
+							target := emojiTarget
+							if err := finishEmoji(""); err != nil {
+								return err
+							}
+							done := make(chan reactionResult, 1)
+							reactionDone = done
+							go func() {
+								reactions, err := c.sendReaction(ctx, entry, target, value)
+								done <- reactionResult{target.ID, value, reactions, err}
+							}()
+						} else if err := finishEmoji(value); err != nil {
 							return err
 						}
 					}
+				case "\t":
+					if emojiReactionMode {
+						emojiReactionMode = false
+						emojiTarget = nil
+					} else if selected >= 0 && selected < len(messages) && messages[selected].ID > 0 {
+						emojiReactionMode = true
+						emojiTarget = messages[selected]
+					}
+					emojiSelected = 0
 				case "\x7f", "\x08":
 					if len(emojiQuery) > 0 {
 						emojiQuery = emojiQuery[:len(emojiQuery)-1]
@@ -561,7 +637,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 					}
 				}
 				if emojiEditor != nil {
-					emojiChoices = c.emojiChoices(string(emojiQuery))
+					if emojiReactionMode {
+						emojiChoices = c.reactionChoices(string(emojiQuery))
+					} else {
+						emojiChoices = c.emojiChoices(string(emojiQuery))
+					}
 					emojiSelected = min(emojiSelected, max(0, len(emojiChoices)-1))
 					emojiEditor.line.Operation.SetBuffer(string(emojiQuery))
 				}
@@ -587,7 +667,12 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			case "\x1b", "\x03", "\x04":
 				return nil
 			case "\x1bm", "\x1bM":
-				startEmoji()
+				if reactionDone != nil {
+					t.report(fmt.Errorf("reaction update is still in progress"))
+					continue
+				}
+				reactionMode := selected >= 0 && selected < len(messages) && messages[selected].ID > 0
+				startEmoji(reactionMode)
 				continue
 			case "\x1bd", "\x1bD", "\x1b\x04":
 				revoke := key == "\x1b\x04"
@@ -668,7 +753,13 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}
 }
 
-func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int) ([]string, int) {
+func acknowledgeSelected(messages []*tg.Message, selected int, changed map[int]bool) {
+	if selected >= 0 && selected < len(messages) {
+		delete(changed, messages[selected].ID)
+	}
+}
+
+func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool) ([]string, int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
@@ -682,8 +773,14 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int)
 	readID := 0
 	for i := start; i < start+count; i++ {
 		marker := "  "
+		if changed[messages[i].ID] {
+			marker = "* "
+		}
 		if i == selected {
 			marker = "> " + c.readMarker(entry, messages[i])
+			if reactions := formatReactions(messages[i]); reactions != "" {
+				marker += "[" + reactions + "] "
+			}
 		}
 		lines = append(lines, clipLine(marker+c.messageLine(messages[i], entry), cols-1))
 		if !messages[i].Out {

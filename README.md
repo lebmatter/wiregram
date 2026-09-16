@@ -67,7 +67,7 @@ mode `0600`. Keep both private; never commit them.
 | Chat | Up / Down | Select previous / next message |
 | Chat | Alt+Up / Alt+Down | Previous / next input-history entry |
 | Chat | Alt+E | Edit selected outgoing text message |
-| Chat | Alt+M | Open the basic emoji picker |
+| Chat | Alt+M | React to the selected message |
 | Chat | Alt+D | Delete current private chat only for you |
 | Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
@@ -75,7 +75,8 @@ mode `0600`. Keep both private; never commit them.
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list |
 | Emoji picker | Type | Filter emoji by name |
 | Emoji picker | Up / Down | Select previous / next emoji |
-| Emoji picker | Enter | Insert selected emoji into the draft |
+| Emoji picker | Tab | Switch between reaction and draft insertion |
+| Emoji picker | Enter | Send the reaction or insert the selected emoji |
 | Emoji picker | Esc / Ctrl+C / Ctrl+D | Return to the chat without inserting |
 | Edit prompt | Enter | Save edit |
 | Edit prompt | Esc / Ctrl+C / Ctrl+D | Cancel edit |
@@ -87,8 +88,11 @@ mode `0600`. Keep both private; never commit them.
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.
 Chat deletion requires confirmation and currently applies only to private chats.
-Alt+M opens a built-in picker for common Unicode emoji. Choosing one inserts it
-at the current draft cursor; recently chosen emoji are kept for the session.
+Alt+M opens a built-in reaction picker for the selected message. Press Tab in
+the picker to insert emoji at the draft cursor instead. Reactions appear only on
+the selected message; an asterisk marks reactions sent by the current account.
+Recently chosen emoji are kept for the session.
+An updated earlier message is marked with `*` until it is selected and displayed.
 
 ## Media inside the terminal
 

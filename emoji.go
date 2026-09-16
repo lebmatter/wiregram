@@ -50,6 +50,23 @@ func emojiCatalog() []emojiOption {
 	}
 }
 
+func reactionCatalog() []emojiOption {
+	return []emojiOption{
+		{"❤", "heart love"}, {"👍", "thumbs up yes like"},
+		{"👎", "thumbs down no dislike"}, {"🔥", "fire hot"},
+		{"🥰", "smiling hearts love"}, {"👏", "clap applause"},
+		{"😁", "beaming face grin"}, {"🤔", "thinking"},
+		{"🤯", "mind blown shocked"}, {"😢", "cry sad"},
+		{"🎉", "party celebration"}, {"🙏", "folded hands please thanks prayer"},
+		{"👌", "ok hand"}, {"🤡", "clown"},
+		{"💯", "hundred perfect"}, {"🤣", "rolling laughing"},
+		{"💔", "broken heart"}, {"😐", "neutral face"},
+		{"😭", "loud crying sad"}, {"😴", "sleeping"},
+		{"😍", "heart eyes love"}, {"🤝", "handshake"},
+		{"😇", "angel innocent"}, {"😡", "angry"},
+	}
+}
+
 func (c *client) recentEmoji() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -68,8 +85,7 @@ func (c *client) rememberEmoji(value string) {
 	c.emojiRecent = recent
 }
 
-func (c *client) emojiChoices(query string) []emojiOption {
-	catalog := emojiCatalog()
+func (c *client) choicesForEmojiCatalog(catalog []emojiOption, query string) []emojiOption {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query != "" {
 		var matches []emojiOption
@@ -100,7 +116,15 @@ func (c *client) emojiChoices(query string) []emojiOption {
 	return choices
 }
 
-func emojiPickerLines(choices []emojiOption, selected int, hasRecent bool) []string {
+func (c *client) emojiChoices(query string) []emojiOption {
+	return c.choicesForEmojiCatalog(emojiCatalog(), query)
+}
+
+func (c *client) reactionChoices(query string) []emojiOption {
+	return c.choicesForEmojiCatalog(reactionCatalog(), query)
+}
+
+func emojiPickerLines(choices []emojiOption, selected int, hasRecent, reactionMode bool) []string {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 20 || rows < 8 {
 		cols, rows = 80, 24
@@ -111,7 +135,10 @@ func emojiPickerLines(choices []emojiOption, selected int, hasRecent bool) []str
 		start = selected - limit + 1
 	}
 	end := min(len(choices), start+limit)
-	heading := "Emoji — type to filter"
+	heading := "Emoji for draft — type to filter; Tab: react"
+	if reactionMode {
+		heading = "React — type to filter; Tab: insert into draft"
+	}
 	if hasRecent {
 		heading += "; recent first"
 	}

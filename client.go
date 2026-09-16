@@ -25,6 +25,11 @@ type peerKey struct {
 	id   int64
 }
 
+type reactionUpdate struct {
+	messageID int
+	reactions tg.MessageReactions
+}
+
 func keyOf(peer tg.PeerClass) peerKey {
 	switch p := peer.(type) {
 	case *tg.PeerUser:
@@ -38,22 +43,23 @@ func keyOf(peer tg.PeerClass) peerKey {
 }
 
 type client struct {
-	telegram       *telegram.Client
-	updates        *updates.Manager
-	api            *tg.Client
-	mu             sync.Mutex
-	users          map[int64]*tg.User
-	chats          map[peerKey]string
-	reads          map[peerKey]readState
-	contactUsers   []*tg.User
-	frequentUsers  []*tg.User
-	contactsLoaded bool
-	frequentLoaded bool
-	emojiRecent    []string
-	active         peerKey
-	pending        []*tg.Message
-	changed        chan struct{}
-	report         func(error)
+	telegram         *telegram.Client
+	updates          *updates.Manager
+	api              *tg.Client
+	mu               sync.Mutex
+	users            map[int64]*tg.User
+	chats            map[peerKey]string
+	reads            map[peerKey]readState
+	contactUsers     []*tg.User
+	frequentUsers    []*tg.User
+	contactsLoaded   bool
+	frequentLoaded   bool
+	emojiRecent      []string
+	active           peerKey
+	pending          []*tg.Message
+	pendingReactions []reactionUpdate
+	changed          chan struct{}
+	report           func(error)
 }
 
 func newClient(cfg config, dir string, report func(error)) (*client, error) {
@@ -132,15 +138,17 @@ func (c *client) remember(users []tg.UserClass, chats []tg.ChatClass) {
 func (c *client) subscribe(key peerKey) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.active, c.pending = key, nil
+	c.active, c.pending, c.pendingReactions = key, nil, nil
 }
 
-func (c *client) drain() []*tg.Message {
+func (c *client) drain() ([]*tg.Message, []reactionUpdate) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	messages := c.pending
+	reactions := c.pendingReactions
 	c.pending = nil
-	return messages
+	c.pendingReactions = nil
+	return messages, reactions
 }
 
 func (c *client) accept(value tg.MessageClass) {
@@ -154,6 +162,19 @@ func (c *client) accept(value tg.MessageClass) {
 		return
 	}
 	c.pending = append(c.pending, m)
+	select {
+	case c.changed <- struct{}{}:
+	default:
+	}
+}
+
+func (c *client) acceptReaction(update *tg.UpdateMessageReactions) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == (peerKey{}) || keyOf(update.Peer) != c.active {
+		return
+	}
+	c.pendingReactions = append(c.pendingReactions, reactionUpdate{update.MsgID, update.Reactions})
 	select {
 	case c.changed <- struct{}{}:
 	default:
@@ -186,6 +207,8 @@ func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 			c.accept(u.Message)
 		case *tg.UpdateEditChannelMessage:
 			c.accept(u.Message)
+		case *tg.UpdateMessageReactions:
+			c.acceptReaction(u)
 		case *tg.UpdateReadHistoryOutbox:
 			c.rememberRead(keyOf(u.Peer), 0, u.MaxID)
 		case *tg.UpdateReadHistoryInbox:
