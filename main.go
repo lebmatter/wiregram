@@ -276,7 +276,7 @@ type editor struct {
 	stopped  chan struct{}
 }
 
-func (t *terminal) newEditor(prompt string, masked bool, history []string) (*editor, error) {
+func (t *terminal) newEditor(prompt string, masked bool, history []string, initial ...string) (*editor, error) {
 	input, writer := io.Pipe()
 	e := &editor{terminal: t, input: writer, results: make(chan lineResult, 1), done: make(chan struct{}), stopped: make(chan struct{})}
 	limit := -1
@@ -320,6 +320,9 @@ func (t *terminal) newEditor(prompt string, masked bool, history []string) (*edi
 		}
 	}
 	e.line = line
+	if len(initial) > 0 {
+		line.Operation.SetBuffer(initial[0])
+	}
 	go func() {
 		defer close(e.stopped)
 		for {

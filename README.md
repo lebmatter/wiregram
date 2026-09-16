@@ -66,6 +66,7 @@ terminal width, and the visible window follows the selection.
 | --- | --- |
 | Up / Down | Select the previous / next message |
 | Alt+Up / Alt+Down | Recall previous / next typed text from this chat |
+| Alt+E | Edit the selected outgoing text message |
 | Enter with an empty input | Open the selected image, video, voice note, or audio |
 | Enter with typed text | Send the text |
 | Esc / Ctrl+C / Ctrl+D | Return to the chat list |
@@ -73,6 +74,14 @@ terminal width, and the visible window follows the selection.
 Input history stays in memory, separately for each chat. Selecting messages
 preserves the current draft. Incoming messages do not move a selection away
 from an older message you are browsing.
+
+Alt+E opens a separate edit prompt containing the selected message. Enter saves
+the edit; Esc, Ctrl+C, or Ctrl+D cancels and restores your unsent chat draft.
+While saving, wait for Telegram's response; failed edits retain the proposed text
+for correction or retry. Editing does not send a new message. Telegram enforces
+ownership and editing time limits. Media captions, forwarded messages, bot-generated
+messages, and multiline text are not editable here. Changed text is sent without
+its previous rich-text formatting. The inactivity lock also applies while editing.
 
 ## Media inside the terminal
 

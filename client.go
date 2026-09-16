@@ -173,6 +173,10 @@ func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 			c.accept(u.Message)
 		case *tg.UpdateNewChannelMessage:
 			c.accept(u.Message)
+		case *tg.UpdateEditMessage:
+			c.accept(u.Message)
+		case *tg.UpdateEditChannelMessage:
+			c.accept(u.Message)
 		}
 	}
 	return nil

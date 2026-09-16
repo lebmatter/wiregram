@@ -166,6 +166,27 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	t.mu.Unlock()
 	defer func() { t.mu.Lock(); t.editor = nil; t.locked = false; t.mu.Unlock() }()
 	locked := false
+	var editEditor *editor
+	var editing *tg.Message
+	var editResults <-chan lineResult
+	var editDone <-chan error
+	var editText string
+	finishEdit := func() {
+		if editEditor != nil {
+			editEditor.close()
+			editEditor, editing, editResults = nil, nil, nil
+			t.mu.Lock()
+			t.editor = e.line
+			t.mu.Unlock()
+		}
+	}
+	defer func() {
+		cancel()
+		if editDone != nil {
+			<-editDone
+		}
+		finishEdit()
+	}()
 	var mediaCancel context.CancelFunc
 	var mediaDone <-chan error
 	var mediaNotice error
@@ -268,6 +289,13 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	defer timer.Stop()
 	appendMessage := func(message *tg.Message) {
 		if message.ID != 0 && seen[message.ID] {
+			for i, previous := range messages {
+				if previous.ID == message.ID && message.EditDate >= previous.EditDate {
+					messages[i] = message
+					render()
+					break
+				}
+			}
 			return
 		}
 		if message.ID != 0 {
@@ -293,6 +321,47 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case result := <-editResults:
+			if result.err != nil {
+				finishEdit()
+				render()
+				continue
+			}
+			if strings.TrimSpace(result.text) == "" {
+				t.report(fmt.Errorf("edited message cannot be empty; press Esc to cancel"))
+				continue
+			}
+			editText = result.text
+			editResults = nil
+			editEditor.line.SetPrompt("Saving edit... ")
+			editEditor.line.Refresh()
+			done := make(chan error, 1)
+			editDone = done
+			message, text := editing, editText
+			go func() { done <- c.editMessage(ctx, entry, message, text) }()
+		case err := <-editDone:
+			editDone = nil
+			if err != nil {
+				editEditor.line.SetPrompt("Edit (Enter: save, Esc: cancel)> ")
+				editEditor.line.Operation.SetBuffer(editText)
+				editResults = editEditor.results
+				t.report(err)
+			} else {
+				// The update hook supplies the authoritative message when available.
+				for i, previous := range messages {
+					if previous.ID == editing.ID && previous.Message == editing.Message {
+						copy := *previous
+						copy.Message = editText
+						if editText != editing.Message {
+							copy.Entities = nil
+						}
+						messages[i] = &copy
+						break
+					}
+				}
+				finishEdit()
+			}
+			render()
 		case next <- text:
 			queue = queue[1:]
 		case result := <-sent:
@@ -370,9 +439,45 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				continue
 			}
+			if editEditor != nil {
+				if editDone != nil {
+					continue
+				}
+				switch key {
+				case "\x1b", "\x03", "\x04":
+					finishEdit()
+					render()
+				case "\x1be", "\x1bE":
+				default:
+					if _, err := io.WriteString(editEditor.input, key); err != nil {
+						return fmt.Errorf("read edit input: %w", err)
+					}
+				}
+				continue
+			}
 			switch key {
 			case "\x1b", "\x03", "\x04":
 				return nil
+			case "\x1be", "\x1bE":
+				if selected < 0 || selected >= len(messages) {
+					continue
+				}
+				message := messages[selected]
+				if err := editableMessage(message); err != nil {
+					t.report(err)
+					continue
+				}
+				editEditor, err = t.newEditor("Edit (Enter: save, Esc: cancel)> ", false, nil, message.Message)
+				if err != nil {
+					t.report(err)
+					continue
+				}
+				editing, editResults = message, editEditor.results
+				t.mu.Lock()
+				t.editor = editEditor.line
+				t.mu.Unlock()
+				render()
+				continue
 			case "\x1b[A", "\x1bOA":
 				if selected > 0 {
 					selected--
