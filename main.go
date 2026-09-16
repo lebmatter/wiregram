@@ -94,7 +94,7 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 			}
 			continue
 		}
-		index, refresh, err := selectChat(ctx, t.keys, t.out(), entries)
+		index, refresh, err := c.selectChat(ctx, t, entries)
 		if err != nil {
 			return err
 		}

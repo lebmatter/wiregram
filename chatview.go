@@ -143,10 +143,14 @@ type sendResult struct {
 }
 
 func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]string) error {
+	sessionCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c.subscribe(entry.key)
 	defer c.subscribe(peerKey{})
+	if err := c.refreshReadState(ctx, entry); err != nil {
+		t.report(err)
+	}
 	messages, err := c.history(ctx, entry)
 	if err != nil {
 		return err
@@ -165,6 +169,13 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	t.editor = e.line
 	t.mu.Unlock()
 	defer func() { t.mu.Lock(); t.editor = nil; t.locked = false; t.mu.Unlock() }()
+	reads := newReadReporter(c, entry)
+	defer func() {
+		if err := reads.close(sessionCtx); err != nil && sessionCtx.Err() == nil {
+			t.report(err)
+		}
+	}()
+	readFailed := false
 	locked := false
 	var editEditor *editor
 	var editing *tg.Message
@@ -200,8 +211,9 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if locked || mediaDone != nil {
 			return
 		}
-		lines := c.selectedLines(messages, entry, selected)
+		lines, readID := c.selectedLines(messages, entry, selected)
 		t.unlock(lines)
+		reads.observe(readID)
 	}
 	stopMedia := func() {
 		probing = false
@@ -321,6 +333,14 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-reads.timer.C:
+			reads.start(ctx)
+		case err := <-reads.done:
+			reads.complete()
+			if err != nil && !readFailed {
+				t.report(err)
+			}
+			readFailed = err != nil
 		case result := <-editResults:
 			if result.err != nil {
 				finishEdit()
@@ -374,6 +394,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			for _, m := range c.drain() {
 				appendMessage(m)
 			}
+			render()
 		case <-probe.C:
 			if probing {
 				probing = false
@@ -520,7 +541,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}
 }
 
-func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int) []string {
+func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int) ([]string, int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
@@ -531,14 +552,18 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int)
 		start = max(0, len(messages)-count)
 	}
 	lines := make([]string, 0, count)
+	readID := 0
 	for i := start; i < start+count; i++ {
 		marker := "  "
 		if i == selected {
-			marker = "> "
+			marker = "> " + c.readMarker(entry, messages[i])
 		}
 		lines = append(lines, clipLine(marker+c.messageLine(messages[i], entry), cols-1))
+		if !messages[i].Out {
+			readID = max(readID, messages[i].ID)
+		}
 	}
-	return lines
+	return lines, readID
 }
 
 func clipLine(text string, width int) string {

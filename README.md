@@ -47,41 +47,33 @@ Configuration is stored at `os.UserConfigDir()/mintg/config.json`, normally
 Directories are created with mode `0700`, and credential/session files with
 mode `0600`. Keep both private; never commit them.
 
-## Controls
+## Keyboard shortcuts
 
-The chat list shows up to 20 recent dialogs.
+| Context | Shortcut | Action |
+| --- | --- | --- |
+| Chat list | Up / `k` | Select previous chat |
+| Chat list | Down / `j` | Select next chat |
+| Chat list | Enter | Open selected chat |
+| Chat list | `r` | Refresh chats |
+| Chat list | Alt+D | Delete selected private chat only for you |
+| Chat list | Ctrl+Alt+D | Delete selected private chat for both sides |
+| Chat list | `q` / Ctrl+D | Quit |
+| Chat | Up / Down | Select previous / next message |
+| Chat | Alt+Up / Alt+Down | Previous / next input-history entry |
+| Chat | Alt+E | Edit selected outgoing text message |
+| Chat | Enter with text | Send text |
+| Chat | Enter with empty input | Open selected media |
+| Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list |
+| Edit prompt | Enter | Save edit |
+| Edit prompt | Esc / Ctrl+C / Ctrl+D | Cancel edit |
+| Delete confirmation | `y` / `Y` | Confirm deletion |
+| Delete confirmation | Any other key | Cancel deletion |
+| Media viewer/download | Esc / Ctrl+C / Ctrl+D | Stop and return to chat |
+| Locked screen | Any key | Unlock; the key is consumed |
 
-| Chat list | Action |
-| --- | --- |
-| Up / `k`, Down / `j` | Move selection |
-| Enter | Open chat |
-| `r` | Refresh |
-| `q` / Ctrl+D | Quit |
-
-Chats display the latest 30 messages, oldest first. A `>` marker selects a
-message; selection starts at the newest message. Long lines are clipped to the
-terminal width, and the visible window follows the selection.
-
-| Chat view | Action |
-| --- | --- |
-| Up / Down | Select the previous / next message |
-| Alt+Up / Alt+Down | Recall previous / next typed text from this chat |
-| Alt+E | Edit the selected outgoing text message |
-| Enter with an empty input | Open the selected image, video, voice note, or audio |
-| Enter with typed text | Send the text |
-| Esc / Ctrl+C / Ctrl+D | Return to the chat list |
-
-Input history stays in memory, separately for each chat. Selecting messages
-preserves the current draft. Incoming messages do not move a selection away
-from an older message you are browsing.
-
-Alt+E opens a separate edit prompt containing the selected message. Enter saves
-the edit; Esc, Ctrl+C, or Ctrl+D cancels and restores your unsent chat draft.
-While saving, wait for Telegram's response; failed edits retain the proposed text
-for correction or retry. Editing does not send a new message. Telegram enforces
-ownership and editing time limits. Media captions, forwarded messages, bot-generated
-messages, and multiline text are not editable here. Changed text is sent without
-its previous rich-text formatting. The inactivity lock also applies while editing.
+The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
+when read. Visible incoming messages are marked read after a short batching delay.
+Chat deletion requires confirmation and currently applies only to private chats.
 
 ## Media inside the terminal
 
