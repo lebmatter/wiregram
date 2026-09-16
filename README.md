@@ -67,12 +67,14 @@ mode `0600`. Keep both private; never commit them.
 | Chat | Up / Down | Select previous / next message |
 | Chat | Alt+Up / Alt+Down | Previous / next input-history entry |
 | Chat | Alt+E | Edit selected outgoing text message |
+| Chat | Alt+R | Reply to the selected message; press again to cancel |
 | Chat | Alt+M | React to the selected message |
 | Chat | Alt+D | Delete current private chat only for you |
 | Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
 | Chat | Enter with empty input | Open selected media |
-| Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list |
+| Chat | Esc while replying | Cancel the reply |
+| Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
 | Emoji picker | Type | Filter emoji by name |
 | Emoji picker | Up / Down | Select previous / next emoji |
 | Emoji picker | Tab | Switch between reaction and draft insertion |
@@ -93,6 +95,7 @@ the picker to insert emoji at the draft cursor instead. Reactions appear only on
 the selected message; an asterisk marks reactions sent by the current account.
 Recently chosen emoji are kept for the session.
 An updated earlier message is marked with `*` until it is selected and displayed.
+While composing a reply, a short excerpt of its target appears above the input.
 
 ## Media inside the terminal
 

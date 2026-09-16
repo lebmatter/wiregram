@@ -48,7 +48,7 @@ func (c *client) history(ctx context.Context, entry chat) ([]*tg.Message, error)
 	return resultMessages, nil
 }
 
-func (c *client) messageLine(m *tg.Message, entry chat) string {
+func (c *client) messageSender(m *tg.Message, entry chat) string {
 	sender := "you"
 	if !m.Out {
 		c.mu.Lock()
@@ -71,21 +71,36 @@ func (c *client) messageLine(m *tg.Message, entry chat) string {
 		}
 		c.mu.Unlock()
 	}
+	return plain(sender)
+}
+
+func messageText(m *tg.Message) string {
 	text := formatMedia(m.Media)
 	if text != "" && m.Message != "" {
 		text += " — " + m.Message
 	} else if text == "" {
 		text = m.Message
 	}
-	return plain(sender) + "> " + plain(text)
+	return plain(text)
 }
 
-func (c *client) send(ctx context.Context, entry chat, text string) (*tg.Message, error) {
+func (c *client) messageLine(m *tg.Message, entry chat, messages map[int]*tg.Message) string {
+	text := messageText(m)
+	if reply := c.replyLabel(m, entry, messages); reply != "" {
+		text = reply + " — " + text
+	}
+	return c.messageSender(m, entry) + "> " + text
+}
+
+func (c *client) send(ctx context.Context, entry chat, text string, replyTo int) (*tg.Message, error) {
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, fmt.Errorf("create message ID: %w", err)
 	}
 	request := &tg.MessagesSendMessageRequest{Peer: entry.peer, Message: text, RandomID: int64(binary.LittleEndian.Uint64(random[:]))}
+	if replyTo > 0 {
+		request.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})
+	}
 	var result tg.UpdatesClass
 	for {
 		var err error
@@ -134,7 +149,19 @@ func (c *client) send(ctx context.Context, entry chat, text string) (*tg.Message
 	}
 	copy := *message
 	copy.Out = true
+	if replyTo > 0 {
+		if _, ok := copy.GetReplyTo(); !ok {
+			header := &tg.MessageReplyHeader{}
+			header.SetReplyToMsgID(replyTo)
+			copy.SetReplyTo(header)
+		}
+	}
 	return &copy, nil
+}
+
+type outgoingMessage struct {
+	text    string
+	replyTo int
 }
 
 type sendResult struct {
@@ -192,6 +219,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var editResults <-chan lineResult
 	var editDone <-chan error
 	var editText string
+	var replying *tg.Message
 	finishEdit := func() {
 		if editEditor != nil {
 			editEditor.close()
@@ -227,7 +255,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			return
 		}
 		acknowledgeSelected(messages, selected, changedMessages)
-		lines, readID := c.selectedLines(messages, entry, selected, changedMessages)
+		lines, readID := c.selectedLines(messages, entry, selected, changedMessages, replying)
 		t.unlock(lines)
 		reads.observe(readID)
 	}
@@ -328,7 +356,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		probe.Reset(time.Second)
 	}
 	render()
-	sends := make(chan string)
+	sends := make(chan outgoingMessage)
 	sent := make(chan sendResult, 1)
 	workerDone := make(chan struct{})
 	go func() {
@@ -337,8 +365,8 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			select {
 			case <-ctx.Done():
 				return
-			case text := <-sends:
-				message, err := c.send(ctx, entry, text)
+			case outgoing := <-sends:
+				message, err := c.send(ctx, entry, outgoing.text, outgoing.replyTo)
 				select {
 				case sent <- sendResult{message, err}:
 				case <-ctx.Done():
@@ -348,7 +376,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		}
 	}()
 	defer func() { cancel(); <-workerDone }()
-	var queue []string
+	var queue []outgoingMessage
 	lastKey := time.Now()
 	lockSignal := make(chan struct{}, 1)
 	timer := time.AfterFunc(10*time.Second, func() {
@@ -367,6 +395,9 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 						changedMessages[message.ID] = true
 					}
 					messages[i] = message
+					if replying != nil && replying.ID == message.ID {
+						replying = message
+					}
 					render()
 					break
 				}
@@ -389,10 +420,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		render()
 	}
 	for {
-		var next chan string
-		var text string
+		var next chan outgoingMessage
+		var outgoing outgoingMessage
 		if len(queue) > 0 {
-			next, text = sends, queue[0]
+			next, outgoing = sends, queue[0]
 		}
 		select {
 		case <-ctx.Done():
@@ -473,7 +504,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			}
 			c.rememberEmoji(result.emoticon)
 			render()
-		case next <- text:
+		case next <- outgoing:
 			queue = queue[1:]
 		case result := <-sent:
 			if result.err != nil {
@@ -664,7 +695,14 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				continue
 			}
 			switch key {
-			case "\x1b", "\x03", "\x04":
+			case "\x1b":
+				if replying != nil {
+					replying = nil
+					render()
+					continue
+				}
+				return nil
+			case "\x03", "\x04":
 				return nil
 			case "\x1bm", "\x1bM":
 				if reactionDone != nil {
@@ -673,6 +711,17 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				reactionMode := selected >= 0 && selected < len(messages) && messages[selected].ID > 0
 				startEmoji(reactionMode)
+				continue
+			case "\x1br", "\x1bR":
+				if selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
+					continue
+				}
+				if replying != nil && replying.ID == messages[selected].ID {
+					replying = nil
+				} else {
+					replying = messages[selected]
+				}
+				render()
 				continue
 			case "\x1bd", "\x1bD", "\x1b\x04":
 				revoke := key == "\x1b\x04"
@@ -748,7 +797,13 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			if len(*history) > 500 {
 				*history = (*history)[len(*history)-500:]
 			}
-			queue = append(queue, result.text)
+			replyTo := 0
+			if replying != nil {
+				replyTo = replying.ID
+				replying = nil
+				render()
+			}
+			queue = append(queue, outgoingMessage{text: result.text, replyTo: replyTo})
 		}
 	}
 }
@@ -759,17 +814,25 @@ func acknowledgeSelected(messages []*tg.Message, selected int, changed map[int]b
 	}
 }
 
-func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool) ([]string, int) {
+func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool, replying *tg.Message) ([]string, int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
 	}
-	count := min(len(messages), rows-2)
+	reserved := 2
+	if replying != nil {
+		reserved++
+	}
+	count := min(len(messages), max(0, rows-reserved))
 	start := max(0, selected-count+1)
 	if start+count > len(messages) {
 		start = max(0, len(messages)-count)
 	}
-	lines := make([]string, 0, count)
+	lines := make([]string, 0, count+1)
+	byID := make(map[int]*tg.Message, len(messages))
+	for _, message := range messages {
+		byID[message.ID] = message
+	}
 	readID := 0
 	for i := start; i < start+count; i++ {
 		marker := "  "
@@ -782,10 +845,13 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 				marker += "[" + reactions + "] "
 			}
 		}
-		lines = append(lines, clipLine(marker+c.messageLine(messages[i], entry), cols-1))
+		lines = append(lines, clipLine(marker+c.messageLine(messages[i], entry, byID), cols-1))
 		if !messages[i].Out {
 			readID = max(readID, messages[i].ID)
 		}
+	}
+	if replying != nil {
+		lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), cols-1))
 	}
 	return lines, readID
 }
