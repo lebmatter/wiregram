@@ -177,6 +177,8 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}()
 	readFailed := false
 	locked := false
+	var confirmDelete *bool
+	var deleteDone <-chan error
 	var editEditor *editor
 	var editing *tg.Message
 	var editResults <-chan lineResult
@@ -382,6 +384,14 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				finishEdit()
 			}
 			render()
+		case err := <-deleteDone:
+			deleteDone = nil
+			if err != nil {
+				t.report(err)
+				render()
+				continue
+			}
+			return nil
 		case next <- text:
 			queue = queue[1:]
 		case result := <-sent:
@@ -476,9 +486,41 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				continue
 			}
+			if confirmDelete != nil {
+				revoke := *confirmDelete
+				confirmDelete = nil
+				if key == "y" || key == "Y" {
+					done := make(chan error, 1)
+					deleteDone = done
+					go func() { done <- c.deleteChat(ctx, entry, revoke) }()
+				} else {
+					render()
+				}
+				continue
+			}
+			if deleteDone != nil {
+				continue
+			}
 			switch key {
 			case "\x1b", "\x03", "\x04":
 				return nil
+			case "\x1bd", "\x1bD", "\x1b\x04":
+				revoke := key == "\x1b\x04"
+				if entry.key.kind != 'u' {
+					t.report(fmt.Errorf("chat deletion is currently supported only for private chats"))
+					continue
+				}
+				if _, self := entry.peer.(*tg.InputPeerSelf); self && revoke {
+					t.report(fmt.Errorf("Saved Messages cannot be deleted for both sides"))
+					continue
+				}
+				confirmDelete = &revoke
+				scope := "only for you"
+				if revoke {
+					scope = "for both sides"
+				}
+				t.report(fmt.Errorf("Delete chat with %s %s? Press y to confirm; any other key cancels.", plain(entry.title), scope))
+				continue
 			case "\x1be", "\x1bE":
 				if selected < 0 || selected >= len(messages) {
 					continue

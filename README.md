@@ -61,6 +61,8 @@ mode `0600`. Keep both private; never commit them.
 | Chat | Up / Down | Select previous / next message |
 | Chat | Alt+Up / Alt+Down | Previous / next input-history entry |
 | Chat | Alt+E | Edit selected outgoing text message |
+| Chat | Alt+D | Delete current private chat only for you |
+| Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
 | Chat | Enter with empty input | Open selected media |
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list |
