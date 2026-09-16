@@ -121,10 +121,12 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 }
 
 type terminal struct {
-	mu     sync.Mutex
-	locked bool
-	editor *readline.Instance
-	keys   <-chan string
+	mu      sync.Mutex
+	locked  bool
+	viewing bool
+	notices []string
+	editor  *readline.Instance
+	keys    <-chan string
 }
 
 type terminalWriter struct {
@@ -137,7 +139,7 @@ func (w terminalWriter) Write(data []byte) (int, error) {
 	originalLength := len(data)
 	w.terminal.mu.Lock()
 	defer w.terminal.mu.Unlock()
-	if w.terminal.locked || (w.closed != nil && *w.closed) {
+	if w.terminal.locked || w.terminal.viewing || (w.closed != nil && *w.closed) {
 		return len(data), nil
 	}
 	// Raw mode disables the terminal's newline conversion.
@@ -149,6 +151,11 @@ func (w terminalWriter) Write(data []byte) (int, error) {
 func (t *terminal) out() io.Writer { return terminalWriter{t, os.Stdout, nil} }
 func (t *terminal) report(err error) {
 	t.mu.Lock()
+	if t.locked || t.viewing {
+		t.notices = append(t.notices, cleanError(err))
+		t.mu.Unlock()
+		return
+	}
 	editor := t.editor
 	t.mu.Unlock()
 	var out io.Writer = terminalWriter{t, os.Stderr, nil}
@@ -209,17 +216,30 @@ func readKeys(ctx context.Context) <-chan string {
 				// Distinguish a bare Escape from an arrow key's escape sequence.
 				timer := time.NewTimer(40 * time.Millisecond)
 			sequence:
-				for len(key) < 32 {
+				for len(key) < 4096 {
 					select {
 					case next, ok := <-bytesIn:
 						if !ok {
 							break sequence
 						}
 						key = append(key, next)
-						if len(key) == 2 && next != '[' && next != 'O' {
+						if key[1] == '_' {
+							if len(key) > 3 && key[len(key)-2] == 27 && next == '\\' {
+								break sequence
+							}
+							continue
+						}
+						prefix := 1
+						if key[1] == 27 {
+							prefix = 2
+							if len(key) == 2 {
+								continue
+							}
+						}
+						if len(key) == prefix+1 && next != '[' && next != 'O' {
 							break sequence
 						}
-						if len(key) > 2 && next >= 0x40 && next <= 0x7e {
+						if len(key) > prefix+1 && next >= 0x40 && next <= 0x7e {
 							break sequence
 						}
 					case <-timer.C:
@@ -359,17 +379,34 @@ func (t *terminal) lock() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.locked = true
+	if t.viewing {
+		fmt.Fprint(os.Stdout, "\033\\\033_Ga=d,d=A,q=2;\033\\")
+	}
 	fmt.Fprint(os.Stdout, "\033[2J\033[H[mintg: locked — press any key]\r\n")
 }
 
 func (t *terminal) unlock(lines []string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	fmt.Fprint(os.Stdout, "\033[2J\033[H")
-	for _, line := range lines {
-		fmt.Fprint(os.Stdout, line+"\r\n")
-	}
 	t.locked = false
+	editor := t.editor
+	notices := t.notices
+	t.notices = nil
+	t.mu.Unlock()
+	var frame strings.Builder
+	frame.WriteString("\033[2J\033[H")
+	for _, line := range lines {
+		frame.WriteString(line)
+		frame.WriteByte('\n')
+	}
+	var out io.Writer = t.out()
+	if editor != nil {
+		out = editor.Stdout()
+	}
+	// Readline's writer holds its buffer lock while clearing, drawing, and restoring the draft.
+	fmt.Fprint(out, frame.String())
+	for _, notice := range notices {
+		t.report(fmt.Errorf("%s", notice))
+	}
 }
 
 func openTerminal(ctx context.Context) (*terminal, func() error, error) {

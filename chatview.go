@@ -7,12 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/chzyer/readline"
 	"github.com/gotd/td/tg"
+	"golang.org/x/term"
 )
 
 func (c *client) history(ctx context.Context, entry chat) ([]*tg.Message, error) {
@@ -147,13 +151,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	if err != nil {
 		return err
 	}
-	lines := make([]string, 0, 30)
+	selected := len(messages) - 1
 	seen := make(map[int]bool)
-	for _, message := range messages {
-		seen[message.ID] = true
-		lines = append(lines, c.messageLine(message, entry))
+	for _, m := range messages {
+		seen[m.ID] = true
 	}
-	t.unlock(lines)
 	e, err := t.newEditor("", false, *history)
 	if err != nil {
 		return err
@@ -162,8 +164,78 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	t.mu.Lock()
 	t.editor = e.line
 	t.mu.Unlock()
-	defer func() { t.mu.Lock(); t.editor = nil; t.mu.Unlock() }()
-
+	defer func() { t.mu.Lock(); t.editor = nil; t.locked = false; t.mu.Unlock() }()
+	locked := false
+	var mediaCancel context.CancelFunc
+	var mediaDone <-chan error
+	var mediaNotice error
+	probe := time.NewTimer(time.Hour)
+	probe.Stop()
+	defer probe.Stop()
+	probing := false
+	var requested attachment
+	player := ""
+	render := func() {
+		if locked || mediaDone != nil {
+			return
+		}
+		lines := c.selectedLines(messages, entry, selected)
+		t.unlock(lines)
+	}
+	stopMedia := func() {
+		probing = false
+		probe.Stop()
+		if mediaCancel != nil {
+			mediaCancel()
+			err := <-mediaDone
+			if err != nil && !errors.Is(err, context.Canceled) {
+				mediaNotice = err
+			}
+			mediaDone = nil
+			mediaCancel = nil
+			t.clearMedia()
+		}
+	}
+	defer stopMedia()
+	startMedia := func() {
+		probing = false
+		probe.Stop()
+		mediaCtx, stop := context.WithCancel(ctx)
+		mediaCancel = stop
+		done := make(chan error, 1)
+		mediaDone = done
+		t.mediaScreen("Media viewer")
+		a := requested
+		go func() { done <- c.playMedia(mediaCtx, t, a, player) }()
+	}
+	openSelected := func() {
+		if selected < 0 || selected >= len(messages) || probing || mediaDone != nil {
+			return
+		}
+		// Text-only messages leave Enter as a no-op when there is no draft.
+		if formatMedia(messages[selected].Media) == "" {
+			return
+		}
+		a, err := mediaAttachment(messages[selected])
+		if err != nil {
+			t.report(err)
+			return
+		}
+		path, err := exec.LookPath("mpv")
+		if err != nil {
+			t.report(fmt.Errorf("install mpv with Kitty video output to open media"))
+			return
+		}
+		requested, player = a, path
+		if a.audio {
+			startMedia()
+			return
+		}
+		probing = true
+		fmt.Fprint(t.out(), "\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\")
+		probe.Reset(time.Second)
+	}
+	render()
 	sends := make(chan string)
 	sent := make(chan sendResult, 1)
 	workerDone := make(chan struct{})
@@ -185,7 +257,6 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}()
 	defer func() { cancel(); <-workerDone }()
 	var queue []string
-	locked := false
 	lastKey := time.Now()
 	lockSignal := make(chan struct{}, 1)
 	timer := time.AfterFunc(10*time.Second, func() {
@@ -195,7 +266,6 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		}
 	})
 	defer timer.Stop()
-	defer func() { t.mu.Lock(); t.locked = false; t.mu.Unlock() }()
 	appendMessage := func(message *tg.Message) {
 		if message.ID != 0 && seen[message.ID] {
 			return
@@ -203,15 +273,16 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if message.ID != 0 {
 			seen[message.ID] = true
 		}
-		line := c.messageLine(message, entry)
-		lines = append(lines, line)
-		if len(lines) > 30 {
-			lines = lines[len(lines)-30:]
+		follow := selected == len(messages)-1
+		messages = append(messages, message)
+		if follow {
+			selected = len(messages) - 1
 		}
-		if !locked {
-			// Readline's writer cleans and refreshes the editing line under its buffer lock.
-			fmt.Fprintln(e.line.Stdout(), line)
+		if len(messages) > 30 {
+			messages = messages[1:]
+			selected = max(0, selected-1)
 		}
+		render()
 	}
 	for {
 		var next chan string
@@ -226,13 +297,27 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			queue = queue[1:]
 		case result := <-sent:
 			if result.err != nil {
-				fmt.Fprintln(e.line.Stderr(), cleanError(result.err))
+				t.report(result.err)
 			} else {
 				appendMessage(result.message)
 			}
 		case <-c.changed:
-			for _, message := range c.drain() {
-				appendMessage(message)
+			for _, m := range c.drain() {
+				appendMessage(m)
+			}
+		case <-probe.C:
+			if probing {
+				probing = false
+				t.report(fmt.Errorf("this terminal did not confirm Kitty graphics support"))
+			}
+		case err := <-mediaDone:
+			mediaCancel()
+			mediaCancel = nil
+			mediaDone = nil
+			t.clearMedia()
+			render()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.report(err)
 			}
 		case <-lockSignal:
 			remaining := 10*time.Second - time.Since(lastKey)
@@ -243,22 +328,67 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			if !locked {
 				locked = true
 				t.lock()
+				stopMedia()
 			}
 		case key, ok := <-t.keys:
 			if !ok {
 				return context.Canceled
 			}
+			// Terminal replies are not keyboard activity and must never reach the editor.
+			if strings.HasPrefix(key, "\033_") {
+				if probing && strings.HasPrefix(key, "\033_Gi=31;") {
+					if key == "\033_Gi=31;OK\033\\" {
+						startMedia()
+					} else {
+						probing = false
+						probe.Stop()
+						t.report(fmt.Errorf("this terminal cannot display Kitty graphics"))
+					}
+				}
+				continue
+			}
 			lastKey = time.Now()
 			timer.Reset(10 * time.Second)
 			if locked {
 				locked = false
-				t.unlock(lines)
-				e.line.Refresh()
+				render()
+				if mediaNotice != nil {
+					t.report(mediaNotice)
+					mediaNotice = nil
+				}
+				continue
+			}
+			if mediaDone != nil || probing {
+				switch key {
+				case "\x1b", "\x03", "\x04":
+					stopMedia()
+					render()
+					if mediaNotice != nil {
+						t.report(mediaNotice)
+						mediaNotice = nil
+					}
+				}
 				continue
 			}
 			switch key {
 			case "\x1b", "\x03", "\x04":
 				return nil
+			case "\x1b[A", "\x1bOA":
+				if selected > 0 {
+					selected--
+				}
+				render()
+				continue
+			case "\x1b[B", "\x1bOB":
+				if selected+1 < len(messages) {
+					selected++
+				}
+				render()
+				continue
+			case "\x1b[1;3A", "\x1b\x1b[A", "\x1b\x1bOA":
+				key = "\x1b[A"
+			case "\x1b[1;3B", "\x1b\x1b[B", "\x1b\x1bOB":
+				key = "\x1b[B"
 			}
 			if _, err := io.WriteString(e.input, key); err != nil {
 				return fmt.Errorf("read message input: %w", err)
@@ -271,6 +401,9 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				return fmt.Errorf("read message: %w", result.err)
 			}
 			if strings.TrimSpace(result.text) == "" {
+				if !locked {
+					openSelected()
+				}
 				continue
 			}
 			*history = append(*history, result.text)
@@ -280,4 +413,44 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			queue = append(queue, result.text)
 		}
 	}
+}
+
+func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int) []string {
+	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || cols < 4 || rows < 4 {
+		cols, rows = 80, 24
+	}
+	count := min(len(messages), rows-2)
+	start := max(0, selected-count+1)
+	if start+count > len(messages) {
+		start = max(0, len(messages)-count)
+	}
+	lines := make([]string, 0, count)
+	for i := start; i < start+count; i++ {
+		marker := "  "
+		if i == selected {
+			marker = "> "
+		}
+		lines = append(lines, clipLine(marker+c.messageLine(messages[i], entry), cols-1))
+	}
+	return lines
+}
+
+func clipLine(text string, width int) string {
+	var out strings.Builder
+	used := 0
+	for _, r := range text {
+		cells := 1
+		if unicode.Is(unicode.Mn, r) || r == 0x200d {
+			cells = 0
+		} else if r >= 0x1100 && (r <= 0x115f || r >= 0x2e80 && r <= 0xa4cf || r >= 0xac00 && r <= 0xd7a3 || r >= 0xf900 && r <= 0xfaff || r >= 0xfe10 && r <= 0xfe6f || r >= 0xff01 && r <= 0xff60 || r >= 0x1f000) {
+			cells = 2
+		}
+		if used+cells > width {
+			break
+		}
+		out.WriteRune(r)
+		used += cells
+	}
+	return out.String()
 }
