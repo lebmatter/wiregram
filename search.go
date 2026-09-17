@@ -415,6 +415,14 @@ func (c *client) searchUsers(ctx context.Context, t *terminal, recentChats []cha
 			if !ok {
 				return chat{}, false, context.Canceled
 			}
+			if key == terminalLockKey {
+				continue
+			}
+			if key == terminalUnlockKey {
+				render()
+				t.flushNotices()
+				continue
+			}
 			switch key {
 			case "\x03", "\x04":
 				return chat{}, false, nil

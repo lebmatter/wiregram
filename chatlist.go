@@ -9,9 +9,10 @@ import (
 )
 
 type chat struct {
-	key   peerKey
-	peer  tg.InputPeerClass
-	title string
+	key    peerKey
+	peer   tg.InputPeerClass
+	title  string
+	unread int
 }
 
 func userName(u *tg.User) string {
@@ -27,12 +28,16 @@ func userName(u *tg.User) string {
 	return "Deleted Account"
 }
 
-func (c *client) dialogs(ctx context.Context) ([]chat, error) {
-	result, err := c.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+func (c *client) dialogs(ctx context.Context, archived bool) ([]chat, int, error) {
+	request := &tg.MessagesGetDialogsRequest{
 		OffsetPeer: &tg.InputPeerEmpty{}, Limit: 20,
-	})
+	}
+	if archived {
+		request.SetFolderID(1)
+	}
+	result, err := c.api.MessagesGetDialogs(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("load chats: %w", err)
+		return nil, 0, fmt.Errorf("load chats: %w", err)
 	}
 	var dialogs []tg.DialogClass
 	var users []tg.UserClass
@@ -43,7 +48,7 @@ func (c *client) dialogs(ctx context.Context) ([]chat, error) {
 	case *tg.MessagesDialogsSlice:
 		dialogs, users, groups = d.Dialogs, d.Users, d.Chats
 	default:
-		return nil, fmt.Errorf("Telegram returned an unexpected chat list")
+		return nil, 0, fmt.Errorf("Telegram returned an unexpected chat list")
 	}
 	c.remember(users, groups)
 	peers := make(map[peerKey]chat)
@@ -61,57 +66,84 @@ func (c *client) dialogs(ctx context.Context) ([]chat, error) {
 		switch g := value.(type) {
 		case *tg.Chat:
 			key := peerKey{'g', g.ID}
-			peers[key] = chat{key, &tg.InputPeerChat{ChatID: g.ID}, g.Title}
+			peers[key] = chat{key: key, peer: &tg.InputPeerChat{ChatID: g.ID}, title: g.Title}
 		case *tg.Channel:
 			key, title := peerKey{'c', g.ID}, g.Title
 			if g.Broadcast {
 				title = "Channel: " + title
 			}
-			peers[key] = chat{key, &tg.InputPeerChannel{ChannelID: g.ID, AccessHash: g.AccessHash}, title}
+			peers[key] = chat{key: key, peer: &tg.InputPeerChannel{ChannelID: g.ID, AccessHash: g.AccessHash}, title: title}
 		}
 	}
 	entries := make([]chat, 0, 20)
+	archiveUnread := 0
 	for _, value := range dialogs {
-		if d, ok := value.(*tg.Dialog); ok {
+		switch d := value.(type) {
+		case *tg.Dialog:
 			c.rememberRead(keyOf(d.Peer), d.ReadInboxMaxID, d.ReadOutboxMaxID)
 			if entry, ok := peers[keyOf(d.Peer)]; ok {
+				entry.unread = d.UnreadCount
 				entries = append(entries, entry)
+			}
+		case *tg.DialogFolder:
+			if d.Folder.ID == 1 {
+				archiveUnread = d.UnreadMutedMessagesCount + d.UnreadUnmutedMessagesCount
 			}
 		}
 		if len(entries) == 20 {
 			break
 		}
 	}
-	return entries, nil
+	return entries, archiveUnread, nil
 }
 
-func renderChats(out io.Writer, chats []chat, selected int) {
+func renderChats(out io.Writer, chats []chat, selected int, archived bool, archiveUnread int) {
 	fmt.Fprint(out, "\033[2J\033[H")
+	if archived {
+		fmt.Fprintln(out, "Archived Chats")
+	}
 	for i, entry := range chats {
 		marker := " "
 		if i == selected {
 			marker = ">"
 		}
-		fmt.Fprintf(out, "%s %2d  %s\n", marker, i+1, plain(entry.title))
+		unread := ""
+		if entry.unread > 0 {
+			unread = fmt.Sprintf(" - %d*", entry.unread)
+		}
+		fmt.Fprintf(out, "%s %2d  %s%s\n", marker, i+1, plain(entry.title), unread)
 	}
 	if len(chats) == 0 {
-		fmt.Fprintln(out, "No chats. Press r to refresh or q to quit.")
+		fmt.Fprintln(out, "No chats here. Press r to refresh or q to quit.")
 	}
 	marker := " "
 	if selected == len(chats) {
+		marker = ">"
+	}
+	if archived {
+		fmt.Fprintf(out, "%s     Back to Chats\n", marker)
+	} else {
+		unread := ""
+		if archiveUnread > 0 {
+			unread = fmt.Sprintf(" - %d*", archiveUnread)
+		}
+		fmt.Fprintf(out, "%s     Archived Chats%s\n", marker, unread)
+	}
+	marker = " "
+	if selected == len(chats)+1 {
 		marker = ">"
 	}
 	fmt.Fprintf(out, "%s     Search users…\n", marker)
 }
 
 // Input is already raw; the application owns terminal state across both modes.
-func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat) (int, bool, error) {
+func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, archived bool, archiveUnread int) (int, bool, error) {
 	selected := 0
 	var confirm *struct {
 		entry  chat
 		revoke bool
 	}
-	renderChats(t.out(), chats, selected)
+	renderChats(t.out(), chats, selected, archived, archiveUnread)
 	for {
 		select {
 		case <-ctx.Done():
@@ -120,18 +152,26 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat) (int
 			if !ok {
 				return -1, false, context.Canceled
 			}
+			if key == terminalLockKey {
+				continue
+			}
+			if key == terminalUnlockKey {
+				renderChats(t.out(), chats, selected, archived, archiveUnread)
+				t.flushNotices()
+				continue
+			}
 			if confirm != nil {
 				request := confirm
 				confirm = nil
 				if key == "y" || key == "Y" {
 					if err := c.deleteChat(ctx, request.entry, request.revoke); err != nil {
-						renderChats(t.out(), chats, selected)
+						renderChats(t.out(), chats, selected, archived, archiveUnread)
 						t.report(err)
 						continue
 					}
 					return -1, true, nil
 				}
-				renderChats(t.out(), chats, selected)
+				renderChats(t.out(), chats, selected, archived, archiveUnread)
 				continue
 			}
 			switch key {
@@ -140,17 +180,17 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat) (int
 			case "r":
 				return -1, true, nil
 			case "/":
-				return len(chats), false, nil
+				return len(chats) + 1, false, nil
 			case "k", "\x1b[A", "\x1bOA":
 				if selected > 0 {
 					selected--
 				}
-				renderChats(t.out(), chats, selected)
+				renderChats(t.out(), chats, selected, archived, archiveUnread)
 			case "j", "\x1b[B", "\x1bOB":
-				if selected < len(chats) {
+				if selected < len(chats)+1 {
 					selected++
 				}
-				renderChats(t.out(), chats, selected)
+				renderChats(t.out(), chats, selected, archived, archiveUnread)
 			case "\x1bd", "\x1bD", "\x1b\x04":
 				if selected >= len(chats) {
 					continue

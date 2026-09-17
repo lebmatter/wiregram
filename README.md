@@ -54,6 +54,7 @@ mode `0600`. Keep both private; never commit them.
 | Chat list | Up / `k` | Select previous chat |
 | Chat list | Down / `j` | Select next chat |
 | Chat list | Enter | Open selected chat |
+| Chat list | Enter on Archived Chats / Back to Chats | Switch chat lists |
 | Chat list | `/` | Search users |
 | Chat list | `r` | Refresh chats |
 | Chat list | Alt+D | Delete selected private chat only for you |
@@ -89,6 +90,9 @@ mode `0600`. Keep both private; never commit them.
 
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.
+Chat rows show unread messages as `Name - N*`; the archive row uses the same
+notation for its aggregate unread count. The locked screen shows the total unread
+message count as `N*`.
 Chat deletion requires confirmation and currently applies only to private chats.
 Alt+M opens a built-in reaction picker for the selected message. Press Tab in
 the picker to insert emoji at the draft cursor instead. Reactions appear only on
@@ -141,11 +145,12 @@ with a `0600` file. Mintg removes it after playback, cancellation, errors, or
 normal shutdown. There is no persistent media cache. Downloads complete before
 playback starts. Force-killing the process or a system crash can prevent cleanup.
 
-After 10 seconds without keyboard input, the screen locks. Locking cancels an
-active download, stops the player and its audio, deletes Kitty images from the
-terminal, and removes temporary media. Any key unlocks back to the chat and is
-consumed. Reopen an attachment explicitly to view it again. Incoming messages,
-player output, and terminal graphics replies do not reset the timer.
+After 10 seconds without keyboard input, the screen locks from the chat list,
+archive, user search, or an open chat. Locking cancels an active download, stops
+the player and its audio, deletes Kitty images from the terminal, and removes
+temporary media. Any key unlocks back to the current screen and is consumed.
+Reopen an attachment explicitly to view it again. Incoming messages, player
+output, and terminal graphics replies do not reset the timer.
 
 This is a screen collapse, not password protection or a terminal scrollback eraser.
 

@@ -58,6 +58,7 @@ type client struct {
 	active           peerKey
 	pending          []*tg.Message
 	pendingReactions []reactionUpdate
+	unread           int
 	changed          chan struct{}
 	report           func(error)
 }
@@ -151,6 +152,23 @@ func (c *client) drain() ([]*tg.Message, []reactionUpdate) {
 	return messages, reactions
 }
 
+func (c *client) refreshTotalUnread(ctx context.Context) (int, error) {
+	state, err := c.api.UpdatesGetState(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("load unread count: %w", err)
+	}
+	c.mu.Lock()
+	c.unread = state.UnreadCount
+	c.mu.Unlock()
+	return state.UnreadCount, nil
+}
+
+func (c *client) cachedTotalUnread() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.unread
+}
+
 func (c *client) accept(value tg.MessageClass) {
 	m, ok := value.(*tg.Message)
 	if !ok {
@@ -228,12 +246,26 @@ func (c *client) runSession(ctx context.Context, t *terminal, histories map[peer
 		return fmt.Errorf("load current account: %w", err)
 	}
 	c.remember([]tg.UserClass{self}, nil)
-	ctx, cancel := context.WithCancel(ctx)
+	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	refreshUnread := func() {
+		go func() {
+			unread, err := c.refreshTotalUnread(sessionCtx)
+			if err != nil {
+				if sessionCtx.Err() == nil {
+					c.report(err)
+				}
+				return
+			}
+			t.updateLock(unread)
+		}()
+	}
+	t.enableInactivity(c.cachedTotalUnread, refreshUnread)
+	defer t.disableInactivity()
 	started := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		err := c.updates.Run(ctx, c.api, self.ID, updates.AuthOptions{
+		err := c.updates.Run(sessionCtx, c.api, self.ID, updates.AuthOptions{
 			OnStart: func(context.Context) { close(started) },
 		})
 		done <- err
@@ -244,7 +276,7 @@ func (c *client) runSession(ctx context.Context, t *terminal, histories map[peer
 		return err
 	case <-started:
 	}
-	uiErr := c.runModes(ctx, t, histories)
+	uiErr := c.runModes(sessionCtx, t, histories)
 	cancel()
 	updateErr := <-done
 	if updateErr != nil && !errors.Is(updateErr, context.Canceled) {

@@ -196,7 +196,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	t.mu.Lock()
 	t.editor = e.line
 	t.mu.Unlock()
-	defer func() { t.mu.Lock(); t.editor = nil; t.locked = false; t.mu.Unlock() }()
+	defer func() { t.mu.Lock(); t.editor = nil; t.mu.Unlock() }()
 	reads := newReadReporter(c, entry)
 	defer func() {
 		if err := reads.close(sessionCtx); err != nil && sessionCtx.Err() == nil {
@@ -204,7 +204,6 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		}
 	}()
 	readFailed := false
-	locked := false
 	var emojiEditor *editor
 	var emojiQuery []rune
 	var emojiChoices []emojiOption
@@ -246,7 +245,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var requested attachment
 	player := ""
 	render := func() {
-		if locked || mediaDone != nil {
+		if t.isLocked() || mediaDone != nil {
 			return
 		}
 		if emojiEditor != nil {
@@ -377,15 +376,6 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	}()
 	defer func() { cancel(); <-workerDone }()
 	var queue []outgoingMessage
-	lastKey := time.Now()
-	lockSignal := make(chan struct{}, 1)
-	timer := time.AfterFunc(10*time.Second, func() {
-		select {
-		case lockSignal <- struct{}{}:
-		default:
-		}
-	})
-	defer timer.Stop()
 	appendMessage := func(message *tg.Message) {
 		if message.ID != 0 && seen[message.ID] {
 			for i, previous := range messages {
@@ -548,17 +538,6 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			if err != nil && !errors.Is(err, context.Canceled) {
 				t.report(err)
 			}
-		case <-lockSignal:
-			remaining := 10*time.Second - time.Since(lastKey)
-			if remaining > 0 {
-				timer.Reset(remaining)
-				continue
-			}
-			if !locked {
-				locked = true
-				t.lock()
-				stopMedia()
-			}
 		case key, ok := <-t.keys:
 			if !ok {
 				return context.Canceled
@@ -576,10 +555,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				continue
 			}
-			lastKey = time.Now()
-			timer.Reset(10 * time.Second)
-			if locked {
-				locked = false
+			if key == terminalLockKey {
+				stopMedia()
+				continue
+			}
+			if key == terminalUnlockKey {
 				render()
 				if mediaNotice != nil {
 					t.report(mediaNotice)
@@ -788,7 +768,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				return fmt.Errorf("read message: %w", result.err)
 			}
 			if strings.TrimSpace(result.text) == "" {
-				if !locked {
+				if !t.isLocked() {
 					openSelected()
 				}
 				continue

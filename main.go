@@ -82,8 +82,9 @@ func run() (result error) {
 }
 
 func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKey][]string) error {
+	archived := false
 	for {
-		entries, err := c.dialogs(ctx)
+		entries, archiveUnread, err := c.dialogs(ctx, archived)
 		if err != nil {
 			if !networkError(err) {
 				return err
@@ -94,7 +95,7 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 			}
 			continue
 		}
-		index, refresh, err := c.selectChat(ctx, t, entries)
+		index, refresh, err := c.selectChat(ctx, t, entries, archived, archiveUnread)
 		if err != nil {
 			return err
 		}
@@ -104,8 +105,12 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 		if index < 0 {
 			return nil
 		}
-		var entry chat
 		if index == len(entries) {
+			archived = !archived
+			continue
+		}
+		var entry chat
+		if index == len(entries)+1 {
 			var selected bool
 			entry, selected, err = c.searchUsers(ctx, t, entries)
 			if err != nil {
@@ -139,7 +144,19 @@ type terminal struct {
 	notices []string
 	editor  *readline.Instance
 	keys    <-chan string
+	locking chan inactivityConfig
 }
+
+type inactivityConfig struct {
+	enabled bool
+	unread  func() int
+	refresh func()
+}
+
+const (
+	terminalLockKey   = "\x00wiregram-lock\x00"
+	terminalUnlockKey = "\x00wiregram-unlock\x00"
+)
 
 type terminalWriter struct {
 	terminal *terminal
@@ -273,6 +290,102 @@ func readKeys(ctx context.Context) <-chan string {
 	return keys
 }
 
+func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-chan string {
+	output := make(chan string)
+	go func() {
+		defer close(output)
+		timer := time.NewTimer(time.Hour)
+		if !timer.Stop() {
+			<-timer.C
+		}
+		defer timer.Stop()
+		var timerC <-chan time.Time
+		var config inactivityConfig
+		var queue []string
+		locked := false
+		reset := func() {
+			if !timer.Stop() && timerC != nil {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(10 * time.Second)
+			timerC = timer.C
+		}
+		for {
+			var send chan string
+			var next string
+			if len(queue) > 0 {
+				send, next = output, queue[0]
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case nextConfig := <-t.locking:
+				config = nextConfig
+				if !config.enabled {
+					timer.Stop()
+					timerC = nil
+					if locked {
+						locked = false
+						t.releaseLock()
+					}
+					continue
+				}
+				reset()
+				if config.refresh != nil {
+					config.refresh()
+				}
+			case <-timerC:
+				timerC = nil
+				if !config.enabled || locked {
+					continue
+				}
+				locked = true
+				unread := 0
+				if config.unread != nil {
+					unread = config.unread()
+				}
+				t.lock(unread)
+				if config.refresh != nil {
+					config.refresh()
+				}
+				queue = append(queue, terminalLockKey)
+			case key, ok := <-input:
+				if !ok {
+					return
+				}
+				if strings.HasPrefix(key, "\033_") {
+					queue = append(queue, key)
+					continue
+				}
+				if config.enabled {
+					reset()
+				}
+				if locked {
+					locked = false
+					t.releaseLock()
+					queue = append(queue, terminalUnlockKey)
+					continue
+				}
+				queue = append(queue, key)
+			case send <- next:
+				queue = queue[1:]
+			}
+		}
+	}()
+	return output
+}
+
+func (t *terminal) enableInactivity(unread func() int, refresh func()) {
+	t.locking <- inactivityConfig{enabled: true, unread: unread, refresh: refresh}
+}
+
+func (t *terminal) disableInactivity() {
+	t.locking <- inactivityConfig{}
+}
+
 type lineResult struct {
 	text string
 	err  error
@@ -390,14 +503,45 @@ func (t *terminal) prompt(ctx context.Context, prompt string, masked bool) (stri
 	}
 }
 
-func (t *terminal) lock() {
+func (t *terminal) lock(unread int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.locked = true
 	if t.viewing {
 		fmt.Fprint(os.Stdout, "\033\\\033_Ga=d,d=A,q=2;\033\\")
 	}
-	fmt.Fprint(os.Stdout, "\033[2J\033[H[mintg: locked — press any key]\r\n")
+	fmt.Fprintf(os.Stdout, "\033[2J\033[H[mintg: locked — %d* — press any key]\r\n", unread)
+}
+
+func (t *terminal) updateLock(unread int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.locked {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "\033[2J\033[H[mintg: locked — %d* — press any key]\r\n", unread)
+}
+
+func (t *terminal) releaseLock() {
+	t.mu.Lock()
+	t.locked = false
+	t.mu.Unlock()
+}
+
+func (t *terminal) isLocked() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.locked
+}
+
+func (t *terminal) flushNotices() {
+	t.mu.Lock()
+	notices := t.notices
+	t.notices = nil
+	t.mu.Unlock()
+	for _, notice := range notices {
+		t.report(fmt.Errorf("%s", notice))
+	}
 }
 
 func (t *terminal) unlock(lines []string) {
@@ -432,7 +576,8 @@ func openTerminal(ctx context.Context) (*terminal, func() error, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("enter raw terminal mode: %w", err)
 	}
-	t := &terminal{keys: readKeys(ctx)}
+	t := &terminal{locking: make(chan inactivityConfig, 1)}
+	t.keys = t.manageInactivity(ctx, readKeys(ctx))
 	return t, func() error { return term.Restore(int(os.Stdin.Fd()), state) }, nil
 }
 
