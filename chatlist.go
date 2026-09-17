@@ -81,6 +81,7 @@ func (c *client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 		switch d := value.(type) {
 		case *tg.Dialog:
 			c.rememberRead(keyOf(d.Peer), d.ReadInboxMaxID, d.ReadOutboxMaxID)
+			c.rememberUnread(keyOf(d.Peer), d.UnreadCount)
 			if entry, ok := peers[keyOf(d.Peer)]; ok {
 				entry.unread = d.UnreadCount
 				entries = append(entries, entry)

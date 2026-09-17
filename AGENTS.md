@@ -61,7 +61,8 @@ Save to `~/.config/wiregram/config.json`:
 ```json
 {
   "api_id": 123456,
-  "api_hash": "abcdef1234567890"
+  "api_hash": "abcdef1234567890",
+  "autolock": 1
 }
 ```
 
@@ -166,6 +167,7 @@ you> message text here
 | Esc        | Return to chat list (Mode 1)              |
 | Ctrl+D     | Return to chat list (Mode 1)              |
 | Ctrl+C     | Return to chat list (Mode 1)              |
+| Ctrl+L     | Lock immediately                          |
 
 ### Incoming messages
 
@@ -184,7 +186,8 @@ They will appear as unread when the user returns to the chat list.
 After 10 seconds of no keyboard input in chat view, collapse the screen:
 
 1. Clear the terminal (`\033[2J\033[H`).
-2. Print a single line: `[wiregram: locked — press any key]`
+2. Print a single line with that chat's unread count:
+   `[wiregram: locked — N* — press any key]`
 3. Drop into raw mode and block on a single keypress.
 4. On any keypress, redraw the last 30 messages and restore the readline prompt.
 
@@ -250,9 +253,13 @@ Path: `~/.config/wiregram/config.json`
 ```json
 {
   "api_id": 123456,
-  "api_hash": "abcdef1234567890"
+  "api_hash": "abcdef1234567890",
+  "autolock": 1
 }
 ```
+
+`autolock` accepts `0` or `1` and defaults to `1` when omitted. It controls only
+the 10-second inactivity timer; Ctrl+L always locks an open chat immediately.
 
 Use `os.UserConfigDir()` to resolve the base path.
 Create directories with `os.MkdirAll` and `0700` permissions.
@@ -285,7 +292,7 @@ Do not implement any of the following:
 
 - Mouse support
 - Color themes or color output
-- Config file options beyond api_id and api_hash
+- Config file options beyond api_id, api_hash, and autolock
 - Message search
 - Media download or upload
 - Message editing or deletion

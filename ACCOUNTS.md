@@ -26,8 +26,8 @@ Account state snapshots use an account-local mutex. A small manager mutex guards
 identity ownership so duplicate numbers cannot become two active runtimes. UI
 state and input histories have a single owner. Account notifications coalesce
 through a one-slot channel; background errors retain only the latest notice per
-account. Unread refreshes for the visible account are single-flight and have a
-five-second timeout. Locking uses cached state and never waits for a network call.
+account. Unread refreshes for the open chat are single-flight and have a
+five-second timeout. Locking uses cached chat state and never waits for a network call.
 
 ## Capacity
 

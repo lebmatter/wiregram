@@ -286,7 +286,7 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 	defer t.disableInactivity()
 	for ctx.Err() == nil {
 		if active == nil {
-			t.enableInactivity(func() int { return 0 }, nil)
+			t.disableInactivity()
 			var err error
 			active, err = m.choose(ctx, t, nil)
 			if err != nil || active == nil {
@@ -310,30 +310,8 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 		}
 		if s.client != nil && s.status == "online" {
 			c := s.client
-			refreshCtx, cancelRefresh := context.WithCancel(s.ctx)
-			var refreshMu sync.Mutex
-			refreshing := false
-			refresh := func() {
-				refreshMu.Lock()
-				if refreshing {
-					refreshMu.Unlock()
-					return
-				}
-				refreshing = true
-				refreshMu.Unlock()
-				go func() {
-					defer func() { refreshMu.Lock(); refreshing = false; refreshMu.Unlock() }()
-					requestCtx, cancel := context.WithTimeout(refreshCtx, 5*time.Second)
-					defer cancel()
-					unread, err := c.refreshTotalUnread(requestCtx)
-					if err == nil && refreshCtx.Err() == nil {
-						t.updateLock(unread)
-					}
-				}()
-			}
-			t.enableInactivity(c.cachedTotalUnread, refresh)
+			t.disableInactivity()
 			err := c.runModes(s.ctx, t, active.histories)
-			cancelRefresh()
 			if err == nil {
 				return nil
 			}

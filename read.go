@@ -34,18 +34,26 @@ func (c *client) rememberRead(key peerKey, inbox, outbox int) {
 }
 
 func (c *client) refreshReadState(ctx context.Context, entry chat) error {
+	_, err := c.refreshChatUnread(ctx, entry)
+	return err
+}
+
+func (c *client) refreshChatUnread(ctx context.Context, entry chat) (int, error) {
 	result, err := c.api.MessagesGetPeerDialogs(ctx, []tg.InputDialogPeerClass{
 		&tg.InputDialogPeer{Peer: entry.peer},
 	})
 	if err != nil {
-		return fmt.Errorf("load read receipts: %w", err)
+		return 0, fmt.Errorf("load chat unread count: %w", err)
 	}
 	for _, value := range result.Dialogs {
 		if d, ok := value.(*tg.Dialog); ok {
-			c.rememberRead(keyOf(d.Peer), d.ReadInboxMaxID, d.ReadOutboxMaxID)
+			key := keyOf(d.Peer)
+			c.rememberRead(key, d.ReadInboxMaxID, d.ReadOutboxMaxID)
+			c.rememberUnread(key, d.UnreadCount)
+			return d.UnreadCount, nil
 		}
 	}
-	return nil
+	return 0, fmt.Errorf("Telegram did not return the selected chat")
 }
 
 func (c *client) readMarker(entry chat, m *tg.Message) string {
@@ -80,6 +88,13 @@ func (c *client) markRead(ctx context.Context, entry chat, id int) error {
 		return fmt.Errorf("mark messages read: %w", err)
 	}
 	c.rememberRead(entry.key, id, 0)
+	if _, err := c.refreshChatUnread(ctx, entry); err != nil {
+		// Reading succeeded. Keep that result even if the best-effort counter
+		// refresh fails; the lock screen will retry its own refresh.
+		if ctx.Err() == nil {
+			c.report(fmt.Errorf("refresh unread count after marking messages read: %w", err))
+		}
+	}
 	return nil
 }
 

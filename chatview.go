@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -197,6 +198,40 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	t.editor = e.line
 	t.mu.Unlock()
 	defer func() { t.mu.Lock(); t.editor = nil; t.mu.Unlock() }()
+	lockCtx, cancelLock := context.WithCancel(ctx)
+	var unreadMu sync.Mutex
+	refreshingUnread := false
+	refreshUnread := func() {
+		unreadMu.Lock()
+		if refreshingUnread {
+			unreadMu.Unlock()
+			return
+		}
+		refreshingUnread = true
+		unreadMu.Unlock()
+		go func() {
+			defer func() {
+				unreadMu.Lock()
+				refreshingUnread = false
+				unreadMu.Unlock()
+			}()
+			requestCtx, cancel := context.WithTimeout(lockCtx, 5*time.Second)
+			defer cancel()
+			unread, err := c.refreshChatUnread(requestCtx, entry)
+			if err != nil {
+				if lockCtx.Err() == nil {
+					t.report(err)
+				}
+				return
+			}
+			t.updateLock(unread)
+		}()
+	}
+	t.enableChatLock(c.autoLock, func() int { return c.cachedChatUnread(entry.key) }, refreshUnread)
+	defer func() {
+		cancelLock()
+		t.disableInactivity()
+	}()
 	reads := newReadReporter(c, entry)
 	defer func() {
 		if err := reads.close(sessionCtx); err != nil && sessionCtx.Err() == nil {
@@ -524,6 +559,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 			}
 			render()
+			t.updateLock(c.cachedChatUnread(entry.key))
 		case <-probe.C:
 			if probing {
 				probing = false
@@ -565,6 +601,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 					t.report(mediaNotice)
 					mediaNotice = nil
 				}
+				continue
+			}
+			if key == "\x0c" {
+				t.lockNow()
 				continue
 			}
 			if mediaDone != nil || probing {

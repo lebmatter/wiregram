@@ -47,6 +47,17 @@ Configuration is stored at `os.UserConfigDir()/wiregram/config.json`, normally
 Directories are created with mode `0700`, and credential/session files with
 mode `0600`. Keep both private; never commit them.
 
+```json
+{
+  "api_id": 123456,
+  "api_hash": "abcdef1234567890",
+  "autolock": 1
+}
+```
+
+`autolock` defaults to `1`. Set it to `0` to disable the 10-second inactivity
+timer. Ctrl+L remains available for manual locking.
+
 ## Keyboard shortcuts
 
 | Context | Shortcut | Action |
@@ -75,6 +86,7 @@ mode `0600`. Keep both private; never commit them.
 | Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
 | Chat | Enter with empty input | Open selected media |
+| Chat | Ctrl+L | Lock immediately |
 | Chat | Esc while replying | Cancel the reply |
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
 | Emoji picker | Type | Filter emoji by name |
@@ -103,8 +115,8 @@ Saved accounts connect in the background at startup and stay connected while
 you switch. Each has independent sessions, caches, in-memory input history,
 updates, retries, and flood waits. The chat-list heading identifies the active
 name and number. Only the selected account's chats are displayed or marked read.
-The lock counter remains scoped to the most recently selected account (zero
-before selecting one); it is not a sum across accounts.
+The lock counter is the unread count for the open chat; it is not an account-wide
+or cross-account total.
 
 API credentials remain in `config.json`. New sessions are stored in private
 `accounts/account-*/session/session.json` directories next to that file, with
@@ -119,8 +131,8 @@ the planned boundary for AI processing.
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.
 Chat rows show unread messages as `Name - N*`; the archive row uses the same
-notation for its aggregate unread count. The locked screen shows the total unread
-message count as `N*`.
+notation for its aggregate unread count. The locked screen shows the open chat's
+unread message count as `N*`.
 Chat deletion requires confirmation and currently applies only to private chats.
 Alt+M opens a built-in reaction picker for the selected message. Press Tab in
 the picker to insert emoji at the draft cursor instead. Reactions appear only on
@@ -173,8 +185,8 @@ with a `0600` file. Wiregram removes it after playback, cancellation, errors, or
 normal shutdown. There is no persistent media cache. Downloads complete before
 playback starts. Force-killing the process or a system crash can prevent cleanup.
 
-After 10 seconds without keyboard input, the screen locks from the chat list,
-archive, user search, or an open chat. Locking cancels an active download, stops
+After 10 seconds without keyboard input in an open chat, the screen locks when
+`autolock` is enabled. Locking cancels an active download, stops
 the player and its audio, deletes Kitty images from the terminal, and removes
 temporary media. Any key unlocks back to the current screen and is consumed.
 Reopen an attachment explicitly to view it again. Incoming messages, player

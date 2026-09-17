@@ -133,10 +133,12 @@ type terminal struct {
 }
 
 type inactivityConfig struct {
-	enabled bool
-	unread  func() int
-	refresh func()
-	ack     chan struct{}
+	enabled   bool
+	automatic bool
+	lockNow   bool
+	unread    func() int
+	refresh   func()
+	ack       chan struct{}
 }
 
 const (
@@ -300,6 +302,21 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 			timer.Reset(10 * time.Second)
 			timerC = timer.C
 		}
+		lockScreen := func() {
+			if !config.enabled || locked {
+				return
+			}
+			locked = true
+			unread := 0
+			if config.unread != nil {
+				unread = config.unread()
+			}
+			t.lock(unread)
+			if config.refresh != nil {
+				config.refresh()
+			}
+			queue = append(queue, terminalLockKey)
+		}
 		for {
 			var send chan string
 			var next string
@@ -310,6 +327,11 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 			case <-ctx.Done():
 				return
 			case nextConfig := <-t.locking:
+				if nextConfig.lockNow {
+					lockScreen()
+					close(nextConfig.ack)
+					continue
+				}
 				config = nextConfig
 				if !config.enabled {
 					timer.Stop()
@@ -321,26 +343,19 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 					close(config.ack)
 					continue
 				}
-				reset()
+				if config.automatic {
+					reset()
+				} else {
+					timer.Stop()
+					timerC = nil
+				}
 				if config.refresh != nil {
 					config.refresh()
 				}
 				close(config.ack)
 			case <-timerC:
 				timerC = nil
-				if !config.enabled || locked {
-					continue
-				}
-				locked = true
-				unread := 0
-				if config.unread != nil {
-					unread = config.unread()
-				}
-				t.lock(unread)
-				if config.refresh != nil {
-					config.refresh()
-				}
-				queue = append(queue, terminalLockKey)
+				lockScreen()
 			case key, ok := <-input:
 				if !ok {
 					return
@@ -349,7 +364,7 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 					queue = append(queue, key)
 					continue
 				}
-				if config.enabled {
+				if config.enabled && config.automatic {
 					reset()
 				}
 				if locked {
@@ -367,8 +382,14 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 	return output
 }
 
-func (t *terminal) enableInactivity(unread func() int, refresh func()) {
-	t.configureInactivity(inactivityConfig{enabled: true, unread: unread, refresh: refresh})
+func (t *terminal) enableChatLock(automatic bool, unread func() int, refresh func()) {
+	t.configureInactivity(inactivityConfig{
+		enabled: true, automatic: automatic, unread: unread, refresh: refresh,
+	})
+}
+
+func (t *terminal) lockNow() {
+	t.configureInactivity(inactivityConfig{lockNow: true})
 }
 
 func (t *terminal) disableInactivity() {

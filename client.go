@@ -51,6 +51,7 @@ type client struct {
 	users            map[int64]*tg.User
 	chats            map[peerKey]string
 	reads            map[peerKey]readState
+	unreads          map[peerKey]int
 	contactUsers     []*tg.User
 	frequentUsers    []*tg.User
 	contactsLoaded   bool
@@ -59,7 +60,7 @@ type client struct {
 	active           peerKey
 	pending          []*tg.Message
 	pendingReactions []reactionUpdate
-	unread           int
+	autoLock         bool
 	changed          chan struct{}
 	report           func(error)
 }
@@ -69,7 +70,11 @@ func newClient(cfg config, dir string, report func(error)) (*client, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
-	c := &client{users: make(map[int64]*tg.User), chats: make(map[peerKey]string), changed: make(chan struct{}, 1)}
+	c := &client{
+		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
+		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
+		changed: make(chan struct{}, 1),
+	}
 	middleware := telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
 		return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
 			for {
@@ -153,31 +158,37 @@ func (c *client) drain() ([]*tg.Message, []reactionUpdate) {
 	return messages, reactions
 }
 
-func (c *client) refreshTotalUnread(ctx context.Context) (int, error) {
-	state, err := c.api.UpdatesGetState(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("load unread count: %w", err)
-	}
+func (c *client) rememberUnread(key peerKey, unread int) {
 	c.mu.Lock()
-	c.unread = state.UnreadCount
+	previous := c.unreads[key]
+	c.unreads[key] = unread
+	if previous != unread && c.active == key {
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
+	}
 	c.mu.Unlock()
-	return state.UnreadCount, nil
 }
 
-func (c *client) cachedTotalUnread() int {
+func (c *client) cachedChatUnread(key peerKey) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.unread
+	return c.unreads[key]
 }
 
-func (c *client) accept(value tg.MessageClass) {
+func (c *client) accept(value tg.MessageClass, newMessage bool) {
 	m, ok := value.(*tg.Message)
 	if !ok {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.active == (peerKey{}) || keyOf(m.PeerID) != c.active {
+	key := keyOf(m.PeerID)
+	if newMessage && !m.Out {
+		c.unreads[key]++
+	}
+	if c.active == (peerKey{}) || key != c.active {
 		return
 	}
 	c.pending = append(c.pending, m)
@@ -212,20 +223,20 @@ func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 	case *tg.UpdateShort:
 		updates = []tg.UpdateClass{u.Update}
 	case *tg.UpdateShortMessage:
-		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerUser{UserID: u.UserID}, FromID: &tg.PeerUser{UserID: u.UserID}, Message: u.Message, Date: u.Date})
+		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerUser{UserID: u.UserID}, FromID: &tg.PeerUser{UserID: u.UserID}, Message: u.Message, Date: u.Date}, true)
 	case *tg.UpdateShortChatMessage:
-		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerChat{ChatID: u.ChatID}, FromID: &tg.PeerUser{UserID: u.FromID}, Message: u.Message, Date: u.Date})
+		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerChat{ChatID: u.ChatID}, FromID: &tg.PeerUser{UserID: u.FromID}, Message: u.Message, Date: u.Date}, true)
 	}
 	for _, value := range updates {
 		switch u := value.(type) {
 		case *tg.UpdateNewMessage:
-			c.accept(u.Message)
+			c.accept(u.Message, true)
 		case *tg.UpdateNewChannelMessage:
-			c.accept(u.Message)
+			c.accept(u.Message, true)
 		case *tg.UpdateEditMessage:
-			c.accept(u.Message)
+			c.accept(u.Message, false)
 		case *tg.UpdateEditChannelMessage:
-			c.accept(u.Message)
+			c.accept(u.Message, false)
 		case *tg.UpdateMessageReactions:
 			c.acceptReaction(u)
 		case *tg.UpdateReadHistoryOutbox:

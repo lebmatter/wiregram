@@ -16,8 +16,9 @@ var buildAPIID string
 var buildAPIHash string
 
 type config struct {
-	APIID   int    `json:"api_id"`
-	APIHash string `json:"api_hash"`
+	APIID    int    `json:"api_id"`
+	APIHash  string `json:"api_hash"`
+	AutoLock int    `json:"autolock"`
 }
 
 type promptFunc func(string, bool) (string, error)
@@ -34,12 +35,15 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 	path := filepath.Join(dir, "config.json")
 	data, err := os.ReadFile(path)
 	if err == nil {
-		var cfg config
+		cfg := config{AutoLock: 1}
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return cfg, dir, fmt.Errorf("read configuration: %w", err)
 		}
 		if cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "" {
 			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash")
+		}
+		if cfg.AutoLock != 0 && cfg.AutoLock != 1 {
+			return cfg, dir, fmt.Errorf("configuration autolock must be 0 or 1")
 		}
 		return cfg, dir, nil
 	}
@@ -51,10 +55,10 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 		if err != nil || id <= 0 || strings.TrimSpace(buildAPIHash) == "" {
 			return config{}, dir, fmt.Errorf("this build has incomplete or invalid Telegram API credentials; rebuild with both API ID and API hash")
 		}
-		return config{APIID: id, APIHash: strings.TrimSpace(buildAPIHash)}, dir, nil
+		return config{APIID: id, APIHash: strings.TrimSpace(buildAPIHash), AutoLock: 1}, dir, nil
 	}
 	fmt.Fprintln(out, "wiregram: no config found.\nGet your API credentials at https://my.telegram.org/apps")
-	var cfg config
+	cfg := config{AutoLock: 1}
 	for {
 		value, err := prompt("Enter API ID: ", false)
 		if err != nil {
