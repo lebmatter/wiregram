@@ -214,4 +214,6 @@ transitive dependencies through `go.mod` and `go.sum`. `mpv` is an optional runt
 dependency for media; Wiregram itself remains cgo-free. Media playback and the new
 key bindings implement the subsequently requested extensions to `AGENTS.md`.
 
-Licensed under the MIT license.
+Copyright © 2026 wiregram contributors.
+Licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later).

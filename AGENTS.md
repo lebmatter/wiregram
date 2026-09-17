@@ -8,7 +8,7 @@ Just readline, raw terminal for selection, and plain text.
 
 Repository name: `wiregram`
 Language: Go (1.22+)
-License: MIT
+License: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)
 
 ## Principles
 
