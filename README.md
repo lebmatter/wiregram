@@ -131,6 +131,8 @@ the planned boundary for AI processing.
 
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.
+Chat text wraps at a maximum of 120 display columns, or the terminal width when
+the window is narrower.
 Chat rows show unread messages as `Name - N*`; the archive row uses the same
 notation for its aggregate unread count. The locked screen shows the open chat's
 unread message count as `N*`.

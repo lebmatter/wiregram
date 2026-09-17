@@ -943,6 +943,8 @@ func acknowledgeSelected(messages []*tg.Message, selected int, changed map[int]b
 	}
 }
 
+const maxChatLineWidth = 120
+
 func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool, replying *tg.Message) ([]string, int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
@@ -952,6 +954,7 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	if replying != nil {
 		reserved++
 	}
+	lineWidth := min(cols-1, maxChatLineWidth)
 	available := max(1, rows-reserved)
 	byID := make(map[int]*tg.Message, len(messages))
 	for _, message := range messages {
@@ -968,12 +971,12 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 				marker += "[" + reactions + "] "
 			}
 		}
-		return wrapLine(marker+c.messageLine(messages[i], entry, byID), cols-1)
+		return wrapLine(marker+c.messageLine(messages[i], entry, byID), lineWidth)
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines := []string{}
 		if replying != nil {
-			lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), cols-1))
+			lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), lineWidth))
 		}
 		return lines, 0
 	}
@@ -1020,7 +1023,7 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 		}
 	}
 	if replying != nil {
-		lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), cols-1))
+		lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), lineWidth))
 	}
 	return lines, readID
 }
