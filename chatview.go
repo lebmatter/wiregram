@@ -952,18 +952,12 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	if replying != nil {
 		reserved++
 	}
-	count := min(len(messages), max(0, rows-reserved))
-	start := max(0, selected-count+1)
-	if start+count > len(messages) {
-		start = max(0, len(messages)-count)
-	}
-	lines := make([]string, 0, count+1)
+	available := max(1, rows-reserved)
 	byID := make(map[int]*tg.Message, len(messages))
 	for _, message := range messages {
 		byID[message.ID] = message
 	}
-	readID := 0
-	for i := start; i < start+count; i++ {
+	messageLines := func(i int) []string {
 		marker := "  "
 		if changed[messages[i].ID] {
 			marker = "* "
@@ -974,7 +968,53 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 				marker += "[" + reactions + "] "
 			}
 		}
-		lines = append(lines, clipLine(marker+c.messageLine(messages[i], entry, byID), cols-1))
+		return wrapLine(marker+c.messageLine(messages[i], entry, byID), cols-1)
+	}
+	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
+		lines := []string{}
+		if replying != nil {
+			lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), cols-1))
+		}
+		return lines, 0
+	}
+	blocks := make(map[int][]string)
+	block := func(i int) []string {
+		if lines := blocks[i]; lines != nil {
+			return lines
+		}
+		lines := messageLines(i)
+		blocks[i] = lines
+		return lines
+	}
+	selectedBlock := block(selected)
+	if len(selectedBlock) > available {
+		selectedBlock = selectedBlock[:available]
+	}
+	start, end, used := selected, selected+1, len(selectedBlock)
+	for start > 0 {
+		previous := block(start - 1)
+		if used+len(previous) > available {
+			break
+		}
+		start--
+		used += len(previous)
+	}
+	for end < len(messages) {
+		next := block(end)
+		if used+len(next) > available {
+			break
+		}
+		end++
+		used += len(next)
+	}
+	lines := make([]string, 0, used+1)
+	readID := 0
+	for i := start; i < end; i++ {
+		visible := block(i)
+		if i == selected && len(visible) > available {
+			visible = selectedBlock
+		}
+		lines = append(lines, visible...)
 		if !messages[i].Out {
 			readID = max(readID, messages[i].ID)
 		}
@@ -985,16 +1025,106 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	return lines, readID
 }
 
+func wrapLine(text string, width int) []string {
+	if width < 1 {
+		return []string{""}
+	}
+	continuation := "  "
+	if width < 4 {
+		continuation = " "
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	leading := text[:len(text)-len(strings.TrimLeft(text, " \t\r\n"))]
+	var lines []string
+	line := leading
+	used := displayWidth(leading)
+	hasWord := false
+	flush := func() {
+		lines = append(lines, line)
+		line = continuation
+		used = displayWidth(continuation)
+		hasWord = false
+	}
+	for _, word := range words {
+		wordWidth := displayWidth(word)
+		separator := 0
+		if hasWord {
+			separator = 1
+		}
+		if used+separator+wordWidth <= width {
+			if separator != 0 {
+				line += " "
+				used++
+			}
+			line += word
+			used += wordWidth
+			hasWord = true
+			continue
+		}
+		if hasWord {
+			flush()
+		}
+		for word != "" {
+			part, rest := takeCells(word, width-used)
+			line += part
+			used += displayWidth(part)
+			hasWord = true
+			word = rest
+			if word != "" {
+				flush()
+			}
+		}
+	}
+	if hasWord {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func displayWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		width += runeWidth(r)
+	}
+	return width
+}
+
+func takeCells(text string, limit int) (string, string) {
+	if limit < 1 {
+		limit = 1
+	}
+	used, end := 0, 0
+	for index, r := range text {
+		cells := runeWidth(r)
+		if used > 0 && used+cells > limit {
+			break
+		}
+		used += cells
+		end = index + len(string(r))
+	}
+	return text[:end], text[end:]
+}
+
+func runeWidth(r rune) int {
+	if unicode.Is(unicode.Mn, r) || r == 0x200d {
+		return 0
+	}
+	if r >= 0x1100 && (r <= 0x115f || r >= 0x2e80 && r <= 0xa4cf ||
+		r >= 0xac00 && r <= 0xd7a3 || r >= 0xf900 && r <= 0xfaff ||
+		r >= 0xfe10 && r <= 0xfe6f || r >= 0xff01 && r <= 0xff60 || r >= 0x1f000) {
+		return 2
+	}
+	return 1
+}
+
 func clipLine(text string, width int) string {
 	var out strings.Builder
 	used := 0
 	for _, r := range text {
-		cells := 1
-		if unicode.Is(unicode.Mn, r) || r == 0x200d {
-			cells = 0
-		} else if r >= 0x1100 && (r <= 0x115f || r >= 0x2e80 && r <= 0xa4cf || r >= 0xac00 && r <= 0xd7a3 || r >= 0xf900 && r <= 0xfaff || r >= 0xfe10 && r <= 0xfe6f || r >= 0xff01 && r <= 0xff60 || r >= 0x1f000) {
-			cells = 2
-		}
+		cells := runeWidth(r)
 		if used+cells > width {
 			break
 		}
