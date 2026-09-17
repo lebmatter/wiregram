@@ -15,15 +15,15 @@ func editableMessage(m *tg.Message) error {
 	}
 	_, forwarded := m.GetFwdFrom()
 	if forwarded || m.ViaBotID != 0 || expiringMediaLabel(m.Media) != "" {
-		return fmt.Errorf("this message cannot be edited in mintg")
+		return fmt.Errorf("this message cannot be edited in wiregram")
 	}
 	switch m.Media.(type) {
 	case nil, *tg.MessageMediaEmpty, *tg.MessageMediaWebPage:
 	default:
-		return fmt.Errorf("only text messages can be edited in mintg")
+		return fmt.Errorf("only text messages can be edited in wiregram")
 	}
 	if strings.ContainsAny(m.Message, "\r\n") {
-		return fmt.Errorf("multiline messages cannot be edited in mintg's single-line editor")
+		return fmt.Errorf("multiline messages cannot be edited in wiregram's single-line editor")
 	}
 	return nil
 }

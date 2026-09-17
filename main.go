@@ -27,17 +27,17 @@ func main() {
 }
 
 func run() (result error) {
-	flags := flag.NewFlagSet("mintg", flag.ContinueOnError)
+	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(os.Stdout, "Usage: mintg")
+			fmt.Fprintln(os.Stdout, "Usage: wiregram")
 			return nil
 		}
 		return fmt.Errorf("parse arguments: %w", err)
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("mintg does not accept positional arguments")
+		return fmt.Errorf("wiregram does not accept positional arguments")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -510,7 +510,7 @@ func (t *terminal) lock(unread int) {
 	if t.viewing {
 		fmt.Fprint(os.Stdout, "\033\\\033_Ga=d,d=A,q=2;\033\\")
 	}
-	fmt.Fprintf(os.Stdout, "\033[2J\033[H[mintg: locked — %d* — press any key]\r\n", unread)
+	fmt.Fprintf(os.Stdout, "\033[2J\033[H[wiregram: locked — %d* — press any key]\r\n", unread)
 }
 
 func (t *terminal) updateLock(unread int) {
@@ -519,7 +519,7 @@ func (t *terminal) updateLock(unread int) {
 	if !t.locked {
 		return
 	}
-	fmt.Fprintf(os.Stdout, "\033[2J\033[H[mintg: locked — %d* — press any key]\r\n", unread)
+	fmt.Fprintf(os.Stdout, "\033[2J\033[H[wiregram: locked — %d* — press any key]\r\n", unread)
 }
 
 func (t *terminal) releaseLock() {
@@ -570,7 +570,7 @@ func (t *terminal) unlock(lines []string) {
 
 func openTerminal(ctx context.Context) (*terminal, func() error, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return nil, nil, fmt.Errorf("mintg needs an interactive terminal")
+		return nil, nil, fmt.Errorf("wiregram needs an interactive terminal")
 	}
 	state, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {

@@ -27,7 +27,7 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 	if err != nil {
 		return config{}, "", fmt.Errorf("locate configuration directory: %w", err)
 	}
-	dir := filepath.Join(base, "mintg")
+	dir := filepath.Join(base, "wiregram")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return config{}, "", fmt.Errorf("create configuration directory: %w", err)
 	}
@@ -53,7 +53,7 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 		}
 		return config{APIID: id, APIHash: strings.TrimSpace(buildAPIHash)}, dir, nil
 	}
-	fmt.Fprintln(out, "mintg: no config found.\nGet your API credentials at https://my.telegram.org/apps")
+	fmt.Fprintln(out, "wiregram: no config found.\nGet your API credentials at https://my.telegram.org/apps")
 	var cfg config
 	for {
 		value, err := prompt("Enter API ID: ", false)

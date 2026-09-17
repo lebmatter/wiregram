@@ -1,12 +1,12 @@
-# AGENTS.md — mintg
+# AGENTS.md — Wiregram
 
 ## Project
 
-mintg is a minimal, text-only Telegram CLI client written in Go.
+Wiregram is a minimal, text-only Telegram CLI client written in Go.
 No TUI framework. No mouse support. No menus. No bubbles.
 Just readline, raw terminal for selection, and plain text.
 
-Repository name: `mintg`
+Repository name: `wiregram`
 Language: Go (1.22+)
 License: MIT
 
@@ -27,14 +27,14 @@ License: MIT
 ## Directory layout
 
 ```
-mintg/
+wiregram/
 ├── main.go          # entry point, flag parsing, run loop
 ├── auth.go          # phone prompt, OTP prompt, 2FA prompt
 ├── client.go        # gotd/td session wrapper, connect/disconnect
 ├── chatlist.go      # fetch dialogs, render list, arrow-key selection
 ├── chatview.go      # message history display, readline send loop
 ├── media.go         # format media-only messages into bracket tags
-├── config.go        # config file (~/.config/mintg/config.json)
+├── config.go        # config file (~/.config/wiregram/config.json)
 ├── go.mod
 └── go.sum
 ```
@@ -44,19 +44,19 @@ Do NOT create a `cmd/` directory. `main.go` is at the repo root.
 
 ## Telegram API credentials
 
-mintg uses gotd/td which speaks MTProto directly.
+Wiregram uses gotd/td which speaks MTProto directly.
 Users must supply their own Telegram API credentials.
 
-On first run, if `~/.config/mintg/config.json` does not exist, prompt:
+On first run, if `~/.config/wiregram/config.json` does not exist, prompt:
 
 ```
-mintg: no config found.
+wiregram: no config found.
 Get your API credentials at https://my.telegram.org/apps
 Enter API ID: _
 Enter API Hash: _
 ```
 
-Save to `~/.config/mintg/config.json`:
+Save to `~/.config/wiregram/config.json`:
 
 ```json
 {
@@ -65,7 +65,7 @@ Save to `~/.config/mintg/config.json`:
 }
 ```
 
-Session data (gotd/td session storage) goes in `~/.config/mintg/session/`.
+Session data (gotd/td session storage) goes in `~/.config/wiregram/session/`.
 
 ## Authentication flow
 
@@ -184,7 +184,7 @@ They will appear as unread when the user returns to the chat list.
 After 10 seconds of no keyboard input in chat view, collapse the screen:
 
 1. Clear the terminal (`\033[2J\033[H`).
-2. Print a single line: `[mintg: locked — press any key]`
+2. Print a single line: `[wiregram: locked — press any key]`
 3. Drop into raw mode and block on a single keypress.
 4. On any keypress, redraw the last 30 messages and restore the readline prompt.
 
@@ -245,7 +245,7 @@ Separator between tag and caption is ` — ` (space, em dash, space).
 
 ## Config file
 
-Path: `~/.config/mintg/config.json`
+Path: `~/.config/wiregram/config.json`
 
 ```json
 {
@@ -260,7 +260,7 @@ Create directories with `os.MkdirAll` and `0700` permissions.
 ## Session storage
 
 gotd/td supports pluggable session storage.
-Use file-based session storage in `~/.config/mintg/session/`.
+Use file-based session storage in `~/.config/wiregram/session/`.
 This avoids re-authentication on every launch.
 
 ## Error handling
@@ -273,7 +273,7 @@ This avoids re-authentication on every launch.
 ## Build
 
 ```bash
-go build -o mintg .
+go build -o wiregram .
 ```
 
 Must build with no warnings, no lint errors.

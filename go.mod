@@ -1,4 +1,4 @@
-module mintg
+module wiregram
 
 go 1.22
 

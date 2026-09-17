@@ -28,7 +28,7 @@ type attachment struct {
 func mediaAttachment(message *tg.Message) (attachment, error) {
 	// Do not download expiring media until its read/expiry lifecycle is supported.
 	if label := expiringMediaLabel(message.Media); label != "" {
-		return attachment{}, fmt.Errorf("%s is not supported in mintg; open it in an official Telegram app", label)
+		return attachment{}, fmt.Errorf("%s is not supported in wiregram; open it in an official Telegram app", label)
 	}
 	switch m := message.Media.(type) {
 	case *tg.MessageMediaPhoto:
@@ -108,7 +108,7 @@ func (t *terminal) clearMedia() {
 }
 
 func (c *client) playMedia(ctx context.Context, t *terminal, a attachment, player string) (result error) {
-	dir, err := os.MkdirTemp("", "mintg-media-")
+	dir, err := os.MkdirTemp("", "wiregram-media-")
 	if err != nil {
 		return fmt.Errorf("create private media directory: %w", err)
 	}

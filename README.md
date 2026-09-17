@@ -1,4 +1,4 @@
-# mintg
+# Wiregram
 
 A minimal Telegram client for the terminal, written in Go. Text conversations
 with on-demand Kitty graphics and audio playback; no TUI framework or mouse.
@@ -8,12 +8,12 @@ with on-demand Kitty graphics and audio playback; no TUI framework or mouse.
 Requires Go 1.22 or newer and an interactive terminal.
 
 ```sh
-CGO_ENABLED=0 go build -o mintg .
-./mintg
+CGO_ENABLED=0 go build -o wiregram .
+./wiregram
 ```
 
 If your source directory contains incomplete Git metadata, build with
-`go build -buildvcs=false -o mintg .` instead.
+`go build -buildvcs=false -o wiregram .` instead.
 
 Builds with bundled app credentials start with your international phone number,
 then your Telegram login code. If enabled, your 2FA password is masked. Use an
@@ -27,7 +27,7 @@ supply its API ID and hash when building the binary:
 ```sh
 CGO_ENABLED=0 go build -buildvcs=false \
   -ldflags "-X main.buildAPIID=${TG_API_ID} -X main.buildAPIHash=${TG_API_HASH}" \
-  -o mintg .
+  -o wiregram .
 ```
 
 Set `TG_API_ID` and `TG_API_HASH` in the build environment to your application's
@@ -37,12 +37,12 @@ The API ID/hash identify the app, while phone/code authentication identifies the
 user. Embedded credentials are part of the binary and can be extracted.
 
 An existing `config.json` overrides the bundled credentials. If neither exists,
-mintg prompts for API credentials and saves them as before. Bundled credentials
+Wiregram prompts for API credentials and saves them as before. Bundled credentials
 do not create a config file. Both build values must be valid and present.
 The two linker-set strings are build metadata and are never modified at runtime.
 
-Configuration is stored at `os.UserConfigDir()/mintg/config.json`, normally
-`~/.config/mintg/config.json` on Linux. Session files live in the adjacent
+Configuration is stored at `os.UserConfigDir()/wiregram/config.json`, normally
+`~/.config/wiregram/config.json` on Linux. Session files live in the adjacent
 `session/` directory and allow subsequent launches without another login.
 Directories are created with mode `0700`, and credential/session files with
 mode `0600`. Keep both private; never commit them.
@@ -107,7 +107,7 @@ Media playback requires external software; neither mpv nor Kitty is bundled:
 
 - Install `mpv` on your PATH for images, video, voice notes, and music. Its build
   must include the `kitty` video output for visual media; check `mpv --vo=help`.
-- Run mintg inside the **Kitty terminal** for images and video. Installing Kitty
+- Run Wiregram inside the **Kitty terminal** for images and video. Installing Kitty
   alone does not enable graphics in another terminal, such as Fedora's Ptyxis.
   Other terminals implementing the Kitty graphics protocol may also work.
 - Text chat needs neither dependency. Audio-only playback needs mpv but does
@@ -116,13 +116,13 @@ Media playback requires external software; neither mpv nor Kitty is bundled:
 From the repository directory, launch directly in Kitty:
 
 ```sh
-kitty ./mintg
+kitty ./wiregram
 ```
 
-Use a direct terminal session; mintg does not currently implement tmux/screen
-graphics passthrough. Mintg probes the terminal before downloading visual media.
+Use a direct terminal session; Wiregram does not currently implement tmux/screen
+graphics passthrough. Wiregram probes the terminal before downloading visual media.
 If it reports that the terminal did not confirm Kitty graphics support, check
-that mintg is actually running in Kitty. There is no desktop-window fallback.
+that Wiregram is actually running in Kitty. There is no desktop-window fallback.
 
 Local image playback was confirmed with Kitty 0.43.1 and mpv 0.40.0.
 
@@ -132,16 +132,16 @@ mpv. TGS/Lottie stickers, PDFs, and other non-playable attachments remain text
 representations. No attachment is downloaded just by displaying or selecting it.
 
 View-once and self-destructing photos, videos, and audio are labelled and blocked
-before download. Open them in an official Telegram app; mintg does not yet
+before download. Open them in an official Telegram app; Wiregram does not yet
 implement their consumption acknowledgements and expiry lifecycle.
 
 Enter opens media in the current terminal. Esc, Ctrl+C, or Ctrl+D closes it and
-returns to the chat. Mintg owns stdin throughout playback; other keys keep the
+returns to the chat. Wiregram owns stdin throughout playback; other keys keep the
 inactivity timer alive but do not enter the message draft. Incoming messages
 are retained for the chat redraw without interrupting the viewer.
 
 Each requested attachment downloads into a fresh `0700` temporary directory
-with a `0600` file. Mintg removes it after playback, cancellation, errors, or
+with a `0600` file. Wiregram removes it after playback, cancellation, errors, or
 normal shutdown. There is no persistent media cache. Downloads complete before
 playback starts. Force-killing the process or a system crash can prevent cleanup.
 
@@ -161,7 +161,7 @@ Format with `gofmt -w *.go`, check with `go vet ./...`, and verify a build with
 `CGO_ENABLED=0`. No test suite is included, as specified in the contributor guide.
 Direct dependencies are gotd/td, readline, and x/term; Go resolves their
 transitive dependencies through `go.mod` and `go.sum`. `mpv` is an optional runtime
-dependency for media; mintg itself remains cgo-free. Media playback and the new
+dependency for media; Wiregram itself remains cgo-free. Media playback and the new
 key bindings implement the subsequently requested extensions to `AGENTS.md`.
 
 Licensed under the MIT license.
