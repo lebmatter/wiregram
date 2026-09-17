@@ -119,6 +119,16 @@ func (c *client) send(ctx context.Context, entry chat, text string, replyTo int)
 		}
 	}
 	message := &tg.Message{Out: true, Message: text}
+	return c.sentMessage(result, entry, request.RandomID, replyTo, message), nil
+}
+
+func (c *client) sentMessage(
+	result tg.UpdatesClass,
+	entry chat,
+	randomID int64,
+	replyTo int,
+	message *tg.Message,
+) *tg.Message {
 	var updates []tg.UpdateClass
 	switch u := result.(type) {
 	case *tg.UpdateShortSentMessage:
@@ -135,7 +145,7 @@ func (c *client) send(ctx context.Context, entry chat, text string, replyTo int)
 	for _, value := range updates {
 		switch u := value.(type) {
 		case *tg.UpdateMessageID:
-			if u.RandomID == request.RandomID {
+			if u.RandomID == randomID {
 				message.ID = u.ID
 			}
 		case *tg.UpdateNewMessage:
@@ -148,20 +158,21 @@ func (c *client) send(ctx context.Context, entry chat, text string, replyTo int)
 			}
 		}
 	}
-	copy := *message
-	copy.Out = true
+	resultMessage := *message
+	resultMessage.Out = true
 	if replyTo > 0 {
-		if _, ok := copy.GetReplyTo(); !ok {
+		if _, ok := resultMessage.GetReplyTo(); !ok {
 			header := &tg.MessageReplyHeader{}
 			header.SetReplyToMsgID(replyTo)
-			copy.SetReplyTo(header)
+			resultMessage.SetReplyTo(header)
 		}
 	}
-	return &copy, nil
+	return &resultMessage
 }
 
 type outgoingMessage struct {
 	text    string
+	path    string
 	replyTo int
 }
 
@@ -253,11 +264,25 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var editResults <-chan lineResult
 	var editDone <-chan error
 	var editText string
+	var uploadEditor *editor
+	var uploadResults <-chan lineResult
+	var selectedUploadPath string
 	var replying *tg.Message
 	finishEdit := func() {
 		if editEditor != nil {
 			editEditor.close()
 			editEditor, editing, editResults = nil, nil, nil
+			t.mu.Lock()
+			t.editor = e.line
+			t.mu.Unlock()
+		}
+	}
+	finishUploadPrompt := func() {
+		if uploadEditor != nil {
+			uploadResults = nil
+			uploadEditor.close()
+			uploadEditor = nil
+			selectedUploadPath = ""
 			t.mu.Lock()
 			t.editor = e.line
 			t.mu.Unlock()
@@ -269,6 +294,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			<-editDone
 		}
 		finishEdit()
+		finishUploadPrompt()
 	}()
 	var mediaCancel context.CancelFunc
 	var mediaDone <-chan error
@@ -336,6 +362,23 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		t.mu.Unlock()
 		render()
 	}
+	startUploadPrompt := func() {
+		prompt, err := t.newEditorWithCompleter(
+			"File (Tab: complete, Enter: continue, Esc: cancel)> ",
+			false,
+			nil,
+			pathCompleter{},
+		)
+		if err != nil {
+			t.report(err)
+			return
+		}
+		uploadEditor, uploadResults = prompt, prompt.results
+		t.mu.Lock()
+		t.editor = prompt.line
+		t.mu.Unlock()
+		render()
+	}
 	stopMedia := func() {
 		probing = false
 		probe.Stop()
@@ -400,7 +443,15 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			case <-ctx.Done():
 				return
 			case outgoing := <-sends:
-				message, err := c.send(ctx, entry, outgoing.text, outgoing.replyTo)
+				var message *tg.Message
+				var err error
+				if outgoing.path == "" {
+					message, err = c.send(ctx, entry, outgoing.text, outgoing.replyTo)
+				} else {
+					message, err = c.sendUpload(
+						ctx, entry, outgoing.path, outgoing.text, outgoing.replyTo,
+					)
+				}
 				select {
 				case sent <- sendResult{message, err}:
 				case <-ctx.Done():
@@ -502,6 +553,49 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				delete(changedMessages, editing.ID)
 				finishEdit()
 			}
+			render()
+		case result := <-uploadResults:
+			if result.err != nil {
+				finishUploadPrompt()
+				render()
+				continue
+			}
+			if selectedUploadPath == "" {
+				path, err := uploadPath(result.text)
+				if err != nil {
+					uploadEditor.line.Operation.SetBuffer(result.text)
+					t.report(err)
+					continue
+				}
+				uploadResults = nil
+				uploadEditor.close()
+				caption, err := t.newEditor("Caption (optional, Enter: send, Esc: cancel)> ", false, nil)
+				if err != nil {
+					uploadEditor = nil
+					t.mu.Lock()
+					t.editor = e.line
+					t.mu.Unlock()
+					t.report(err)
+					render()
+					continue
+				}
+				selectedUploadPath = path
+				uploadEditor, uploadResults = caption, caption.results
+				t.mu.Lock()
+				t.editor = caption.line
+				t.mu.Unlock()
+				render()
+				continue
+			}
+			path := selectedUploadPath
+			caption := result.text
+			finishUploadPrompt()
+			replyTo := 0
+			if replying != nil {
+				replyTo = replying.ID
+				replying = nil
+			}
+			queue = append(queue, outgoingMessage{text: caption, path: path, replyTo: replyTo})
 			render()
 		case err := <-deleteDone:
 			deleteDone = nil
@@ -635,6 +729,18 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				continue
 			}
+			if uploadEditor != nil {
+				switch key {
+				case "\x1b", "\x03", "\x04":
+					finishUploadPrompt()
+					render()
+				default:
+					if _, err := io.WriteString(uploadEditor.input, key); err != nil {
+						return fmt.Errorf("read upload input: %w", err)
+					}
+				}
+				continue
+			}
 			if emojiEditor != nil {
 				switch key {
 				case "\x1b", "\x03", "\x04", "\x1bm", "\x1bM":
@@ -724,6 +830,9 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				return nil
 			case "\x03", "\x04":
 				return nil
+			case "\x15":
+				startUploadPrompt()
+				continue
 			case "\x1bm", "\x1bM":
 				if reactionDone != nil {
 					t.report(fmt.Errorf("reaction update is still in progress"))

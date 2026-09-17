@@ -86,6 +86,7 @@ timer. Ctrl+L remains available for manual locking.
 | Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
 | Chat | Enter with empty input | Open selected media |
+| Chat | Ctrl+U | Upload media or a file with an optional caption |
 | Chat | Ctrl+L | Lock immediately |
 | Chat | Esc while replying | Cancel the reply |
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
@@ -142,6 +143,13 @@ An updated earlier message is marked with `*` until it is selected and displayed
 While composing a reply, a short excerpt of its target appears above the input.
 
 ## Media inside the terminal
+
+Press Ctrl+U in an open chat to upload a local file. Enter a path in the file
+prompt; Tab completes matching files and directories, including paths beginning
+with `~/`. After selecting a regular file, enter an optional caption and press
+Enter to send. Escape, Ctrl+C, or Ctrl+D cancels either prompt. Photos, videos,
+audio, and GIFs use their Telegram media types; other paths are sent as files.
+If a reply is active, the uploaded media is sent as that reply.
 
 Media playback requires external software; neither mpv nor Kitty is bundled:
 

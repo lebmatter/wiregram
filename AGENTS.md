@@ -168,6 +168,7 @@ you> message text here
 | Ctrl+D     | Return to chat list (Mode 1)              |
 | Ctrl+C     | Return to chat list (Mode 1)              |
 | Ctrl+L     | Lock immediately                          |
+| Ctrl+U     | Upload a file with an optional caption    |
 
 ### Incoming messages
 
@@ -294,7 +295,6 @@ Do not implement any of the following:
 - Color themes or color output
 - Config file options beyond api_id, api_hash, and autolock
 - Message search
-- Media download or upload
 - Message editing or deletion
 - Typing indicators
 - Online/offline status

@@ -425,6 +425,16 @@ type editor struct {
 }
 
 func (t *terminal) newEditor(prompt string, masked bool, history []string, initial ...string) (*editor, error) {
+	return t.newEditorWithCompleter(prompt, masked, history, nil, initial...)
+}
+
+func (t *terminal) newEditorWithCompleter(
+	prompt string,
+	masked bool,
+	history []string,
+	completer readline.AutoCompleter,
+	initial ...string,
+) (*editor, error) {
 	input, writer := io.Pipe()
 	e := &editor{terminal: t, input: writer, results: make(chan lineResult, 1), done: make(chan struct{}), stopped: make(chan struct{})}
 	limit := -1
@@ -434,6 +444,7 @@ func (t *terminal) newEditor(prompt string, masked bool, history []string, initi
 	line, err := readline.NewEx(&readline.Config{
 		Prompt: prompt, Stdin: input, Stdout: terminalWriter{t, os.Stdout, &e.closed}, Stderr: terminalWriter{t, os.Stderr, &e.closed},
 		HistoryLimit: limit, DisableAutoSaveHistory: history == nil, UniqueEditLine: prompt == "",
+		AutoComplete:    completer,
 		InterruptPrompt: "\n", EOFPrompt: "\n", EnableMask: masked, MaskRune: '*',
 		ForceUseInteractive: true,
 		FuncMakeRaw:         func() error { return nil }, FuncExitRaw: func() error { return nil },
@@ -450,7 +461,7 @@ func (t *terminal) newEditor(prompt string, masked bool, history []string, initi
 			if r == 0 && e.line != nil {
 				e.line.Operation.SetBuffer("")
 			}
-			return r, r != '\t' && r != 26
+			return r, (r != '\t' || completer != nil) && r != 26
 		},
 	})
 	if err != nil {
