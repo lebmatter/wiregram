@@ -56,6 +56,7 @@ mode `0600`. Keep both private; never commit them.
 | Chat list | Enter | Open selected chat |
 | Chat list | Enter on Archived Chats / Back to Chats | Switch chat lists |
 | Chat list | `/` | Search users |
+| Chat list | `a` / Enter on Accounts… | Switch accounts or add a number |
 | Chat list | `r` | Refresh chats |
 | Chat list | Alt+D | Delete selected private chat only for you |
 | Chat list | Ctrl+Alt+D | Delete selected private chat for both sides |
@@ -87,6 +88,33 @@ mode `0600`. Keep both private; never commit them.
 | Delete confirmation | Any other key | Cancel deletion |
 | Media viewer/download | Esc / Ctrl+C / Ctrl+D | Stop and return to chat |
 | Locked screen | Any key | Unlock; the key is consumed |
+
+## Accounts
+
+The Accounts screen lists saved numbers and their connection status. Use Up/Down
+or `j`/`k`, then Enter to switch to an online account. Select **Add account…** to
+sign in with another phone number, code, and optional 2FA password. Ctrl+C or
+Ctrl+D cancels a sign-in. An unfinished account remains available to resume.
+Select an account requiring sign-in and press Enter to authenticate again;
+`r` retries an offline account. Esc returns to the previously selected online
+account; `q`, Ctrl+D, or the Quit row exits the application.
+
+Saved accounts connect in the background at startup and stay connected while
+you switch. Each has independent sessions, caches, in-memory input history,
+updates, retries, and flood waits. The chat-list heading identifies the active
+name and number. Only the selected account's chats are displayed or marked read.
+The lock counter remains scoped to the most recently selected account (zero
+before selecting one); it is not a sum across accounts.
+
+API credentials remain in `config.json`. New sessions are stored in private
+`accounts/account-*/session/session.json` directories next to that file, with
+identity metadata in `account.json`. The original `session/session.json` is
+discovered in place, so an existing installation does not need to sign in again.
+Identity files are written atomically with mode `0600`; directories use `0700`.
+Do not run multiple Wiregram processes against the same configuration directory.
+
+See [the account architecture](ACCOUNTS.md) for concurrency, capacity limits, and
+the planned boundary for AI processing.
 
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.

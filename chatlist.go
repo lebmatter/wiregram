@@ -97,8 +97,9 @@ func (c *client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 	return entries, archiveUnread, nil
 }
 
-func renderChats(out io.Writer, chats []chat, selected int, archived bool, archiveUnread int) {
+func renderChats(out io.Writer, chats []chat, selected int, archived bool, archiveUnread int, accountName string) {
 	fmt.Fprint(out, "\033[2J\033[H")
+	fmt.Fprintln(out, accountName)
 	if archived {
 		fmt.Fprintln(out, "Archived Chats")
 	}
@@ -134,6 +135,11 @@ func renderChats(out io.Writer, chats []chat, selected int, archived bool, archi
 		marker = ">"
 	}
 	fmt.Fprintf(out, "%s     Search users…\n", marker)
+	marker = " "
+	if selected == len(chats)+2 {
+		marker = ">"
+	}
+	fmt.Fprintf(out, "%s     Accounts…\n", marker)
 }
 
 // Input is already raw; the application owns terminal state across both modes.
@@ -143,7 +149,7 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 		entry  chat
 		revoke bool
 	}
-	renderChats(t.out(), chats, selected, archived, archiveUnread)
+	renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
 	for {
 		select {
 		case <-ctx.Done():
@@ -156,7 +162,7 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 				continue
 			}
 			if key == terminalUnlockKey {
-				renderChats(t.out(), chats, selected, archived, archiveUnread)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
 				t.flushNotices()
 				continue
 			}
@@ -165,13 +171,13 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 				confirm = nil
 				if key == "y" || key == "Y" {
 					if err := c.deleteChat(ctx, request.entry, request.revoke); err != nil {
-						renderChats(t.out(), chats, selected, archived, archiveUnread)
+						renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
 						t.report(err)
 						continue
 					}
 					return -1, true, nil
 				}
-				renderChats(t.out(), chats, selected, archived, archiveUnread)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
 				continue
 			}
 			switch key {
@@ -181,16 +187,18 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 				return -1, true, nil
 			case "/":
 				return len(chats) + 1, false, nil
+			case "a":
+				return len(chats) + 2, false, nil
 			case "k", "\x1b[A", "\x1bOA":
 				if selected > 0 {
 					selected--
 				}
-				renderChats(t.out(), chats, selected, archived, archiveUnread)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
 			case "j", "\x1b[B", "\x1bOB":
-				if selected < len(chats)+1 {
+				if selected < len(chats)+2 {
 					selected++
 				}
-				renderChats(t.out(), chats, selected, archived, archiveUnread)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
 			case "\x1bd", "\x1bD", "\x1b\x04":
 				if selected >= len(chats) {
 					continue

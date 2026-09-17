@@ -55,30 +55,11 @@ func run() (result error) {
 	if err != nil {
 		return err
 	}
-	histories := make(map[peerKey][]string)
-	for {
-		c, err := newClient(cfg, dir, t.report)
-		if err != nil {
-			return err
-		}
-		err = c.telegram.Run(ctx, func(ctx context.Context) error {
-			prompt := func(label string, masked bool) (string, error) { return t.prompt(ctx, label, masked) }
-			if err := c.authenticate(ctx, prompt, t.report); err != nil {
-				return err
-			}
-			return c.runSession(ctx, t, histories)
-		})
-		if err == nil || errors.Is(err, context.Canceled) {
-			return err
-		}
-		if !networkError(err) {
-			return fmt.Errorf("Telegram connection: %w", err)
-		}
-		t.report(fmt.Errorf("Connection lost. Retrying: %w", err))
-		if err := waitFor(ctx, time.Second); err != nil {
-			return err
-		}
+	accounts, err := loadAccounts(cfg, dir)
+	if err != nil {
+		return err
 	}
+	return accounts.run(ctx, t)
 }
 
 func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKey][]string) error {
@@ -104,6 +85,9 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 		}
 		if index < 0 {
 			return nil
+		}
+		if index == len(entries)+2 {
+			return accountsRequested{}
 		}
 		if index == len(entries) {
 			archived = !archived
@@ -145,12 +129,14 @@ type terminal struct {
 	editor  *readline.Instance
 	keys    <-chan string
 	locking chan inactivityConfig
+	done    chan struct{}
 }
 
 type inactivityConfig struct {
 	enabled bool
 	unread  func() int
 	refresh func()
+	ack     chan struct{}
 }
 
 const (
@@ -294,6 +280,7 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 	output := make(chan string)
 	go func() {
 		defer close(output)
+		defer close(t.done)
 		timer := time.NewTimer(time.Hour)
 		if !timer.Stop() {
 			<-timer.C
@@ -331,12 +318,14 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 						locked = false
 						t.releaseLock()
 					}
+					close(config.ack)
 					continue
 				}
 				reset()
 				if config.refresh != nil {
 					config.refresh()
 				}
+				close(config.ack)
 			case <-timerC:
 				timerC = nil
 				if !config.enabled || locked {
@@ -379,11 +368,24 @@ func (t *terminal) manageInactivity(ctx context.Context, input <-chan string) <-
 }
 
 func (t *terminal) enableInactivity(unread func() int, refresh func()) {
-	t.locking <- inactivityConfig{enabled: true, unread: unread, refresh: refresh}
+	t.configureInactivity(inactivityConfig{enabled: true, unread: unread, refresh: refresh})
 }
 
 func (t *terminal) disableInactivity() {
-	t.locking <- inactivityConfig{}
+	t.configureInactivity(inactivityConfig{})
+}
+
+func (t *terminal) configureInactivity(config inactivityConfig) {
+	config.ack = make(chan struct{})
+	select {
+	case t.locking <- config:
+	case <-t.done:
+		return
+	}
+	select {
+	case <-config.ack:
+	case <-t.done:
+	}
 }
 
 type lineResult struct {
@@ -490,6 +492,9 @@ func (t *terminal) prompt(ctx context.Context, prompt string, masked bool) (stri
 			}
 			return result.text, result.err
 		case key, ok := <-t.keys:
+			if key == terminalLockKey || key == terminalUnlockKey {
+				continue
+			}
 			if !ok || key == "\x04" {
 				return "", context.Canceled
 			}
@@ -546,7 +551,10 @@ func (t *terminal) flushNotices() {
 
 func (t *terminal) unlock(lines []string) {
 	t.mu.Lock()
-	t.locked = false
+	if t.locked {
+		t.mu.Unlock()
+		return
+	}
 	editor := t.editor
 	notices := t.notices
 	t.notices = nil
@@ -576,7 +584,7 @@ func openTerminal(ctx context.Context) (*terminal, func() error, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("enter raw terminal mode: %w", err)
 	}
-	t := &terminal{locking: make(chan inactivityConfig, 1)}
+	t := &terminal{locking: make(chan inactivityConfig, 1), done: make(chan struct{})}
 	t.keys = t.manageInactivity(ctx, readKeys(ctx))
 	return t, func() error { return term.Restore(int(os.Stdin.Fd()), state) }, nil
 }

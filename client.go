@@ -43,6 +43,7 @@ func keyOf(peer tg.PeerClass) peerKey {
 }
 
 type client struct {
+	accountName      string // Set before publishing this connection to the UI.
 	telegram         *telegram.Client
 	updates          *updates.Manager
 	api              *tg.Client
@@ -238,49 +239,4 @@ func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 		}
 	}
 	return nil
-}
-
-func (c *client) runSession(ctx context.Context, t *terminal, histories map[peerKey][]string) error {
-	self, err := c.telegram.Self(ctx)
-	if err != nil {
-		return fmt.Errorf("load current account: %w", err)
-	}
-	c.remember([]tg.UserClass{self}, nil)
-	sessionCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	refreshUnread := func() {
-		go func() {
-			unread, err := c.refreshTotalUnread(sessionCtx)
-			if err != nil {
-				if sessionCtx.Err() == nil {
-					c.report(err)
-				}
-				return
-			}
-			t.updateLock(unread)
-		}()
-	}
-	t.enableInactivity(c.cachedTotalUnread, refreshUnread)
-	defer t.disableInactivity()
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	go func() {
-		err := c.updates.Run(sessionCtx, c.api, self.ID, updates.AuthOptions{
-			OnStart: func(context.Context) { close(started) },
-		})
-		done <- err
-		cancel()
-	}()
-	select {
-	case err := <-done:
-		return err
-	case <-started:
-	}
-	uiErr := c.runModes(sessionCtx, t, histories)
-	cancel()
-	updateErr := <-done
-	if updateErr != nil && !errors.Is(updateErr, context.Canceled) {
-		return fmt.Errorf("receive updates: %w", updateErr)
-	}
-	return uiErr
 }
