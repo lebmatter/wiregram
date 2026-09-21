@@ -105,3 +105,8 @@ preserve fields the struct does not know about.
 `AI_PLAN.md` describes the optional AI assistant: off by default, opt-in per
 private chat, suggestion mode (`y`/`n`) by default with an automatic mode.
 Read it before touching `ai.go` or the AI paths in `chatview.go`.
+
+`TASKS.md` sequences the remaining work, including a local web UI. Phase 0
+of that plan lists rule changes above that need agreeing before the web work
+starts — a `serve` subcommand and one vendored JavaScript file (Alpine),
+neither of which is currently allowed here.
