@@ -87,6 +87,10 @@ timer. Ctrl+L remains available for manual locking.
 | Chat | Enter with text | Send text |
 | Chat | Enter with empty input | Open selected media |
 | Chat | Ctrl+U | Upload media or a file with an optional caption |
+| Chat | Alt+A | Turn the AI assistant on or off for this chat |
+| AI suggestion | `y` | Send the suggested reply |
+| AI suggestion | `n` / Esc | Discard the suggestion |
+| AI suggestion | Any other key | Discard it and keep typing |
 | Chat | Ctrl+L | Lock immediately |
 | Chat | Esc while replying | Cancel the reply |
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
@@ -203,6 +207,66 @@ Reopen an attachment explicitly to view it again. Incoming messages, player
 output, and terminal graphics replies do not reset the timer.
 
 This is a screen collapse, not password protection or a terminal scrollback eraser.
+
+## AI assistant
+
+Optional and off by default. With no `ai` section in `config.json` nothing
+changes: no network calls, no keys required. Add one to enable it:
+
+```json
+{
+  "api_id": 123456,
+  "api_hash": "abcdef1234567890",
+  "autolock": 1,
+  "ai": {
+    "enabled": true,
+    "model": "<model-id>",
+    "prompt": "You are my assistant. Reply briefly and in my voice.",
+    "autoreply": 0,
+    "knowledge": ["knowledge/faq.md"]
+  }
+}
+```
+
+The API key is read from the environment, not the config file. The variable
+name defaults to `OPENAI_API_KEY` and can be changed with `api_key_env`.
+`base_url` defaults to `https://api.openai.com/v1` and may point at any
+OpenAI-compatible server that implements `/chat/completions`; plain `http://`
+is rejected unless the address is local. Other optional settings are
+`max_output_tokens` (`0` omits the limit), `context_messages` (default 20),
+and `timeout_seconds` (default 45).
+
+Press **Alt+A** in a private chat to turn the assistant on or off there. The
+choice is saved to `config.json`, so it survives a restart. A status line
+shows `[AI suggest]` or `[AI auto]` while it is on.
+
+With `autoreply` set to `0`, an incoming message produces a suggested reply:
+
+```
+alice> do you deliver on sundays?
+[AI suggest — y send · n discard] No, we're closed Sundays. Pickup is Mon-Sat, 9-6.
+```
+
+Press `y` to send it, `n` or Esc to discard it, or simply keep typing to
+discard it and write your own. With `autoreply` set to `1` the assistant
+sends its reply itself.
+
+Files listed in `knowledge` are read on every request and given to the model
+as reference material, so editing one takes effect immediately. Paths resolve
+relative to the configuration directory and are capped at 64 KB in total,
+which is enough for an FAQ or a small catalogue.
+
+Only private chats are answered; groups and channels are never automatic. The
+assistant never replies to its own messages or to other bots, only one request
+runs at a time per chat, and a burst of messages produces a single reply.
+Sending a message yourself cancels anything pending.
+
+Requests go to whichever `base_url` is configured, so the recent conversation
+and the knowledge files leave your machine for that provider. Message text
+from other people is untrusted: the assistant is instructed to ignore
+instructions embedded in it, but suggestion mode is the real protection. If
+you run an account that answers customers, tell them an assistant is
+involved.
 
 ## Development
 

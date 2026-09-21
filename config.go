@@ -16,9 +16,10 @@ var buildAPIID string
 var buildAPIHash string
 
 type config struct {
-	APIID    int    `json:"api_id"`
-	APIHash  string `json:"api_hash"`
-	AutoLock int    `json:"autolock"`
+	APIID    int       `json:"api_id"`
+	APIHash  string    `json:"api_hash"`
+	AutoLock int       `json:"autolock"`
+	AI       *aiConfig `json:"ai,omitempty"`
 }
 
 type promptFunc func(string, bool) (string, error)
@@ -45,6 +46,15 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 		if cfg.AutoLock != 0 && cfg.AutoLock != 1 {
 			return cfg, dir, fmt.Errorf("configuration autolock must be 0 or 1")
 		}
+		if cfg.AI == nil {
+			cfg.AI = newAIConfig(dir)
+		}
+		cfg.AI.dir = dir
+		// A broken AI section must not stop ordinary messaging.
+		if err := cfg.AI.normalize(); err != nil {
+			fmt.Fprintf(out, "wiregram: AI disabled — %s\n", cleanError(err))
+			cfg.AI = newAIConfig(dir)
+		}
 		return cfg, dir, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -55,7 +65,7 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 		if err != nil || id <= 0 || strings.TrimSpace(buildAPIHash) == "" {
 			return config{}, dir, fmt.Errorf("this build has incomplete or invalid Telegram API credentials; rebuild with both API ID and API hash")
 		}
-		return config{APIID: id, APIHash: strings.TrimSpace(buildAPIHash), AutoLock: 1}, dir, nil
+		return config{APIID: id, APIHash: strings.TrimSpace(buildAPIHash), AutoLock: 1, AI: newAIConfig(dir)}, dir, nil
 	}
 	fmt.Fprintln(out, "wiregram: no config found.\nGet your API credentials at https://my.telegram.org/apps")
 	cfg := config{AutoLock: 1}
@@ -90,5 +100,6 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return cfg, dir, fmt.Errorf("save configuration: %w", err)
 	}
+	cfg.AI = newAIConfig(dir)
 	return cfg, dir, nil
 }

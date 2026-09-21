@@ -268,6 +268,21 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var uploadResults <-chan lineResult
 	var selectedUploadPath string
 	var replying *tg.Message
+	var aiSuggestion string
+	var aiResults <-chan aiResult
+	var aiStop context.CancelFunc
+	aiThinking, aiTriggered := false, false
+	aiTimer := time.NewTimer(time.Hour)
+	aiTimer.Stop()
+	defer aiTimer.Stop()
+	cancelAI := func() {
+		if aiStop != nil {
+			aiStop()
+			aiStop = nil
+		}
+		aiTimer.Stop()
+		aiResults, aiThinking, aiTriggered, aiSuggestion = nil, false, false, ""
+	}
 	finishEdit := func() {
 		if editEditor != nil {
 			editEditor.close()
@@ -315,7 +330,13 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			return
 		}
 		acknowledgeSelected(messages, selected, changedMessages)
-		lines, readID := c.selectedLines(messages, entry, selected, changedMessages, replying)
+		status := aiStatus{
+			on:         c.aiOn(entry),
+			auto:       c.aiAvailable() && c.ai.AutoReply == 1,
+			thinking:   aiThinking,
+			suggestion: aiSuggestion,
+		}
+		lines, readID := c.selectedLines(messages, entry, selected, changedMessages, replying, status)
 		t.unlock(lines)
 		reads.observe(readID)
 	}
@@ -633,8 +654,12 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			}
 		case <-c.changed:
 			incoming, reactions := c.drain()
+			answerable := false
 			for _, m := range incoming {
 				appendMessage(m)
+				if c.aiShouldAnswer(m) {
+					answerable = true
+				}
 			}
 			for _, update := range reactions {
 				for index, message := range messages {
@@ -652,8 +677,49 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 					}
 				}
 			}
+			if answerable && c.aiOn(entry) {
+				// A burst of messages should produce one reply, not one each.
+				aiSuggestion, aiTriggered = "", true
+				aiTimer.Reset(aiDebounce)
+			}
 			render()
 			t.updateLock(c.cachedChatUnread(entry.key))
+		case <-aiTimer.C:
+			if !aiTriggered || aiThinking || !c.aiOn(entry) {
+				aiTriggered = false
+				continue
+			}
+			aiTriggered = false
+			request, err := c.aiRequest(entry, messages)
+			if err != nil {
+				t.report(err)
+				continue
+			}
+			aiCtx, stop := context.WithCancel(ctx)
+			done := make(chan aiResult, 1)
+			aiStop, aiResults, aiThinking = stop, done, true
+			settings := c.ai
+			go func() {
+				defer stop()
+				text, err := settings.complete(aiCtx, request)
+				done <- aiResult{text, err}
+			}()
+			render()
+		case result := <-aiResults:
+			aiResults, aiThinking, aiStop = nil, false, nil
+			if result.err != nil {
+				if !errors.Is(result.err, context.Canceled) {
+					t.report(result.err)
+				}
+				render()
+				continue
+			}
+			if c.ai.AutoReply == 1 {
+				queue = append(queue, outgoingMessage{text: result.text})
+			} else {
+				aiSuggestion = result.text
+			}
+			render()
 		case <-probe.C:
 			if probing {
 				probing = false
@@ -820,6 +886,22 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			if deleteDone != nil {
 				continue
 			}
+			if aiSuggestion != "" {
+				switch key {
+				case "y", "Y":
+					queue = append(queue, outgoingMessage{text: aiSuggestion})
+					aiSuggestion = ""
+					render()
+					continue
+				case "n", "N", "\x1b":
+					aiSuggestion = ""
+					render()
+					continue
+				}
+				// Any other key discards the suggestion and types normally.
+				aiSuggestion = ""
+				render()
+			}
 			switch key {
 			case "\x1b":
 				if replying != nil {
@@ -832,6 +914,24 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				return nil
 			case "\x15":
 				startUploadPrompt()
+				continue
+			case "\x1ba", "\x1bA":
+				if !c.aiAvailable() {
+					t.report(fmt.Errorf("AI is not configured; add an ai section to config.json"))
+					continue
+				}
+				if entry.key.kind != 'u' {
+					t.report(fmt.Errorf("AI replies are available only in private chats"))
+					continue
+				}
+				on, err := c.aiToggle(entry)
+				if !on {
+					cancelAI()
+				}
+				if err != nil {
+					t.report(err)
+				}
+				render()
 				continue
 			case "\x1bm", "\x1bM":
 				if reactionDone != nil {
@@ -922,6 +1022,8 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				continue
 			}
+			// Answering by hand takes over from the assistant.
+			cancelAI()
 			*history = append(*history, result.text)
 			if len(*history) > 500 {
 				*history = (*history)[len(*history)-500:]
@@ -945,16 +1047,17 @@ func acknowledgeSelected(messages []*tg.Message, selected int, changed map[int]b
 
 const maxChatLineWidth = 120
 
-func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool, replying *tg.Message) ([]string, int) {
+func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool, replying *tg.Message, status aiStatus) ([]string, int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
 	}
-	reserved := 2
+	lineWidth := min(cols-1, maxChatLineWidth)
+	statusLines := status.lines(lineWidth)
+	reserved := 2 + len(statusLines)
 	if replying != nil {
 		reserved++
 	}
-	lineWidth := min(cols-1, maxChatLineWidth)
 	available := max(1, rows-reserved)
 	byID := make(map[int]*tg.Message, len(messages))
 	for _, message := range messages {
@@ -978,7 +1081,7 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 		if replying != nil {
 			lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), lineWidth))
 		}
-		return lines, 0
+		return append(lines, statusLines...), 0
 	}
 	blocks := make(map[int][]string)
 	block := func(i int) []string {
@@ -1025,7 +1128,7 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	if replying != nil {
 		lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), lineWidth))
 	}
-	return lines, readID
+	return append(lines, statusLines...), readID
 }
 
 func wrapLine(text string, width int) []string {

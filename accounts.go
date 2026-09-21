@@ -227,6 +227,7 @@ func (m *accountManager) start(parent context.Context, a *account, prompt prompt
 						return err
 					}
 					prompt = nil // Reconnects must never read from an abandoned login UI.
+					c.accountID = identity.ID
 					c.accountName = fmt.Sprintf("%s (+%s)", plain(identity.Name), strings.TrimPrefix(plain(identity.Phone), "+"))
 					c.remember([]tg.UserClass{self}, nil)
 					return c.updates.Run(connectionCtx, c.api, self.ID, updates.AuthOptions{OnStart: func(liveCtx context.Context) {

@@ -43,7 +43,10 @@ func keyOf(peer tg.PeerClass) peerKey {
 }
 
 type client struct {
+	accountID        int64  // Set before publishing this connection to the UI.
 	accountName      string // Set before publishing this connection to the UI.
+	cfg              config
+	ai               *aiConfig
 	telegram         *telegram.Client
 	updates          *updates.Manager
 	api              *tg.Client
@@ -73,7 +76,7 @@ func newClient(cfg config, dir string, report func(error)) (*client, error) {
 	c := &client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
 		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
-		changed: make(chan struct{}, 1),
+		changed: make(chan struct{}, 1), cfg: cfg, ai: cfg.AI,
 	}
 	middleware := telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
 		return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
