@@ -618,7 +618,12 @@ func openTerminal(ctx context.Context) (*terminal, func() error, error) {
 	}
 	t := &terminal{locking: make(chan inactivityConfig, 1), done: make(chan struct{})}
 	t.keys = t.manageInactivity(ctx, readKeys(ctx))
-	return t, func() error { return term.Restore(int(os.Stdin.Fd()), state) }, nil
+	return t, func() error {
+		// Clear the visible screen and the scrollback buffer so private
+		// content does not remain in terminal history after exit.
+		fmt.Fprint(os.Stdout, "\033[2J\033[3J\033[H")
+		return term.Restore(int(os.Stdin.Fd()), state)
+	}, nil
 }
 
 func cleanError(err error) string { return strings.TrimSpace(plain(err.Error())) }
