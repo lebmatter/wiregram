@@ -19,6 +19,58 @@ import (
 	"golang.org/x/term"
 )
 
+const usageText = `Usage: wiregram
+
+A minimal Telegram client for the terminal. Text conversations with
+on-demand Kitty graphics and audio playback; no TUI framework or mouse.
+
+First launch asks for API credentials (or use -ldflags to embed them),
+then your phone number, login code, and optional 2FA password.
+Config and sessions are stored in ~/.config/wiregram/.
+
+Keyboard shortcuts:
+
+  Chat list
+    Up/k, Down/j     Select chat
+    Enter             Open chat
+    /                 Search users
+    a                 Switch accounts
+    r                 Refresh chats
+    Alt+D             Delete private chat (you only)
+    Ctrl+Alt+D        Delete private chat (both sides)
+    q, Ctrl+D         Quit
+
+  Chat
+    Up/Down           Select message
+    Alt+Up/Down       Input history
+    Enter             Send text, or open selected media if input is empty
+    Ctrl+U            Upload file
+    Ctrl+F            Search messages
+    Ctrl+L            Lock screen
+    Alt+R             Reply (toggle)
+    Alt+E             Edit outgoing message
+    Alt+M             React with emoji
+    Alt+F             Forward message
+    Alt+S             Save attachment to ~/Downloads
+    Alt+P             Pin/unpin message
+    Alt+A             Toggle AI assistant
+    Alt+D             Delete chat (you only)
+    Ctrl+Alt+D        Delete chat (both sides)
+    Delete            Delete message (you only)
+    Shift+Delete      Delete message (both sides)
+    Esc, Ctrl+C       Back to chat list
+
+  Emoji picker
+    Type              Filter by name
+    Up/Down           Select emoji
+    Tab               Toggle reaction / draft insert
+    Enter             Confirm
+    Esc               Cancel
+
+  Media viewer
+    Esc, Ctrl+C       Stop and return to chat
+`
+
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, cleanError(err))
@@ -31,7 +83,7 @@ func run() (result error) {
 	flags.SetOutput(io.Discard)
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(os.Stdout, "Usage: wiregram")
+			fmt.Fprint(os.Stdout, usageText)
 			return nil
 		}
 		return fmt.Errorf("parse arguments: %w", err)
