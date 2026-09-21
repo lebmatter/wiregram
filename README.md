@@ -92,6 +92,7 @@ timer. Ctrl+L remains available for manual locking.
 | Chat | Ctrl+F | Search messages in this chat |
 | Chat | Alt+P | Pin or unpin the selected message |
 | Chat | Alt+F | Forward selected message (opens search picker) |
+| Chat | Alt+S | Save selected attachment to ~/Downloads |
 | Chat | Alt+A | Turn the AI assistant on or off for this chat |
 | AI suggestion | `y` | Send the suggested reply |
 | AI suggestion | `n` / Esc | Discard the suggestion |

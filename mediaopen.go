@@ -150,6 +150,95 @@ func (c *client) playMedia(ctx context.Context, t *terminal, a attachment, playe
 	return nil
 }
 
+type downloadable struct {
+	location tg.InputFileLocationClass
+	dc       int
+	filename string
+}
+
+func mediaDownloadable(message *tg.Message) (downloadable, error) {
+	switch m := message.Media.(type) {
+	case *tg.MessageMediaPhoto:
+		photo, ok := m.Photo.(*tg.Photo)
+		if !ok {
+			return downloadable{}, fmt.Errorf("this photo is no longer available")
+		}
+		size, area := "", 0
+		for _, value := range photo.Sizes {
+			var kind string
+			var w, h int
+			switch s := value.(type) {
+			case *tg.PhotoSize:
+				kind, w, h = s.Type, s.W, s.H
+			case *tg.PhotoSizeProgressive:
+				kind, w, h = s.Type, s.W, s.H
+			case *tg.PhotoCachedSize:
+				kind, w, h = s.Type, s.W, s.H
+			}
+			if w*h > area {
+				size, area = kind, w*h
+			}
+		}
+		if size == "" {
+			return downloadable{}, fmt.Errorf("this photo has no downloadable size")
+		}
+		return downloadable{
+			location: &tg.InputPhotoFileLocation{ID: photo.ID, AccessHash: photo.AccessHash, FileReference: photo.FileReference, ThumbSize: size},
+			dc:       photo.DCID,
+			filename: fmt.Sprintf("photo_%d.jpg", photo.ID),
+		}, nil
+	case *tg.MessageMediaDocument:
+		d, ok := m.Document.(*tg.Document)
+		if !ok {
+			return downloadable{}, fmt.Errorf("this attachment is no longer available")
+		}
+		name := "document"
+		for _, attr := range d.Attributes {
+			if f, ok := attr.(*tg.DocumentAttributeFilename); ok {
+				name = f.FileName
+			}
+		}
+		return downloadable{
+			location: &tg.InputDocumentFileLocation{ID: d.ID, AccessHash: d.AccessHash, FileReference: d.FileReference},
+			dc:       d.DCID,
+			filename: name,
+		}, nil
+	default:
+		return downloadable{}, fmt.Errorf("this message has no downloadable attachment")
+	}
+}
+
+func uniquePath(path string) string {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return path
+	}
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	for i := 1; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s_%d%s", base, i, ext)
+		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+			return candidate
+		}
+	}
+	return path
+}
+
+func (c *client) saveMedia(ctx context.Context, dl downloadable, path string) error {
+	path = uniquePath(path)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	a := attachment{location: dl.location, dc: dl.dc}
+	err = c.downloadMedia(ctx, a, file)
+	closeErr := file.Close()
+	if err := errors.Join(err, closeErr); err != nil {
+		os.Remove(path)
+		return fmt.Errorf("download: %w", err)
+	}
+	return nil
+}
+
 func (c *client) acknowledgeMedia(ctx context.Context, message *tg.Message) {
 	if expiringMediaLabel(message.Media) == "" {
 		return

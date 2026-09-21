@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -300,6 +301,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	typingTimeout.Stop()
 	defer typingTimeout.Stop()
 	var lastTypingSent time.Time
+	var saveDone <-chan error
 	var aiSuggestion string
 	var aiResults <-chan aiResult
 	var aiStop context.CancelFunc
@@ -690,6 +692,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				t.report(err)
 			}
 			render()
+		case err := <-saveDone:
+			saveDone = nil
+			if err != nil {
+				t.report(err)
+			}
 		case result := <-reactionDone:
 			reactionDone = nil
 			if result.err != nil {
@@ -1151,6 +1158,42 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 					continue
 				}
 				return forwardRequest{from: entry.peer, id: messages[selected].ID}
+			case "\x1bs", "\x1bS":
+				if saveDone != nil {
+					t.report(fmt.Errorf("a download is already in progress"))
+					continue
+				}
+				if selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
+					continue
+				}
+				dl, err := mediaDownloadable(messages[selected])
+				if err != nil {
+					t.report(err)
+					continue
+				}
+				home, err := os.UserHomeDir()
+				if err != nil {
+					t.report(fmt.Errorf("locate home directory: %w", err))
+					continue
+				}
+				dir := filepath.Join(home, "Downloads")
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.report(fmt.Errorf("create Downloads directory: %w", err))
+					continue
+				}
+				dest := filepath.Join(dir, dl.filename)
+				done := make(chan error, 1)
+				saveName := dl.filename
+				go func() {
+					err := c.saveMedia(ctx, dl, dest)
+					if err == nil {
+						t.report(fmt.Errorf("saved %s", saveName))
+					}
+					done <- err
+				}()
+				saveDone = done
+				t.report(fmt.Errorf("saving %s to ~/Downloads", saveName))
+				continue
 			case "\x1br", "\x1bR":
 				if selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
 					continue
