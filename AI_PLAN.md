@@ -152,7 +152,6 @@ atomic writer for chat toggles. `chatview.go` gains the trigger, the pending
 suggestion state, the key handling, and the status line. `client.go` carries
 the account ID so chat keys can be account-scoped.
 
-AGENTS.md currently forbids dependencies beyond the three modules and lists
-several of these behaviours under "what NOT to build". This design adds no new
-Go module — the provider client is `net/http` and `encoding/json` — but the
-feature list in AGENTS.md needs updating rather than quietly contradicting.
+CLAUDE.md forbids dependencies beyond the four allowed modules. This design
+adds no new Go module — the provider client is `net/http` and `encoding/json`
+— so the constraint holds.

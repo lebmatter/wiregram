@@ -206,13 +206,12 @@ This is a screen collapse, not password protection or a terminal scrollback eras
 
 ## Development
 
-Follow [AGENTS.md](AGENTS.md). All source lives in the root `package main`.
-Format with `gofmt -w *.go`, check with `go vet ./...`, and verify a build with
-`CGO_ENABLED=0`. No test suite is included, as specified in the contributor guide.
+Follow [CLAUDE.md](CLAUDE.md), the contributor guide. All source lives in the
+root `package main`. Build with `make`, format with `gofmt -w *.go`, and check
+with `go vet ./...`. No test suite is included.
 Direct dependencies are gotd/td, readline, and x/term; Go resolves their
 transitive dependencies through `go.mod` and `go.sum`. `mpv` is an optional runtime
-dependency for media; Wiregram itself remains cgo-free. Media playback and the new
-key bindings implement the subsequently requested extensions to `AGENTS.md`.
+dependency for media; Wiregram itself remains cgo-free.
 
 Copyright © 2026 wiregram contributors.
 Licensed under the GNU Affero General Public License v3.0 or later
