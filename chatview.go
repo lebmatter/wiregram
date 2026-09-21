@@ -200,7 +200,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	for _, m := range messages {
 		seen[m.ID] = true
 	}
-	e, err := t.newEditor("", false, *history)
+	e, err := t.newEditor("you> ", false, *history)
 	if err != nil {
 		return err
 	}
