@@ -90,7 +90,11 @@ func (c *client) messageLine(m *tg.Message, entry chat, messages map[int]*tg.Mes
 	if reply := c.replyLabel(m, entry, messages); reply != "" {
 		text = reply + " — " + text
 	}
-	return c.messageSender(m, entry) + "> " + text
+	line := c.messageSender(m, entry) + "> " + text
+	if m.Pinned {
+		line += " [pinned]"
+	}
+	return line
 }
 
 func (c *client) send(ctx context.Context, entry chat, text string, replyTo int) (*tg.Message, error) {
@@ -1088,6 +1092,35 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				}
 				if err != nil {
 					t.report(err)
+				}
+				render()
+				continue
+			case "\x1bp", "\x1bP":
+				if selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
+					continue
+				}
+				msg := messages[selected]
+				unpin := msg.Pinned
+				done := make(chan error, 1)
+				go func() {
+					_, err := c.api.MessagesUpdatePinnedMessage(ctx, &tg.MessagesUpdatePinnedMessageRequest{
+						Peer:  entry.peer,
+						ID:    msg.ID,
+						Unpin: unpin,
+					})
+					done <- err
+				}()
+				if err := <-done; err != nil {
+					t.report(fmt.Errorf("pin message: %w", err))
+				} else {
+					copy := *msg
+					copy.SetPinned(!unpin)
+					messages[selected] = &copy
+					if unpin {
+						t.report(fmt.Errorf("Message unpinned"))
+					} else {
+						t.report(fmt.Errorf("Message pinned"))
+					}
 				}
 				render()
 				continue
