@@ -914,19 +914,21 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			}
 			if confirmMsgDelete != nil {
 				revoke := *confirmMsgDelete
-				msgID := -1
-				if selected >= 0 && selected < len(messages) {
-					msgID = messages[selected].ID
-				}
+				idx := selected
 				confirmMsgDelete = nil
-				if (key == "y" || key == "Y") && msgID > 0 {
+				if (key == "y" || key == "Y") && idx >= 0 && idx < len(messages) && messages[idx].ID > 0 {
+					id := messages[idx].ID
+					delete(seen, id)
+					delete(changedMessages, id)
+					messages = append(messages[:idx], messages[idx+1:]...)
+					if selected >= len(messages) {
+						selected = max(0, len(messages)-1)
+					}
 					done := make(chan error, 1)
 					msgDeleteDone = done
-					id := msgID
 					go func() { done <- c.deleteMessages(ctx, entry, []int{id}, revoke) }()
-				} else {
-					render()
 				}
+				render()
 				continue
 			}
 			if msgDeleteDone != nil {
