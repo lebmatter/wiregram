@@ -33,3 +33,29 @@ func (c *client) deleteChat(ctx context.Context, entry chat, revoke bool) error 
 		}
 	}
 }
+
+func (c *client) deleteMessages(ctx context.Context, entry chat, ids []int, revoke bool) error {
+	switch entry.key.kind {
+	case 'c':
+		channel, ok := entry.peer.(*tg.InputPeerChannel)
+		if !ok {
+			return fmt.Errorf("delete messages: unexpected peer type for channel")
+		}
+		_, err := c.api.ChannelsDeleteMessages(ctx, &tg.ChannelsDeleteMessagesRequest{
+			Channel: &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash},
+			ID:      ids,
+		})
+		if err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+	default:
+		_, err := c.api.MessagesDeleteMessages(ctx, &tg.MessagesDeleteMessagesRequest{
+			Revoke: revoke,
+			ID:     ids,
+		})
+		if err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+	}
+	return nil
+}

@@ -259,6 +259,8 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var reactionDone <-chan reactionResult
 	var confirmDelete *bool
 	var deleteDone <-chan error
+	var confirmMsgDelete *bool
+	var msgDeleteDone <-chan error
 	var editEditor *editor
 	var editing *tg.Message
 	var editResults <-chan lineResult
@@ -626,6 +628,12 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				continue
 			}
 			return nil
+		case err := <-msgDeleteDone:
+			msgDeleteDone = nil
+			if err != nil {
+				t.report(err)
+			}
+			render()
 		case result := <-reactionDone:
 			reactionDone = nil
 			if result.err != nil {
@@ -653,7 +661,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				appendMessage(result.message)
 			}
 		case <-c.changed:
-			incoming, reactions := c.drain()
+			incoming, reactions, deletions := c.drain()
 			answerable := false
 			for _, m := range incoming {
 				appendMessage(m)
@@ -675,6 +683,24 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 						}
 						break
 					}
+				}
+			}
+			if len(deletions) > 0 {
+				removed := make(map[int]bool, len(deletions))
+				for _, id := range deletions {
+					removed[id] = true
+					delete(seen, id)
+					delete(changedMessages, id)
+				}
+				filtered := messages[:0]
+				for _, m := range messages {
+					if !removed[m.ID] {
+						filtered = append(filtered, m)
+					}
+				}
+				messages = filtered
+				if selected >= len(messages) {
+					selected = max(0, len(messages)-1)
 				}
 			}
 			if answerable && c.aiOn(entry) {
@@ -886,6 +912,26 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			if deleteDone != nil {
 				continue
 			}
+			if confirmMsgDelete != nil {
+				revoke := *confirmMsgDelete
+				msgID := -1
+				if selected >= 0 && selected < len(messages) {
+					msgID = messages[selected].ID
+				}
+				confirmMsgDelete = nil
+				if (key == "y" || key == "Y") && msgID > 0 {
+					done := make(chan error, 1)
+					msgDeleteDone = done
+					id := msgID
+					go func() { done <- c.deleteMessages(ctx, entry, []int{id}, revoke) }()
+				} else {
+					render()
+				}
+				continue
+			}
+			if msgDeleteDone != nil {
+				continue
+			}
 			if aiSuggestion != "" {
 				switch key {
 				case "y", "Y":
@@ -968,6 +1014,18 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 					scope = "for both sides"
 				}
 				t.report(fmt.Errorf("Delete chat with %s %s? Press y to confirm; any other key cancels.", plain(entry.title), scope))
+				continue
+			case "\x1b[3~", "\x1b[3;2~":
+				if msgDeleteDone != nil || selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
+					continue
+				}
+				revoke := key == "\x1b[3;2~"
+				confirmMsgDelete = &revoke
+				scope := "only for you"
+				if revoke {
+					scope = "for both sides"
+				}
+				t.report(fmt.Errorf("Delete this message %s? Press y to confirm; any other key cancels.", scope))
 				continue
 			case "\x1be", "\x1bE":
 				if selected < 0 || selected >= len(messages) {

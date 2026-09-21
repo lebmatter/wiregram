@@ -63,6 +63,7 @@ type client struct {
 	active           peerKey
 	pending          []*tg.Message
 	pendingReactions []reactionUpdate
+	pendingDeletions []int
 	autoLock         bool
 	changed          chan struct{}
 	report           func(error)
@@ -151,14 +152,16 @@ func (c *client) subscribe(key peerKey) {
 	c.active, c.pending, c.pendingReactions = key, nil, nil
 }
 
-func (c *client) drain() ([]*tg.Message, []reactionUpdate) {
+func (c *client) drain() ([]*tg.Message, []reactionUpdate, []int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	messages := c.pending
 	reactions := c.pendingReactions
+	deletions := c.pendingDeletions
 	c.pending = nil
 	c.pendingReactions = nil
-	return messages, reactions
+	c.pendingDeletions = nil
+	return messages, reactions, deletions
 }
 
 func (c *client) rememberUnread(key peerKey, unread int) {
@@ -195,6 +198,19 @@ func (c *client) accept(value tg.MessageClass, newMessage bool) {
 		return
 	}
 	c.pending = append(c.pending, m)
+	select {
+	case c.changed <- struct{}{}:
+	default:
+	}
+}
+
+func (c *client) acceptDeletion(ids []int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == (peerKey{}) {
+		return
+	}
+	c.pendingDeletions = append(c.pendingDeletions, ids...)
 	select {
 	case c.changed <- struct{}{}:
 	default:
@@ -250,6 +266,10 @@ func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 			c.rememberRead(peerKey{'c', u.ChannelID}, 0, u.MaxID)
 		case *tg.UpdateReadChannelInbox:
 			c.rememberRead(peerKey{'c', u.ChannelID}, u.MaxID, 0)
+		case *tg.UpdateDeleteMessages:
+			c.acceptDeletion(u.Messages)
+		case *tg.UpdateDeleteChannelMessages:
+			c.acceptDeletion(u.Messages)
 		}
 	}
 	return nil

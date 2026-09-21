@@ -82,6 +82,8 @@ timer. Ctrl+L remains available for manual locking.
 | Chat | Alt+E | Edit selected outgoing text message |
 | Chat | Alt+R | Reply to the selected message; press again to cancel |
 | Chat | Alt+M | React to the selected message |
+| Chat | Delete | Delete selected message only for you |
+| Chat | Shift+Delete | Delete selected message for both sides |
 | Chat | Alt+D | Delete current private chat only for you |
 | Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
