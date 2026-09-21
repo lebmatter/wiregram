@@ -257,6 +257,28 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	emojiReactionMode := false
 	var emojiTarget *tg.Message
 	var reactionDone <-chan reactionResult
+	var searchEditor *editor
+	var searchQuery []rune
+	var searchResults []*tg.Message
+	searchSelected := 0
+	var searchDone <-chan searchResult
+	searchTimer := time.NewTimer(time.Hour)
+	searchTimer.Stop()
+	defer searchTimer.Stop()
+	finishSearch := func() {
+		if searchEditor != nil {
+			searchEditor.close()
+			searchEditor = nil
+			searchQuery = nil
+			searchResults = nil
+			searchDone = nil
+			searchTimer.Stop()
+			t.mu.Lock()
+			t.editor = e.line
+			t.mu.Unlock()
+		}
+	}
+	defer finishSearch()
 	var confirmDelete *bool
 	var deleteDone <-chan error
 	var confirmMsgDelete *bool
@@ -330,6 +352,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if emojiEditor != nil {
 			hasRecent := len(emojiQuery) == 0 && len(c.recentEmoji()) > 0
 			t.unlock(emojiPickerLines(emojiChoices, emojiSelected, hasRecent, emojiReactionMode))
+			return
+		}
+		if searchEditor != nil {
+			t.unlock(c.searchResultLines(searchResults, searchSelected, entry, string(searchQuery)))
 			return
 		}
 		acknowledgeSelected(messages, selected, changedMessages)
@@ -537,6 +563,26 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				t.report(err)
 			}
 			readFailed = err != nil
+		case <-searchTimer.C:
+			query := strings.TrimSpace(string(searchQuery))
+			if query == "" || searchEditor == nil {
+				continue
+			}
+			done := make(chan searchResult, 1)
+			searchDone = done
+			go func() {
+				msgs, err := c.searchMessages(ctx, entry, query)
+				done <- searchResult{msgs, err}
+			}()
+		case result := <-searchDone:
+			searchDone = nil
+			if result.err != nil {
+				t.report(result.err)
+			} else {
+				searchResults = result.messages
+				searchSelected = 0
+			}
+			render()
 		case result := <-editResults:
 			if result.err != nil {
 				finishEdit()
@@ -903,6 +949,46 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				render()
 				continue
 			}
+			if searchEditor != nil {
+				switch key {
+				case "\x1b", "\x03", "\x04":
+					finishSearch()
+					render()
+					continue
+				case "\x1b[A", "\x1bOA":
+					if searchSelected > 0 {
+						searchSelected--
+					}
+				case "\x1b[B", "\x1bOB":
+					if searchSelected+1 < len(searchResults) {
+						searchSelected++
+					}
+				case "\r", "\n":
+					finishSearch()
+					render()
+					continue
+				case "\x7f", "\x08":
+					if len(searchQuery) > 0 {
+						searchQuery = searchQuery[:len(searchQuery)-1]
+						searchTimer.Reset(400 * time.Millisecond)
+					}
+				case "\x15":
+					searchQuery = nil
+					searchResults = nil
+					searchSelected = 0
+					searchTimer.Stop()
+				default:
+					if !strings.HasPrefix(key, "\x1b") {
+						searchQuery = appendQuery(searchQuery, key)
+						searchTimer.Reset(400 * time.Millisecond)
+					}
+				}
+				if searchEditor != nil {
+					searchEditor.line.Operation.SetBuffer(string(searchQuery))
+				}
+				render()
+				continue
+			}
 			if confirmDelete != nil {
 				revoke := *confirmDelete
 				confirmDelete = nil
@@ -966,6 +1052,24 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				return nil
 			case "\x03", "\x04":
 				return nil
+			case "\x06":
+				if searchEditor != nil {
+					continue
+				}
+				picker, err := t.newEditor("search> ", false, nil)
+				if err != nil {
+					t.report(err)
+					continue
+				}
+				searchEditor = picker
+				searchQuery = nil
+				searchResults = nil
+				searchSelected = 0
+				t.mu.Lock()
+				t.editor = searchEditor.line
+				t.mu.Unlock()
+				render()
+				continue
 			case "\x15":
 				startUploadPrompt()
 				continue
