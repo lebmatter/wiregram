@@ -89,6 +89,7 @@ timer. Ctrl+L remains available for manual locking.
 | Chat | Enter with text | Send text |
 | Chat | Enter with empty input | Open selected media |
 | Chat | Ctrl+U | Upload media or a file with an optional caption |
+| Chat | Alt+F | Forward selected message (opens search picker) |
 | Chat | Alt+A | Turn the AI assistant on or off for this chat |
 | AI suggestion | `y` | Send the suggested reply |
 | AI suggestion | `n` / Esc | Discard the suggestion |

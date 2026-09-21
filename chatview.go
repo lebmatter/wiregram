@@ -995,6 +995,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				reactionMode := selected >= 0 && selected < len(messages) && messages[selected].ID > 0
 				startEmoji(reactionMode)
 				continue
+			case "\x1bf", "\x1bF":
+				if selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
+					continue
+				}
+				return forwardRequest{from: entry.peer, id: messages[selected].ID}
 			case "\x1br", "\x1bR":
 				if selected < 0 || selected >= len(messages) || messages[selected].ID <= 0 {
 					continue

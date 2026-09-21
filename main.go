@@ -113,6 +113,10 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 		err = c.view(ctx, t, entry, &history)
 		histories[entry.key] = history
 		if err != nil {
+			if fwd, ok := err.(forwardRequest); ok {
+				c.handleForward(ctx, t, entries, fwd)
+				continue
+			}
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
