@@ -321,6 +321,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	defer probe.Stop()
 	probing := false
 	var requested attachment
+	var mediaMessage *tg.Message
 	player := ""
 	render := func() {
 		if t.isLocked() || mediaDone != nil {
@@ -413,6 +414,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			}
 			mediaDone = nil
 			mediaCancel = nil
+			mediaMessage = nil
 			t.clearMedia()
 		}
 	}
@@ -432,11 +434,11 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if selected < 0 || selected >= len(messages) || probing || mediaDone != nil {
 			return
 		}
-		// Text-only messages leave Enter as a no-op when there is no draft.
-		if formatMedia(messages[selected].Media) == "" {
+		message := messages[selected]
+		if formatMedia(message.Media) == "" {
 			return
 		}
-		a, err := mediaAttachment(messages[selected])
+		a, err := mediaAttachment(message)
 		if err != nil {
 			t.report(err)
 			return
@@ -446,7 +448,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			t.report(fmt.Errorf("install mpv with Kitty video output to open media"))
 			return
 		}
-		requested, player = a, path
+		requested, player, mediaMessage = a, path, message
 		if a.audio {
 			startMedia()
 			return
@@ -755,10 +757,14 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			mediaCancel()
 			mediaCancel = nil
 			mediaDone = nil
+			msg := mediaMessage
+			mediaMessage = nil
 			t.clearMedia()
 			render()
 			if err != nil && !errors.Is(err, context.Canceled) {
 				t.report(err)
+			} else if msg != nil {
+				c.acknowledgeMedia(ctx, msg)
 			}
 		case key, ok := <-t.keys:
 			if !ok {

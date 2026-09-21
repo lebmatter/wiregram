@@ -187,9 +187,12 @@ open on demand. Static/video stickers work when their format is supported by
 mpv. TGS/Lottie stickers, PDFs, and other non-playable attachments remain text
 representations. No attachment is downloaded just by displaying or selecting it.
 
-View-once and self-destructing photos, videos, and audio are labelled and blocked
-before download. Open them in an official Telegram app; Wiregram does not yet
-implement their consumption acknowledgements and expiry lifecycle.
+View-once and self-destructing photos, videos, and audio are labelled in the
+message list. Press Enter to open them like any other media. After playback
+completes, Wiregram acknowledges the view to Telegram so the sender sees
+"opened" and the server clears the media. If playback is interrupted (lock
+screen, Esc, leaving the chat), the media is not acknowledged — it remains
+available for another attempt. Once acknowledged, the message shows as opened.
 
 Enter opens media in the current terminal. Esc, Ctrl+C, or Ctrl+D closes it and
 returns to the chat. Wiregram owns stdin throughout playback; other keys keep the

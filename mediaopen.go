@@ -26,10 +26,6 @@ type attachment struct {
 }
 
 func mediaAttachment(message *tg.Message) (attachment, error) {
-	// Do not download expiring media until its read/expiry lifecycle is supported.
-	if label := expiringMediaLabel(message.Media); label != "" {
-		return attachment{}, fmt.Errorf("%s is not supported in wiregram; open it in an official Telegram app", label)
-	}
 	switch m := message.Media.(type) {
 	case *tg.MessageMediaPhoto:
 		photo, ok := m.Photo.(*tg.Photo)
@@ -152,6 +148,16 @@ func (c *client) playMedia(ctx context.Context, t *terminal, a attachment, playe
 		return fmt.Errorf("media playback failed; check that mpv supports this format and the Kitty video output: %w", err)
 	}
 	return nil
+}
+
+func (c *client) acknowledgeMedia(ctx context.Context, message *tg.Message) {
+	if expiringMediaLabel(message.Media) == "" {
+		return
+	}
+	_, err := c.api.MessagesReadMessageContents(ctx, []int{message.ID})
+	if err != nil {
+		c.report(fmt.Errorf("acknowledge viewed media: %w", err))
+	}
 }
 
 func (c *client) downloadMedia(ctx context.Context, a attachment, file *os.File) error {

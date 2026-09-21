@@ -29,8 +29,9 @@ func formatDuration(seconds int) string {
 }
 
 func formatMedia(media tg.MessageMediaClass) string {
+	prefix := ""
 	if label := expiringMediaLabel(media); label != "" {
-		return "[" + label + " — open in an official Telegram app]"
+		prefix = "[" + label + "] "
 	}
 	switch m := media.(type) {
 	case nil, *tg.MessageMediaEmpty:
@@ -38,12 +39,18 @@ func formatMedia(media tg.MessageMediaClass) string {
 	case *tg.MessageMediaPhoto:
 		if p, ok := m.Photo.(*tg.Photo); ok {
 			w, h, size := photoSize(p.Sizes)
-			return fmt.Sprintf("[photo] %dx%d, %s", w, h, formatSize(size))
+			return prefix + fmt.Sprintf("[photo] %dx%d, %s", w, h, formatSize(size))
+		}
+		if prefix != "" {
+			return prefix + "[photo opened]"
 		}
 		return "[photo]"
 	case *tg.MessageMediaDocument:
 		if d, ok := m.Document.(*tg.Document); ok {
-			return formatDocument(d)
+			return prefix + formatDocument(d)
+		}
+		if prefix != "" {
+			return prefix + "[media opened]"
 		}
 		return "[file]"
 	case *tg.MessageMediaGeo:
