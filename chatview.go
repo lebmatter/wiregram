@@ -296,6 +296,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 	var uploadResults <-chan lineResult
 	var selectedUploadPath string
 	var replying *tg.Message
+	typingTimeout := time.NewTimer(time.Hour)
+	typingTimeout.Stop()
+	defer typingTimeout.Stop()
+	var lastTypingSent time.Time
 	var aiSuggestion string
 	var aiResults <-chan aiResult
 	var aiStop context.CancelFunc
@@ -369,7 +373,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			thinking:   aiThinking,
 			suggestion: aiSuggestion,
 		}
-		lines, readID := c.selectedLines(messages, entry, selected, changedMessages, replying, status)
+		lines, readID := c.selectedLines(messages, entry, selected, changedMessages, replying, status, c.isTyping())
 		t.unlock(lines)
 		reads.observe(readID)
 	}
@@ -712,14 +716,24 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			} else {
 				appendMessage(result.message)
 			}
+		case <-typingTimeout.C:
+			c.clearTyping()
+			render()
 		case <-c.changed:
 			incoming, reactions, deletions := c.drain()
 			answerable := false
 			for _, m := range incoming {
+				if !m.Out {
+					c.clearTyping()
+					typingTimeout.Stop()
+				}
 				appendMessage(m)
 				if c.aiShouldAnswer(m) {
 					answerable = true
 				}
+			}
+			if c.isTyping() {
+				typingTimeout.Reset(6 * time.Second)
 			}
 			for _, update := range reactions {
 				for index, message := range messages {
@@ -1214,6 +1228,13 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			case "\x1b[1;3B", "\x1b\x1b[B", "\x1b\x1bOB":
 				key = "\x1b[B"
 			}
+			if time.Since(lastTypingSent) > 5*time.Second {
+				lastTypingSent = time.Now()
+				go c.api.MessagesSetTyping(ctx, &tg.MessagesSetTypingRequest{
+					Peer:   entry.peer,
+					Action: &tg.SendMessageTypingAction{},
+				})
+			}
 			if _, err := io.WriteString(e.input, key); err != nil {
 				return fmt.Errorf("read message input: %w", err)
 			}
@@ -1255,7 +1276,7 @@ func acknowledgeSelected(messages []*tg.Message, selected int, changed map[int]b
 
 const maxChatLineWidth = 120
 
-func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool, replying *tg.Message, status aiStatus) ([]string, int) {
+func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int, changed map[int]bool, replying *tg.Message, status aiStatus, typing bool) ([]string, int) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
@@ -1264,6 +1285,9 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	statusLines := status.lines(lineWidth)
 	reserved := 2 + len(statusLines)
 	if replying != nil {
+		reserved++
+	}
+	if typing {
 		reserved++
 	}
 	available := max(1, rows-reserved)
@@ -1335,6 +1359,9 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	}
 	if replying != nil {
 		lines = append(lines, clipLine("replying to "+c.replySummary(replying, entry), lineWidth))
+	}
+	if typing {
+		lines = append(lines, clipLine(plain(entry.title)+" is typing...", lineWidth))
 	}
 	return append(lines, statusLines...), readID
 }

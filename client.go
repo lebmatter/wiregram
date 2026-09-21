@@ -64,6 +64,7 @@ type client struct {
 	pending          []*tg.Message
 	pendingReactions []reactionUpdate
 	pendingDeletions []int
+	peerTyping       bool
 	autoLock         bool
 	changed          chan struct{}
 	report           func(error)
@@ -149,7 +150,7 @@ func (c *client) remember(users []tg.UserClass, chats []tg.ChatClass) {
 func (c *client) subscribe(key peerKey) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.active, c.pending, c.pendingReactions = key, nil, nil
+	c.active, c.pending, c.pendingReactions, c.peerTyping = key, nil, nil, false
 }
 
 func (c *client) drain() ([]*tg.Message, []reactionUpdate, []int) {
@@ -202,6 +203,31 @@ func (c *client) accept(value tg.MessageClass, newMessage bool) {
 	case c.changed <- struct{}{}:
 	default:
 	}
+}
+
+func (c *client) acceptTyping(userID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == (peerKey{}) || c.active != (peerKey{'u', userID}) {
+		return
+	}
+	c.peerTyping = true
+	select {
+	case c.changed <- struct{}{}:
+	default:
+	}
+}
+
+func (c *client) clearTyping() {
+	c.mu.Lock()
+	c.peerTyping = false
+	c.mu.Unlock()
+}
+
+func (c *client) isTyping() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.peerTyping
 }
 
 func (c *client) acceptDeletion(ids []int) {
@@ -270,6 +296,12 @@ func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 			c.acceptDeletion(u.Messages)
 		case *tg.UpdateDeleteChannelMessages:
 			c.acceptDeletion(u.Messages)
+		case *tg.UpdateUserTyping:
+			if _, ok := u.Action.(*tg.SendMessageCancelAction); ok {
+				c.clearTyping()
+			} else {
+				c.acceptTyping(u.UserID)
+			}
 		}
 	}
 	return nil
