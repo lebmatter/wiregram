@@ -146,7 +146,7 @@ func uploadedMedia(file tg.InputFileClass, path string) tg.InputMediaClass {
 
 func uploadPlaceholder(path, caption string, size int64) *tg.Message {
 	kind, mimeType := classifyUpload(path)
-	message := &tg.Message{Out: true, Message: caption}
+	message := &tg.Message{Out: true, Message: caption, Date: int(time.Now().Unix())}
 	if kind == uploadPhoto {
 		message.Media = &tg.MessageMediaPhoto{Photo: &tg.PhotoEmpty{}}
 		return message

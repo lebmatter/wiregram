@@ -22,7 +22,7 @@ func shortExcerpt(text string) string {
 }
 
 func (c *client) replySummary(message *tg.Message, entry chat) string {
-	return c.messageSender(message, entry) + "> " + shortExcerpt(messageText(message))
+	return "<" + c.messageSender(message, entry) + "> " + shortExcerpt(messageText(message))
 }
 
 func (c *client) replyLabel(message *tg.Message, entry chat, messages map[int]*tg.Message) string {

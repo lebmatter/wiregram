@@ -98,12 +98,32 @@ func messageText(m *tg.Message) string {
 	return plain(text)
 }
 
+const nickWidth = 12
+
+func formatNick(name string) string {
+	runes := []rune(name)
+	if len(runes) > nickWidth {
+		runes = runes[:nickWidth]
+	}
+	padded := string(runes)
+	for len([]rune(padded)) < nickWidth {
+		padded += " "
+	}
+	return padded
+}
+
+func messageTimestamp(date int) string {
+	t := time.Unix(int64(date), 0).Local()
+	return fmt.Sprintf("[%02d:%02d]", t.Hour(), t.Minute())
+}
+
 func (c *client) messageLine(m *tg.Message, entry chat, messages map[int]*tg.Message) string {
 	text := messageText(m)
 	if reply := c.replyLabel(m, entry, messages); reply != "" {
 		text = reply + " — " + text
 	}
-	line := c.messageSender(m, entry) + "> " + text
+	nick := formatNick(c.messageSender(m, entry))
+	line := messageTimestamp(m.Date) + " <" + nick + "> " + text
 	if m.Pinned {
 		line += " [pinned]"
 	}
@@ -135,7 +155,7 @@ func (c *client) send(ctx context.Context, entry chat, text string, replyTo int)
 			return nil, err
 		}
 	}
-	message := &tg.Message{Out: true, Message: text}
+	message := &tg.Message{Out: true, Message: text, Date: int(time.Now().Unix())}
 	return c.sentMessage(result, entry, request.RandomID, replyTo, message), nil
 }
 
@@ -150,6 +170,7 @@ func (c *client) sentMessage(
 	switch u := result.(type) {
 	case *tg.UpdateShortSentMessage:
 		message.ID = u.ID
+		message.Date = u.Date
 	case *tg.Updates:
 		c.remember(u.Users, u.Chats)
 		updates = u.Updates
@@ -1408,6 +1429,8 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 	for _, message := range messages {
 		byID[message.ID] = message
 	}
+	// [HH:MM] <nick_padded> = 7 + 2 + nickWidth + 2 = 23 chars
+	const msgPrefixWidth = 7 + 2 + nickWidth + 2
 	messageLines := func(i int) []string {
 		marker := "  "
 		if changed[messages[i].ID] {
@@ -1419,7 +1442,8 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 				marker += "[" + reactions + "] "
 			}
 		}
-		return wrapLine(marker+c.messageLine(messages[i], entry, byID), lineWidth)
+		indent := displayWidth(marker) + msgPrefixWidth
+		return wrapLineIndent(marker+c.messageLine(messages[i], entry, byID), lineWidth, indent)
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines := []string{}
@@ -1480,11 +1504,17 @@ func (c *client) selectedLines(messages []*tg.Message, entry chat, selected int,
 }
 
 func wrapLine(text string, width int) []string {
+	return wrapLineIndent(text, width, 0)
+}
+
+func wrapLineIndent(text string, width int, indent int) []string {
 	if width < 1 {
 		return []string{""}
 	}
 	continuation := "  "
-	if width < 4 {
+	if indent > 0 && indent < width-4 {
+		continuation = strings.Repeat(" ", indent)
+	} else if width < 4 {
 		continuation = " "
 	}
 	words := strings.Fields(text)
