@@ -98,6 +98,19 @@ func messageText(m *tg.Message) string {
 	return plain(text)
 }
 
+var nickColors = [...]string{
+	"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m",
+	"\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[95m", "\033[96m",
+}
+
+func nickColor(name string) string {
+	h := uint32(0)
+	for _, r := range name {
+		h = h*31 + uint32(r)
+	}
+	return nickColors[h%uint32(len(nickColors))]
+}
+
 const nickWidth = 12
 
 func formatNick(name string) string {
@@ -122,8 +135,13 @@ func (c *client) messageLine(m *tg.Message, entry chat, messages map[int]*tg.Mes
 	if reply := c.replyLabel(m, entry, messages); reply != "" {
 		text = reply + " — " + text
 	}
-	nick := formatNick(c.messageSender(m, entry))
-	line := messageTimestamp(m.Date) + " <" + nick + "> " + text
+	sender := c.messageSender(m, entry)
+	nick := formatNick(sender)
+	nickPart := "<" + nick + ">"
+	if entry.key.kind == 'g' || entry.key.kind == 'c' {
+		nickPart = nickColor(sender) + nickPart + "\033[0m"
+	}
+	line := messageTimestamp(m.Date) + " " + nickPart + " " + text
 	if m.Pinned {
 		line += " [pinned]"
 	}
@@ -1570,7 +1588,18 @@ func wrapLineIndent(text string, width int, indent int) []string {
 
 func displayWidth(text string) int {
 	width := 0
+	inEscape := false
 	for _, r := range text {
+		if r == '\033' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
 		width += runeWidth(r)
 	}
 	return width
@@ -1581,7 +1610,20 @@ func takeCells(text string, limit int) (string, string) {
 		limit = 1
 	}
 	used, end := 0, 0
+	inEscape := false
 	for index, r := range text {
+		if r == '\033' {
+			inEscape = true
+			end = index + len(string(r))
+			continue
+		}
+		if inEscape {
+			end = index + len(string(r))
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
 		cells := runeWidth(r)
 		if used > 0 && used+cells > limit {
 			break
@@ -1607,7 +1649,20 @@ func runeWidth(r rune) int {
 func clipLine(text string, width int) string {
 	var out strings.Builder
 	used := 0
+	inEscape := false
 	for _, r := range text {
+		if r == '\033' {
+			inEscape = true
+			out.WriteRune(r)
+			continue
+		}
+		if inEscape {
+			out.WriteRune(r)
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
 		cells := runeWidth(r)
 		if used+cells > width {
 			break

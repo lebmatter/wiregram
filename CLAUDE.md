@@ -53,11 +53,13 @@ These are project constraints, not suggestions:
 
 ## Display conventions
 
-- Plain text only. No colors, no bold. The allowed escapes are `\033[2J`
+- Plain text only. No bold. The allowed escapes are `\033[2J`
   (clear), `\033[H` (home), `\033[K` (clear line), and `\033[7m`/`\033[0m`.
+  ANSI color escapes are used only for nick coloring in group/channel chats.
   Kitty graphics sequences are used only by the media viewer.
 - `>` marks the selected row in lists and the selected message in a chat.
-- Messages render as `sender> text`; the user is always `you`.
+- Messages render as `[HH:MM] <sender> text` with a fixed-width nick column;
+  the user is always `you`.
 - Private chats show the first name, else username, else `Deleted Account`.
   Groups show the title; channels show `Channel: TITLE`.
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with
