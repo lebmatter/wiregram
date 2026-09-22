@@ -53,6 +53,7 @@ Keyboard shortcuts:
     Alt+F             Forward message
     Alt+S             Save attachment to ~/Downloads
     Alt+P             Pin/unpin message
+    Alt+H             Toggle private mode (hide history)
     Alt+A             Toggle AI assistant
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)

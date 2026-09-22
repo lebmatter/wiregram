@@ -22,7 +22,19 @@ import (
 )
 
 func (c *client) history(ctx context.Context, entry chat) ([]*tg.Message, error) {
-	result, err := c.api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{Peer: entry.peer, Limit: 30})
+	return c.fetchHistory(ctx, entry, 0)
+}
+
+func (c *client) olderHistory(ctx context.Context, entry chat, offsetID int) ([]*tg.Message, error) {
+	return c.fetchHistory(ctx, entry, offsetID)
+}
+
+func (c *client) fetchHistory(ctx context.Context, entry chat, offsetID int) ([]*tg.Message, error) {
+	result, err := c.api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+		Peer:     entry.peer,
+		Limit:    30,
+		OffsetID: offsetID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load messages: %w", err)
 	}
@@ -255,6 +267,10 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		}
 	}()
 	readFailed := false
+	privateMode := false
+	var historyDone chan []*tg.Message
+	loadingHistory := false
+	historyExhausted := false
 	var emojiEditor *editor
 	var emojiQuery []rune
 	var emojiChoices []emojiOption
@@ -375,7 +391,14 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			thinking:   aiThinking,
 			suggestion: aiSuggestion,
 		}
-		lines, readID := c.selectedLines(messages, entry, selected, changedMessages, replying, status, c.isTyping())
+		var lines []string
+		var readID int
+		if privateMode && len(messages) > 0 {
+			last := len(messages) - 1
+			lines, readID = c.selectedLines(messages[last:], entry, 0, changedMessages, replying, status, c.isTyping())
+		} else {
+			lines, readID = c.selectedLines(messages, entry, selected, changedMessages, replying, status, c.isTyping())
+		}
 		t.unlock(lines)
 		reads.observe(readID)
 	}
@@ -549,7 +572,7 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 		if follow {
 			selected = len(messages) - 1
 		}
-		if len(messages) > 30 {
+		if len(messages) > 500 {
 			delete(changedMessages, messages[0].ID)
 			messages = messages[1:]
 			selected = max(0, selected-1)
@@ -837,6 +860,27 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 			} else if msg != nil {
 				c.acknowledgeMedia(ctx, msg)
 			}
+		case older := <-historyDone:
+			loadingHistory = false
+			historyDone = nil
+			if len(older) == 0 {
+				historyExhausted = true
+			} else {
+				var fresh []*tg.Message
+				for _, m := range older {
+					if !seen[m.ID] {
+						seen[m.ID] = true
+						fresh = append(fresh, m)
+					}
+				}
+				if len(fresh) > 0 {
+					messages = append(fresh, messages...)
+					selected += len(fresh)
+				} else {
+					historyExhausted = true
+				}
+			}
+			render()
 		case key, ok := <-t.keys:
 			if !ok {
 				return context.Canceled
@@ -1254,9 +1298,35 @@ func (c *client) view(ctx context.Context, t *terminal, entry chat, history *[]s
 				t.mu.Unlock()
 				render()
 				continue
+			case "\x1bh", "\x1bH":
+				privateMode = !privateMode
+				if privateMode {
+					selected = len(messages) - 1
+				}
+				render()
+				continue
 			case "\x1b[A", "\x1bOA":
+				if privateMode {
+					privateMode = false
+				}
 				if selected > 0 {
 					selected--
+				} else if !loadingHistory && !historyExhausted && len(messages) > 0 {
+					loadingHistory = true
+					ch := make(chan []*tg.Message, 1)
+					historyDone = ch
+					offsetID := messages[0].ID
+					go func() {
+						older, err := c.olderHistory(ctx, entry, offsetID)
+						if err != nil {
+							if ctx.Err() == nil {
+								t.report(err)
+							}
+							ch <- nil
+							return
+						}
+						ch <- older
+					}()
 				}
 				render()
 				continue
