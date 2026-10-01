@@ -35,8 +35,9 @@ type accountState struct {
 
 type account struct {
 	dir         string
-	backendType string // "telegram" or "mattermost"
+	backendType string // "telegram", "mattermost", or "matrix"
 	mmBackend   *mmBackend
+	mxBackend   *mxBackend
 	mu          sync.Mutex
 	state       accountState
 	cancel      context.CancelFunc
@@ -56,6 +57,12 @@ func (a *account) label() string {
 			return a.mmBackend.AccountLabel()
 		}
 		return "[MM] awaiting sign-in"
+	}
+	if a.backendType == "matrix" && a.mxBackend != nil {
+		if a.mxBackend.userID != "" {
+			return a.mxBackend.AccountLabel()
+		}
+		return "[MX] awaiting sign-in"
 	}
 	s := a.snapshot()
 	if s.identity.ID == 0 {
@@ -128,8 +135,41 @@ func loadAccounts(cfg config, dir string, creds credStore) (*accountManager, err
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
 	mmSeen := make(map[string]bool)
+	mxSeen := make(map[string]bool)
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "mattermost-") {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "matrix-") {
+			path := filepath.Join(dir, "accounts", entry.Name())
+			data, err := os.ReadFile(filepath.Join(path, "account.json"))
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return nil, fmt.Errorf("read matrix account: %w", err)
+			}
+			var identity mxAccountIdentity
+			if err := json.Unmarshal(data, &identity); err != nil {
+				return nil, fmt.Errorf("parse matrix account: %w", err)
+			}
+			mb := newMXBackend(identity.Homeserver)
+			mb.userID = identity.UserID
+			mb.deviceID = identity.DeviceID
+			mb.configDir = path
+			if tok, err := creds.Get(mxKeyringKey(identity.Homeserver, identity.UserID)); err == nil && tok != "" {
+				mb.accessToken = tok
+			} else {
+				mb.accessToken = identity.Token
+			}
+			a := &account{
+				dir:         path,
+				backendType: "matrix",
+				mxBackend:   mb,
+				histories:   make(map[chatID][]string),
+			}
+			a.state.status = "offline"
+			a.state.needsLogin = mb.accessToken == ""
+			m.accounts = append(m.accounts, a)
+			mxSeen[identity.Homeserver+"\x00"+identity.UserID] = true
+		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "mattermost-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
 			data, err := os.ReadFile(filepath.Join(path, "account.json"))
 			if err != nil {
@@ -185,6 +225,23 @@ func loadAccounts(cfg config, dir string, creds credStore) (*accountManager, err
 		a.state.needsLogin = mb.token == ""
 		m.accounts = append(m.accounts, a)
 	}
+	for _, mxs := range cfg.Matrix {
+		if mxSeen[mxs.Homeserver+"\x00"] {
+			continue
+		}
+		mb := newMXBackend(mxs.Homeserver)
+		if tok, err := creds.Get(mxKeyringKey(mxs.Homeserver, "")); err == nil && tok != "" {
+			mb.accessToken = tok
+		}
+		a := &account{
+			backendType: "matrix",
+			mxBackend:   mb,
+			histories:   make(map[chatID][]string),
+		}
+		a.state.status = "offline"
+		a.state.needsLogin = mb.accessToken == ""
+		m.accounts = append(m.accounts, a)
+	}
 	return m, nil
 }
 
@@ -224,6 +281,43 @@ func (m *accountManager) addMattermost(serverURL string) (*account, error) {
 	return a, nil
 }
 
+func (m *accountManager) addMatrix(homeserver string) (*account, error) {
+	root := filepath.Join(m.dir, "accounts")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, fmt.Errorf("create accounts directory: %w", err)
+	}
+	dir, err := os.MkdirTemp(root, "matrix-")
+	if err != nil {
+		return nil, fmt.Errorf("create account directory: %w", err)
+	}
+	mb := newMXBackend(homeserver)
+	mb.configDir = dir
+	a := &account{
+		dir:         dir,
+		backendType: "matrix",
+		mxBackend:   mb,
+		histories:   make(map[chatID][]string),
+	}
+	a.state.status, a.state.needsLogin = "sign-in required", true
+	m.accounts = append(m.accounts, a)
+	return a, nil
+}
+
+func (m *accountManager) promptMatrix(ctx context.Context, t *terminal) (*account, error) {
+	serverURL, err := t.prompt(ctx, "Matrix homeserver URL: ", false)
+	if err != nil {
+		return nil, err
+	}
+	serverURL = strings.TrimSpace(serverURL)
+	if serverURL == "" {
+		return nil, context.Canceled
+	}
+	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
+		serverURL = "https://" + serverURL
+	}
+	return m.addMatrix(serverURL)
+}
+
 func (m *accountManager) discard(a *account) {
 	if a.cancel != nil {
 		a.cancel()
@@ -233,6 +327,9 @@ func (m *accountManager) discard(a *account) {
 	}
 	if a.backendType == "mattermost" && a.mmBackend != nil {
 		m.creds.Delete(mmKeyringKey(a.mmBackend.serverURL))
+	}
+	if a.backendType == "matrix" && a.mxBackend != nil {
+		m.creds.Delete(mxKeyringKey(a.mxBackend.homeserver, a.mxBackend.userID))
 	}
 	for i, x := range m.accounts {
 		if x == a {
@@ -249,6 +346,9 @@ func (a *account) neverAuthenticated() bool {
 	if a.backendType == "mattermost" {
 		return a.mmBackend == nil || a.mmBackend.token == ""
 	}
+	if a.backendType == "matrix" {
+		return a.mxBackend == nil || a.mxBackend.accessToken == ""
+	}
 	return a.snapshot().identity.ID == 0
 }
 
@@ -260,6 +360,53 @@ type mmAccountIdentity struct {
 }
 
 func mmKeyringKey(serverURL string) string { return "mm-token:" + serverURL }
+
+type mxAccountIdentity struct {
+	Homeserver string `json:"homeserver"`
+	Token      string `json:"token,omitempty"`
+	UserID     string `json:"user_id"`
+	DeviceID   string `json:"device_id"`
+}
+
+func mxKeyringKey(homeserver, userID string) string { return "mx-token:" + homeserver + "/" + userID }
+
+func saveMXAccount(dir string, mx *mxBackend, creds credStore) error {
+	if err := creds.Set(mxKeyringKey(mx.homeserver, mx.userID), mx.accessToken); err == nil {
+		return saveMXAccountJSON(dir, mxAccountIdentity{
+			Homeserver: mx.homeserver,
+			UserID:     mx.userID,
+			DeviceID:   mx.deviceID,
+		})
+	}
+	return saveMXAccountJSON(dir, mxAccountIdentity{
+		Homeserver: mx.homeserver,
+		Token:      mx.accessToken,
+		UserID:     mx.userID,
+		DeviceID:   mx.deviceID,
+	})
+}
+
+func saveMXAccountJSON(dir string, identity mxAccountIdentity) error {
+	data, err := json.MarshalIndent(identity, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode matrix account: %w", err)
+	}
+	f, err := os.CreateTemp(dir, ".mx-account-*")
+	if err != nil {
+		return fmt.Errorf("create matrix account file: %w", err)
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(append(data, '\n'))
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return fmt.Errorf("write matrix account: %w", err)
+	}
+	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
+		return fmt.Errorf("save matrix account: %w", err)
+	}
+	return nil
+}
 
 func saveMMAccount(dir string, mb *mmBackend, creds credStore) error {
 	if err := creds.Set(mmKeyringKey(mb.serverURL), mb.token); err == nil {
@@ -305,7 +452,8 @@ func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account,
 	fmt.Fprint(t.out(), "\033[2J\033[HAdd account\n\n")
 	fmt.Fprintln(t.out(), "  1  Telegram")
 	fmt.Fprintln(t.out(), "  2  Mattermost")
-	fmt.Fprintln(t.out(), "\nPress 1 or 2; Esc to cancel.")
+	fmt.Fprintln(t.out(), "  3  Matrix")
+	fmt.Fprintln(t.out(), "\nPress 1, 2, or 3; Esc to cancel.")
 	for {
 		select {
 		case <-ctx.Done():
@@ -319,6 +467,8 @@ func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account,
 				return m.addTelegram()
 			case "2":
 				return m.promptMattermost(ctx, t)
+			case "3":
+				return m.promptMatrix(ctx, t)
 			case "\x1b", "\x03", "\x04":
 				return nil, context.Canceled
 			}
@@ -367,6 +517,10 @@ func saveAccount(dir string, identity accountIdentity) error {
 func (m *accountManager) start(parent context.Context, a *account, prompt promptFunc) {
 	if a.backendType == "mattermost" {
 		m.startMattermost(parent, a, prompt)
+		return
+	}
+	if a.backendType == "matrix" {
+		m.startMatrix(parent, a, prompt)
 		return
 	}
 	if a.done != nil {
@@ -471,6 +625,56 @@ func (m *accountManager) start(parent context.Context, a *account, prompt prompt
 			}
 			delay = min(delay*2, time.Minute)
 		}
+	}()
+}
+
+func (m *accountManager) startMatrix(parent context.Context, a *account, prompt promptFunc) {
+	if a.done != nil {
+		select {
+		case <-a.done:
+		default:
+			return
+		}
+	}
+	mb := a.mxBackend
+	ctx, cancel := context.WithCancel(parent)
+	a.cancel, a.done = cancel, make(chan struct{})
+	a.set(m, func(s *accountState) { s.status, s.notice, s.needsLogin = "connecting", "", false })
+	go func() {
+		defer close(a.done)
+		defer m.notify()
+		if prompt != nil {
+			if err := mb.Authenticate(ctx, prompt, func(err error) {
+				a.set(m, func(s *accountState) { s.notice = cleanError(err) })
+			}); err != nil {
+				a.set(m, func(s *accountState) {
+					s.status, s.notice = "offline", cleanError(err)
+					if !errors.Is(err, context.Canceled) {
+						s.needsLogin = true
+					}
+				})
+				return
+			}
+		} else if mb.accessToken != "" {
+			if err := mb.Authenticate(ctx, nil, func(err error) {}); err != nil {
+				a.set(m, func(s *accountState) { s.status, s.notice, s.needsLogin = "offline", cleanError(err), true })
+				return
+			}
+		} else {
+			a.set(m, func(s *accountState) { s.status, s.needsLogin = "offline", true })
+			return
+		}
+		if a.dir != "" {
+			if err := saveMXAccount(a.dir, mb, m.creds); err != nil {
+				a.set(m, func(s *accountState) { s.notice = cleanError(err) })
+			}
+		}
+		mb.startSync(ctx)
+		a.set(m, func(s *accountState) {
+			s.backend, s.ctx, s.status, s.notice = mb, ctx, "online", ""
+		})
+		<-ctx.Done()
+		a.set(m, func(s *accountState) { s.backend, s.ctx, s.status = nil, nil, "offline" })
 	}()
 }
 

@@ -21,11 +21,16 @@ type config struct {
 	AutoLock   int              `json:"autolock"`
 	AI         *aiConfig        `json:"ai,omitempty"`
 	Mattermost []mmServerConfig `json:"mattermost,omitempty"`
+	Matrix     []mxServerConfig `json:"matrix,omitempty"`
 }
 
 type mmServerConfig struct {
 	URL   string `json:"url"`
 	Token string `json:"token,omitempty"`
+}
+
+type mxServerConfig struct {
+	Homeserver string `json:"homeserver"`
 }
 
 type promptFunc func(string, bool) (string, error)
@@ -46,8 +51,8 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return cfg, dir, fmt.Errorf("read configuration: %w", err)
 		}
-		if (cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "") && len(cfg.Mattermost) == 0 {
-			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash (or a mattermost section)")
+		if (cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "") && len(cfg.Mattermost) == 0 && len(cfg.Matrix) == 0 {
+			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash (or a mattermost/matrix section)")
 		}
 		if cfg.AutoLock != 0 && cfg.AutoLock != 1 {
 			return cfg, dir, fmt.Errorf("configuration autolock must be 0 or 1")
