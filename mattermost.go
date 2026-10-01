@@ -282,9 +282,23 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 		teamNames[team.ID] = team.DisplayName
 	}
 
+	// Fetch channels and member data concurrently.
+	type memberResult struct {
+		members []mmChannelMember
+		err     error
+	}
+	memberCh := make(chan memberResult, len(teams))
+	for _, team := range teams {
+		go func(teamID string) {
+			var members []mmChannelMember
+			err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/teams/%s/channels/members", teamID), nil, &members)
+			memberCh <- memberResult{members, err}
+		}(team.ID)
+	}
+
+	// Fetch first two pages of channels (most recent activity first).
 	var allChannels []mmChannel
-	page := 0
-	for {
+	for page := 0; page < 2; page++ {
 		var batch []mmChannel
 		if err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/channels?page=%d&per_page=100", page), nil, &batch); err != nil {
 			return nil, 0, fmt.Errorf("load channels: %w", err)
@@ -293,16 +307,16 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 		if len(batch) < 100 {
 			break
 		}
-		page++
 	}
 
+	// Collect member results.
 	memberMap := make(map[string]mmChannelMember)
-	for _, team := range teams {
-		var members []mmChannelMember
-		if err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/teams/%s/channels/members", team.ID), nil, &members); err != nil {
-			return nil, 0, fmt.Errorf("load members: %w", err)
+	for range teams {
+		res := <-memberCh
+		if res.err != nil {
+			continue
 		}
-		for _, m := range members {
+		for _, m := range res.members {
 			memberMap[m.ChannelID] = m
 		}
 	}
@@ -707,6 +721,7 @@ func (mb *mmBackend) MarkRead(ctx context.Context, ch chatEntry, upToID string) 
 	resp.Body.Close()
 	mb.mu.Lock()
 	mb.lastRead[ch.ID.id] = upToID
+	mb.unreads[ch.ID.id] = 0
 	mb.mu.Unlock()
 	return nil
 }
@@ -1383,8 +1398,12 @@ func (mb *mmBackend) handleWSEvent(data []byte) {
 			mb.mu.Lock()
 			mb.pending = append(mb.pending, mmEvent{kind: "post", post: &post})
 			mb.mu.Unlock()
-			mb.notify()
+		} else if post.UserID != mb.userID {
+			mb.mu.Lock()
+			mb.unreads[post.ChannelID]++
+			mb.mu.Unlock()
 		}
+		mb.notify()
 
 	case "post_edited":
 		var wrapper struct {
