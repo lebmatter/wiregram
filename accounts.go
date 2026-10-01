@@ -122,14 +122,45 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
+	mmSeen := make(map[string]bool)
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "mattermost-") {
+			path := filepath.Join(dir, "accounts", entry.Name())
+			data, err := os.ReadFile(filepath.Join(path, "account.json"))
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return nil, fmt.Errorf("read mattermost account: %w", err)
+			}
+			var identity mmAccountIdentity
+			if err := json.Unmarshal(data, &identity); err != nil {
+				return nil, fmt.Errorf("parse mattermost account: %w", err)
+			}
+			mb := newMMBackend(identity.ServerURL)
+			mb.token = identity.Token
+			mb.userID = identity.UserID
+			mb.username = identity.Username
+			a := &account{
+				dir:         path,
+				backendType: "mattermost",
+				mmBackend:   mb,
+				histories:   make(map[chatID][]string),
+			}
+			a.state.status = "offline"
+			a.state.needsLogin = identity.Token == ""
+			m.accounts = append(m.accounts, a)
+			mmSeen[identity.ServerURL] = true
+		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
 			if err := add(filepath.Join(dir, "accounts", entry.Name())); err != nil {
 				return nil, err
 			}
 		}
 	}
 	for _, mms := range cfg.Mattermost {
+		if mmSeen[mms.URL] {
+			continue
+		}
 		mb := newMMBackend(mms.URL)
 		if mms.Token != "" {
 			mb.token = mms.Token
@@ -161,16 +192,60 @@ func (m *accountManager) addTelegram() (*account, error) {
 	return a, nil
 }
 
-func (m *accountManager) addMattermost(serverURL string) *account {
+func (m *accountManager) addMattermost(serverURL string) (*account, error) {
+	root := filepath.Join(m.dir, "accounts")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, fmt.Errorf("create accounts directory: %w", err)
+	}
+	dir, err := os.MkdirTemp(root, "mattermost-")
+	if err != nil {
+		return nil, fmt.Errorf("create account directory: %w", err)
+	}
 	mb := newMMBackend(serverURL)
 	a := &account{
+		dir:         dir,
 		backendType: "mattermost",
 		mmBackend:   mb,
 		histories:   make(map[chatID][]string),
 	}
 	a.state.status, a.state.needsLogin = "sign-in required", true
 	m.accounts = append(m.accounts, a)
-	return a
+	return a, nil
+}
+
+type mmAccountIdentity struct {
+	ServerURL string `json:"server_url"`
+	Token     string `json:"token"`
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+}
+
+func saveMMAccount(dir string, mb *mmBackend) error {
+	identity := mmAccountIdentity{
+		ServerURL: mb.serverURL,
+		Token:     mb.token,
+		UserID:    mb.userID,
+		Username:  mb.username,
+	}
+	data, err := json.MarshalIndent(identity, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode mattermost account: %w", err)
+	}
+	f, err := os.CreateTemp(dir, ".mm-account-*")
+	if err != nil {
+		return fmt.Errorf("create mattermost account file: %w", err)
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(append(data, '\n'))
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return fmt.Errorf("write mattermost account: %w", err)
+	}
+	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
+		return fmt.Errorf("save mattermost account: %w", err)
+	}
+	return nil
 }
 
 func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account, error) {
@@ -210,8 +285,7 @@ func (m *accountManager) promptMattermost(ctx context.Context, t *terminal) (*ac
 	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
 		serverURL = "https://" + serverURL
 	}
-	a := m.addMattermost(serverURL)
-	return a, nil
+	return m.addMattermost(serverURL)
 }
 
 func saveAccount(dir string, identity accountIdentity) error {
@@ -463,6 +537,11 @@ func (m *accountManager) startMattermost(parent context.Context, a *account, pro
 		} else {
 			a.set(m, func(s *accountState) { s.status, s.needsLogin = "offline", true })
 			return
+		}
+		if a.dir != "" {
+			if err := saveMMAccount(a.dir, mb); err != nil {
+				a.set(m, func(s *accountState) { s.notice = cleanError(err) })
+			}
 		}
 		mb.startWebSocket(ctx)
 		a.set(m, func(s *accountState) {
