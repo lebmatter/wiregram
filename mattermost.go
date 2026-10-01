@@ -273,8 +273,9 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 	}
 
 	type channelWithUnread struct {
-		ch     mmChannel
-		unread int
+		ch       mmChannel
+		unread   int
+		teamName string
 	}
 	seen := make(map[string]bool)
 	var channels []channelWithUnread
@@ -304,7 +305,7 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 					unread = 0
 				}
 			}
-			channels = append(channels, channelWithUnread{ch, unread})
+			channels = append(channels, channelWithUnread{ch, unread, team.DisplayName})
 		}
 	}
 
@@ -318,7 +319,7 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 
 	entries := make([]chatEntry, 0, len(channels))
 	for _, cw := range channels {
-		title := mb.channelTitle(ctx, cw.ch)
+		title := mb.channelTitle(ctx, cw.ch, cw.teamName)
 		isDM := cw.ch.Type == "D" || cw.ch.Type == "G"
 		mb.mu.Lock()
 		mb.unreads[cw.ch.ID] = cw.unread
@@ -335,7 +336,7 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 	return entries, 0, nil
 }
 
-func (mb *mmBackend) channelTitle(ctx context.Context, ch mmChannel) string {
+func (mb *mmBackend) channelTitle(ctx context.Context, ch mmChannel, teamName string) string {
 	switch ch.Type {
 	case "D":
 		parts := strings.Split(ch.Name, "__")
@@ -349,10 +350,14 @@ func (mb *mmBackend) channelTitle(ctx context.Context, ch mmChannel) string {
 	case "G":
 		return ch.DisplayName
 	default:
-		if ch.DisplayName != "" {
-			return ch.DisplayName
+		name := ch.DisplayName
+		if name == "" {
+			name = ch.Name
 		}
-		return ch.Name
+		if teamName != "" {
+			return "[" + teamName + "] " + name
+		}
+		return name
 	}
 }
 
