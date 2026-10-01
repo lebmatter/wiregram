@@ -22,7 +22,7 @@ import (
 const usageText = `Usage: wiregram [--insecure]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
-Mattermost, and Matrix. Text conversations with on-demand Kitty graphics and
+Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
 audio playback; no TUI framework or mouse.
 
 First launch asks for API credentials (or use -ldflags to embed them),

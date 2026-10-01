@@ -14,6 +14,7 @@ import (
 
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
+	"go.mau.fi/whatsmeow/types"
 	"golang.org/x/term"
 )
 
@@ -35,9 +36,10 @@ type accountState struct {
 
 type account struct {
 	dir         string
-	backendType string // "telegram", "mattermost", or "matrix"
+	backendType string // "telegram", "mattermost", "matrix", or "whatsapp"
 	mmBackend   *mmBackend
 	mxBackend   *mxBackend
+	waBackend   *waBackend
 	mu          sync.Mutex
 	state       accountState
 	cancel      context.CancelFunc
@@ -63,6 +65,9 @@ func (a *account) label() string {
 			return a.mxBackend.AccountLabel()
 		}
 		return "[MX] awaiting sign-in"
+	}
+	if a.backendType == "whatsapp" && a.waBackend != nil {
+		return a.waBackend.AccountLabel()
 	}
 	s := a.snapshot()
 	if s.identity.ID == 0 {
@@ -137,7 +142,31 @@ func loadAccounts(cfg config, dir string, creds credStore) (*accountManager, err
 	mmSeen := make(map[string]bool)
 	mxSeen := make(map[string]bool)
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "matrix-") {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "whatsapp-") {
+			path := filepath.Join(dir, "accounts", entry.Name())
+			data, err := os.ReadFile(filepath.Join(path, "account.json"))
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return nil, fmt.Errorf("read whatsapp account: %w", err)
+			}
+			var identity waAccountIdentity
+			if err := json.Unmarshal(data, &identity); err != nil {
+				return nil, fmt.Errorf("parse whatsapp account: %w", err)
+			}
+			wb := newWABackend(path)
+			wb.jid = identity.JID
+			wb.pushName = identity.PushName
+			a := &account{
+				dir:         path,
+				backendType: "whatsapp",
+				waBackend:   wb,
+				histories:   make(map[chatID][]string),
+			}
+			a.state.status = "offline"
+			m.accounts = append(m.accounts, a)
+		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "matrix-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
 			data, err := os.ReadFile(filepath.Join(path, "account.json"))
 			if err != nil {
@@ -303,6 +332,27 @@ func (m *accountManager) addMatrix(homeserver string) (*account, error) {
 	return a, nil
 }
 
+func (m *accountManager) addWhatsApp() (*account, error) {
+	root := filepath.Join(m.dir, "accounts")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, fmt.Errorf("create accounts directory: %w", err)
+	}
+	dir, err := os.MkdirTemp(root, "whatsapp-")
+	if err != nil {
+		return nil, fmt.Errorf("create account directory: %w", err)
+	}
+	wb := newWABackend(dir)
+	a := &account{
+		dir:         dir,
+		backendType: "whatsapp",
+		waBackend:   wb,
+		histories:   make(map[chatID][]string),
+	}
+	a.state.status, a.state.needsLogin = "sign-in required", true
+	m.accounts = append(m.accounts, a)
+	return a, nil
+}
+
 func (m *accountManager) promptMatrix(ctx context.Context, t *terminal) (*account, error) {
 	serverURL, err := t.prompt(ctx, "Matrix homeserver URL: ", false)
 	if err != nil {
@@ -331,6 +381,9 @@ func (m *accountManager) discard(a *account) {
 	if a.backendType == "matrix" && a.mxBackend != nil {
 		m.creds.Delete(mxKeyringKey(a.mxBackend.homeserver, a.mxBackend.userID))
 	}
+	if a.backendType == "whatsapp" && a.waBackend != nil && a.waBackend.client != nil {
+		a.waBackend.client.Disconnect()
+	}
 	for i, x := range m.accounts {
 		if x == a {
 			m.accounts = append(m.accounts[:i], m.accounts[i+1:]...)
@@ -348,6 +401,9 @@ func (a *account) neverAuthenticated() bool {
 	}
 	if a.backendType == "matrix" {
 		return a.mxBackend == nil || a.mxBackend.accessToken == ""
+	}
+	if a.backendType == "whatsapp" {
+		return a.waBackend == nil || a.waBackend.jid.IsEmpty()
 	}
 	return a.snapshot().identity.ID == 0
 }
@@ -369,6 +425,11 @@ type mxAccountIdentity struct {
 }
 
 func mxKeyringKey(homeserver, userID string) string { return "mx-token:" + homeserver + "/" + userID }
+
+type waAccountIdentity struct {
+	JID      types.JID `json:"jid"`
+	PushName string    `json:"push_name"`
+}
 
 func saveMXAccount(dir string, mx *mxBackend, creds credStore) error {
 	if err := creds.Set(mxKeyringKey(mx.homeserver, mx.userID), mx.accessToken); err == nil {
@@ -404,6 +465,32 @@ func saveMXAccountJSON(dir string, identity mxAccountIdentity) error {
 	}
 	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
 		return fmt.Errorf("save matrix account: %w", err)
+	}
+	return nil
+}
+
+func saveWAAccount(dir string, wb *waBackend) error {
+	identity := waAccountIdentity{
+		JID:      wb.jid,
+		PushName: wb.pushName,
+	}
+	data, err := json.MarshalIndent(identity, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode whatsapp account: %w", err)
+	}
+	f, err := os.CreateTemp(dir, ".wa-account-*")
+	if err != nil {
+		return fmt.Errorf("create whatsapp account file: %w", err)
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(append(data, '\n'))
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+		return fmt.Errorf("write whatsapp account: %w", err)
+	}
+	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
+		return fmt.Errorf("save whatsapp account: %w", err)
 	}
 	return nil
 }
@@ -453,7 +540,8 @@ func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account,
 	fmt.Fprintln(t.out(), "  1  Telegram")
 	fmt.Fprintln(t.out(), "  2  Mattermost")
 	fmt.Fprintln(t.out(), "  3  Matrix")
-	fmt.Fprintln(t.out(), "\nPress 1, 2, or 3; Esc to cancel.")
+	fmt.Fprintln(t.out(), "  4  WhatsApp")
+	fmt.Fprintln(t.out(), "\nPress 1-4; Esc to cancel.")
 	for {
 		select {
 		case <-ctx.Done():
@@ -469,6 +557,8 @@ func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account,
 				return m.promptMattermost(ctx, t)
 			case "3":
 				return m.promptMatrix(ctx, t)
+			case "4":
+				return m.addWhatsApp()
 			case "\x1b", "\x03", "\x04":
 				return nil, context.Canceled
 			}
@@ -521,6 +611,10 @@ func (m *accountManager) start(parent context.Context, a *account, prompt prompt
 	}
 	if a.backendType == "matrix" {
 		m.startMatrix(parent, a, prompt)
+		return
+	}
+	if a.backendType == "whatsapp" {
+		m.startWhatsApp(parent, a, prompt)
 		return
 	}
 	if a.done != nil {
@@ -834,6 +928,48 @@ func (m *accountManager) startMattermost(parent context.Context, a *account, pro
 			s.backend, s.ctx, s.status, s.notice = mb, ctx, "online", ""
 		})
 		<-ctx.Done()
+		a.set(m, func(s *accountState) { s.backend, s.ctx, s.status = nil, nil, "offline" })
+	}()
+}
+
+func (m *accountManager) startWhatsApp(parent context.Context, a *account, prompt promptFunc) {
+	if a.done != nil {
+		select {
+		case <-a.done:
+		default:
+			return
+		}
+	}
+	wb := a.waBackend
+	ctx, cancel := context.WithCancel(parent)
+	a.cancel, a.done = cancel, make(chan struct{})
+	a.set(m, func(s *accountState) { s.status, s.notice, s.needsLogin = "connecting", "", false })
+	go func() {
+		defer close(a.done)
+		defer m.notify()
+		if err := wb.Authenticate(ctx, prompt, func(err error) {
+			a.set(m, func(s *accountState) { s.notice = cleanError(err) })
+		}); err != nil {
+			a.set(m, func(s *accountState) {
+				s.status, s.notice = "offline", cleanError(err)
+				if !errors.Is(err, context.Canceled) {
+					s.needsLogin = true
+				}
+			})
+			return
+		}
+		if a.dir != "" {
+			if err := saveWAAccount(a.dir, wb); err != nil {
+				a.set(m, func(s *accountState) { s.notice = cleanError(err) })
+			}
+		}
+		a.set(m, func(s *accountState) {
+			s.backend, s.ctx, s.status, s.notice = wb, ctx, "online", ""
+		})
+		<-ctx.Done()
+		if wb.client != nil {
+			wb.client.Disconnect()
+		}
 		a.set(m, func(s *accountState) { s.backend, s.ctx, s.status = nil, nil, "offline" })
 	}()
 }

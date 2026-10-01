@@ -37,8 +37,10 @@ adding a test framework.
 
 These are project constraints, not suggestions:
 
-- **No new dependencies.** gotd/td, readline, x/term, and x/crypto only.
-  Standard library for everything else — no color, logging, or CLI libraries.
+- **No new dependencies** beyond the approved set: gotd/td, readline,
+  x/term, x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow, and
+  modernc.org/sqlite. Standard library for everything else — no color,
+  logging, or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** (bubbletea, tview, tcell).
 - **YAGNI.** Build what is asked for and nothing more.

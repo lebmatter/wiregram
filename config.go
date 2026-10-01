@@ -52,7 +52,7 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 			return cfg, dir, fmt.Errorf("read configuration: %w", err)
 		}
 		if (cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "") && len(cfg.Mattermost) == 0 && len(cfg.Matrix) == 0 {
-			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash (or a mattermost/matrix section)")
+			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash (or a mattermost/matrix/whatsapp section)")
 		}
 		if cfg.AutoLock != 0 && cfg.AutoLock != 1 {
 			return cfg, dir, fmt.Errorf("configuration autolock must be 0 or 1")
