@@ -67,6 +67,7 @@ func (a *account) label() string {
 type accountManager struct {
 	cfg        config
 	dir        string
+	creds      credStore
 	accounts   []*account // Owned exclusively by the UI after discovery.
 	changed    chan struct{}
 	connecting chan struct{}
@@ -88,9 +89,9 @@ func (a *account) set(m *accountManager, update func(*accountState)) {
 	m.notify()
 }
 
-func loadAccounts(cfg config, dir string) (*accountManager, error) {
-	m := &accountManager{cfg: cfg, dir: dir, changed: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*account)}
-	add := func(path string) error {
+func loadAccounts(cfg config, dir string, creds credStore) (*accountManager, error) {
+	m := &accountManager{cfg: cfg, dir: dir, creds: creds, changed: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*account)}
+	add := func(path string, requireIdentity bool) error {
 		a := &account{dir: path, backendType: "telegram", histories: make(map[chatID][]string)}
 		a.state.status = "offline"
 		data, err := os.ReadFile(filepath.Join(path, "account.json"))
@@ -100,6 +101,10 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read account identity: %w", err)
+		}
+		if requireIdentity && a.state.identity.ID == 0 {
+			os.RemoveAll(path)
+			return nil
 		}
 		if a.state.identity.ID != 0 {
 			if m.owners[a.state.identity.ID] != nil {
@@ -112,7 +117,7 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 	}
 	// The original session stays in place; existing users need no migration or login.
 	if _, err := os.Stat(filepath.Join(dir, "session", "session.json")); err == nil {
-		if err := add(dir); err != nil {
+		if err := add(dir, false); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -138,9 +143,13 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 				return nil, fmt.Errorf("parse mattermost account: %w", err)
 			}
 			mb := newMMBackend(identity.ServerURL)
-			mb.token = identity.Token
 			mb.userID = identity.UserID
 			mb.username = identity.Username
+			if tok, err := creds.Get(mmKeyringKey(identity.ServerURL)); err == nil && tok != "" {
+				mb.token = tok
+			} else {
+				mb.token = identity.Token
+			}
 			a := &account{
 				dir:         path,
 				backendType: "mattermost",
@@ -148,11 +157,11 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 				histories:   make(map[chatID][]string),
 			}
 			a.state.status = "offline"
-			a.state.needsLogin = identity.Token == ""
+			a.state.needsLogin = mb.token == ""
 			m.accounts = append(m.accounts, a)
 			mmSeen[identity.ServerURL] = true
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
-			if err := add(filepath.Join(dir, "accounts", entry.Name())); err != nil {
+			if err := add(filepath.Join(dir, "accounts", entry.Name()), true); err != nil {
 				return nil, err
 			}
 		}
@@ -162,7 +171,9 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 			continue
 		}
 		mb := newMMBackend(mms.URL)
-		if mms.Token != "" {
+		if tok, err := creds.Get(mmKeyringKey(mms.URL)); err == nil && tok != "" {
+			mb.token = tok
+		} else if mms.Token != "" {
 			mb.token = mms.Token
 		}
 		a := &account{
@@ -171,7 +182,7 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 			histories:   make(map[chatID][]string),
 		}
 		a.state.status = "offline"
-		a.state.needsLogin = mms.Token == ""
+		a.state.needsLogin = mb.token == ""
 		m.accounts = append(m.accounts, a)
 	}
 	return m, nil
@@ -213,6 +224,34 @@ func (m *accountManager) addMattermost(serverURL string) (*account, error) {
 	return a, nil
 }
 
+func (m *accountManager) discard(a *account) {
+	if a.cancel != nil {
+		a.cancel()
+	}
+	if a.done != nil {
+		<-a.done
+	}
+	if a.backendType == "mattermost" && a.mmBackend != nil {
+		m.creds.Delete(mmKeyringKey(a.mmBackend.serverURL))
+	}
+	for i, x := range m.accounts {
+		if x == a {
+			m.accounts = append(m.accounts[:i], m.accounts[i+1:]...)
+			break
+		}
+	}
+	if a.dir != "" {
+		os.RemoveAll(a.dir)
+	}
+}
+
+func (a *account) neverAuthenticated() bool {
+	if a.backendType == "mattermost" {
+		return a.mmBackend == nil || a.mmBackend.token == ""
+	}
+	return a.snapshot().identity.ID == 0
+}
+
 type mmAccountIdentity struct {
 	ServerURL string `json:"server_url"`
 	Token     string `json:"token"`
@@ -220,13 +259,27 @@ type mmAccountIdentity struct {
 	Username  string `json:"username"`
 }
 
-func saveMMAccount(dir string, mb *mmBackend) error {
-	identity := mmAccountIdentity{
+func mmKeyringKey(serverURL string) string { return "mm-token:" + serverURL }
+
+func saveMMAccount(dir string, mb *mmBackend, creds credStore) error {
+	if err := creds.Set(mmKeyringKey(mb.serverURL), mb.token); err == nil {
+		// Token is in the keyring; keep it out of the JSON file.
+		return saveMMAccountJSON(dir, mmAccountIdentity{
+			ServerURL: mb.serverURL,
+			UserID:    mb.userID,
+			Username:  mb.username,
+		})
+	}
+	// Keyring unavailable (--insecure); fall back to plain JSON.
+	return saveMMAccountJSON(dir, mmAccountIdentity{
 		ServerURL: mb.serverURL,
 		Token:     mb.token,
 		UserID:    mb.userID,
 		Username:  mb.username,
-	}
+	})
+}
+
+func saveMMAccountJSON(dir string, identity mmAccountIdentity) error {
 	data, err := json.MarshalIndent(identity, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode mattermost account: %w", err)
@@ -459,10 +512,39 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				if active.neverAuthenticated() {
+					m.discard(active)
+				}
 				if !errors.Is(err, context.Canceled) {
 					t.report(err)
 				}
 				active = nil
+				continue
+			}
+			s = active.snapshot()
+		}
+		if !needsAuth && (s.backend == nil || s.status != "online") {
+			fmt.Fprintf(t.out(), "\033[2J\033[HConnecting to %s…\n", active.label())
+			done := false
+			for !done {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-active.done:
+					done = true
+				case <-m.changed:
+					s = active.snapshot()
+					if (s.backend != nil && s.status == "online") || s.needsLogin {
+						done = true
+					}
+				case key, ok := <-t.keys:
+					if !ok || key == "\x1b" || key == "\x03" || key == "\x04" {
+						active = nil
+						done = true
+					}
+				}
+			}
+			if active == nil {
 				continue
 			}
 			s = active.snapshot()
@@ -539,7 +621,7 @@ func (m *accountManager) startMattermost(parent context.Context, a *account, pro
 			return
 		}
 		if a.dir != "" {
-			if err := saveMMAccount(a.dir, mb); err != nil {
+			if err := saveMMAccount(a.dir, mb, m.creds); err != nil {
 				a.set(m, func(s *accountState) { s.notice = cleanError(err) })
 			}
 		}
