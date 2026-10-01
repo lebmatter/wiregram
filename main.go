@@ -19,14 +19,18 @@ import (
 	"golang.org/x/term"
 )
 
-const usageText = `Usage: wiregram
+const usageText = `Usage: wiregram [--insecure]
 
-A minimal Telegram client for the terminal. Text conversations with
-on-demand Kitty graphics and audio playback; no TUI framework or mouse.
+A minimal multi-backend chat client for the terminal. Supports Telegram
+and Mattermost. Text conversations with on-demand Kitty graphics and
+audio playback; no TUI framework or mouse.
 
 First launch asks for API credentials (or use -ldflags to embed them),
 then your phone number, login code, and optional 2FA password.
 Config and sessions are stored in ~/.config/wiregram/.
+
+Credentials are stored in the OS keyring by default (secret-tool on Linux,
+Keychain on macOS). Use --insecure to store them in plain JSON files instead.
 
 Keyboard shortcuts:
 
@@ -82,6 +86,7 @@ func main() {
 func run() (result error) {
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	insecure := flags.Bool("insecure", false, "store credentials in plain JSON instead of the OS keyring")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(os.Stdout, usageText)
@@ -91,6 +96,16 @@ func run() (result error) {
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("wiregram does not accept positional arguments")
+	}
+	var creds credStore
+	if *insecure {
+		creds = &insecureStore{}
+	} else {
+		kr, err := newOSKeyring()
+		if err != nil {
+			return err
+		}
+		creds = kr
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -108,7 +123,7 @@ func run() (result error) {
 	if err != nil {
 		return err
 	}
-	accounts, err := loadAccounts(cfg, dir)
+	accounts, err := loadAccounts(cfg, dir, creds)
 	if err != nil {
 		return err
 	}
