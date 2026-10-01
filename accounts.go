@@ -146,7 +146,7 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 	return m, nil
 }
 
-func (m *accountManager) add() (*account, error) {
+func (m *accountManager) addTelegram() (*account, error) {
 	root := filepath.Join(m.dir, "accounts")
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, fmt.Errorf("create accounts directory: %w", err)
@@ -155,9 +155,62 @@ func (m *accountManager) add() (*account, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create account directory: %w", err)
 	}
-	a := &account{dir: dir, histories: make(map[chatID][]string)}
+	a := &account{dir: dir, backendType: "telegram", histories: make(map[chatID][]string)}
 	a.state.status, a.state.needsLogin = "sign-in required", true
 	m.accounts = append(m.accounts, a)
+	return a, nil
+}
+
+func (m *accountManager) addMattermost(serverURL string) *account {
+	mb := newMMBackend(serverURL)
+	a := &account{
+		backendType: "mattermost",
+		mmBackend:   mb,
+		histories:   make(map[chatID][]string),
+	}
+	a.state.status, a.state.needsLogin = "sign-in required", true
+	m.accounts = append(m.accounts, a)
+	return a
+}
+
+func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account, error) {
+	fmt.Fprint(t.out(), "\033[2J\033[HAdd account\n\n")
+	fmt.Fprintln(t.out(), "  1  Telegram")
+	fmt.Fprintln(t.out(), "  2  Mattermost")
+	fmt.Fprintln(t.out(), "\nPress 1 or 2; Esc to cancel.")
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case key, ok := <-t.keys:
+			if !ok {
+				return nil, context.Canceled
+			}
+			switch key {
+			case "1":
+				return m.addTelegram()
+			case "2":
+				return m.promptMattermost(ctx, t)
+			case "\x1b", "\x03", "\x04":
+				return nil, context.Canceled
+			}
+		}
+	}
+}
+
+func (m *accountManager) promptMattermost(ctx context.Context, t *terminal) (*account, error) {
+	serverURL, err := t.prompt(ctx, "Mattermost server URL: ", false)
+	if err != nil {
+		return nil, err
+	}
+	serverURL = strings.TrimSpace(serverURL)
+	if serverURL == "" {
+		return nil, context.Canceled
+	}
+	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
+		serverURL = "https://" + serverURL
+	}
+	a := m.addMattermost(serverURL)
 	return a, nil
 }
 
@@ -306,7 +359,7 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 	}
 	if len(m.accounts) == 0 {
 		var err error
-		active, err = m.add()
+		active, err = m.pickAndAdd(ctx, t)
 		if err != nil {
 			return err
 		}
@@ -568,9 +621,17 @@ func (m *accountManager) choose(ctx context.Context, t *terminal, active *accoun
 					return nil, nil
 				}
 				if selected == len(m.accounts) {
-					a, err := m.add()
+					a, err := m.pickAndAdd(ctx, t)
 					if err != nil {
+						if errors.Is(err, context.Canceled) {
+							render()
+							continue
+						}
 						return nil, err
+					}
+					if a == nil {
+						render()
+						continue
 					}
 					return a, nil
 				}
