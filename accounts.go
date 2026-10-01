@@ -59,9 +59,9 @@ func (a *account) label() string {
 	}
 	s := a.snapshot()
 	if s.identity.ID == 0 {
-		return "Account awaiting sign-in"
+		return "[TG] awaiting sign-in"
 	}
-	return fmt.Sprintf("%s (+%s)", plain(s.identity.Name), strings.TrimPrefix(plain(s.identity.Phone), "+"))
+	return fmt.Sprintf("[TG] %s (+%s)", plain(s.identity.Name), strings.TrimPrefix(plain(s.identity.Phone), "+"))
 }
 
 type accountManager struct {

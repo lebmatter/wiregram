@@ -186,7 +186,7 @@ func (tb *telegramBackend) Identity() accountIdentity {
 	return accountIdentity{ID: tb.c.accountID, Name: tb.c.accountName}
 }
 
-func (tb *telegramBackend) AccountLabel() string { return tb.c.accountName }
+func (tb *telegramBackend) AccountLabel() string { return "[TG] " + tb.c.accountName }
 
 func (tb *telegramBackend) AutoLockEnabled() bool { return tb.c.autoLock }
 
