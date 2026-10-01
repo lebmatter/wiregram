@@ -332,6 +332,11 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 		channels = channels[:20]
 	}
 
+	chansOnly := make([]mmChannel, len(channels))
+	for i, cw := range channels {
+		chansOnly[i] = cw.ch
+	}
+	mb.batchResolveChannelUsers(ctx, chansOnly)
 	entries := make([]chatEntry, 0, len(channels))
 	for _, cw := range channels {
 		title := mb.channelTitle(ctx, cw.ch, cw.teamName)
@@ -374,6 +379,36 @@ func (mb *mmBackend) channelTitle(ctx context.Context, ch mmChannel, teamName st
 		}
 		return name
 	}
+}
+
+func (mb *mmBackend) batchResolveChannelUsers(ctx context.Context, channels []mmChannel) {
+	var needed []string
+	mb.mu.Lock()
+	for _, ch := range channels {
+		if ch.Type != "D" {
+			continue
+		}
+		for _, uid := range strings.Split(ch.Name, "__") {
+			if uid != "" && uid != mb.userID {
+				if _, ok := mb.userCache[uid]; !ok {
+					needed = append(needed, uid)
+				}
+			}
+		}
+	}
+	mb.mu.Unlock()
+	if len(needed) == 0 {
+		return
+	}
+	var users []mmUser
+	if err := mb.apiJSON(ctx, "POST", "/users/ids", needed, &users); err != nil {
+		return
+	}
+	mb.mu.Lock()
+	for _, u := range users {
+		mb.userCache[u.ID] = u
+	}
+	mb.mu.Unlock()
 }
 
 func (mb *mmBackend) resolveUser(ctx context.Context, userID string) mmUser {
