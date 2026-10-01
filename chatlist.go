@@ -189,7 +189,9 @@ func selectChat(ctx context.Context, b backend, t *terminal, chats []chatEntry, 
 				continue
 			}
 			switch key {
-			case "q", "\x04":
+			case "\x04":
+				return len(chats) + 2, false, nil
+			case "q":
 				return -1, false, nil
 			case "r":
 				return -1, true, nil
