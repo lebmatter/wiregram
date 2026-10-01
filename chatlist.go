@@ -156,6 +156,12 @@ func selectChat(ctx context.Context, b backend, t *terminal, chats []chatEntry, 
 		select {
 		case <-ctx.Done():
 			return -1, false, ctx.Err()
+		case <-b.Changed():
+			b.Drain()
+			for i := range chats {
+				chats[i].Unread = b.CachedUnread(chats[i])
+			}
+			renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 		case key, ok := <-t.keys:
 			if !ok {
 				return -1, false, context.Canceled
