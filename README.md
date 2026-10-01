@@ -1,7 +1,8 @@
 # Wiregram
 
-A minimal Telegram client for the terminal, written in Go. Text conversations
-with on-demand Kitty graphics and audio playback; no TUI framework or mouse.
+A minimal multi-backend chat client for the terminal, written in Go. Supports
+Telegram and Mattermost. Text conversations with on-demand Kitty graphics and
+audio playback; no TUI framework or mouse.
 
 ## Build and run
 
@@ -15,9 +16,10 @@ CGO_ENABLED=0 go build -o wiregram .
 If your source directory contains incomplete Git metadata, build with
 `go build -buildvcs=false -o wiregram .` instead.
 
-Builds with bundled app credentials start with your international phone number,
-then your Telegram login code. If enabled, your 2FA password is masked. Use an
-existing Telegram account. Plain source builds ask for an API ID and hash first.
+For Telegram: builds with bundled app credentials start with your international
+phone number, then your Telegram login code. If enabled, your 2FA password is
+masked. Use an existing Telegram account. Plain source builds ask for an API ID
+and hash first. For Mattermost: add a server entry to `config.json` (see below).
 
 ### Build with phone-number-first login
 
@@ -51,12 +53,21 @@ mode `0600`. Keep both private; never commit them.
 {
   "api_id": 123456,
   "api_hash": "abcdef1234567890",
-  "autolock": 1
+  "autolock": 1,
+  "mattermost": [
+    {"url": "https://chat.example.com"}
+  ]
 }
 ```
 
 `autolock` defaults to `1`. Set it to `0` to disable the 10-second inactivity
 timer. Ctrl+L remains available for manual locking.
+
+The `mattermost` array is optional. Each entry adds a Mattermost server whose
+account appears in the account switcher alongside Telegram accounts. On first
+use, Wiregram prompts for email and password. To skip the interactive login,
+add `"token": "<bearer-token>"` to the entry. Telegram credentials (`api_id`,
+`api_hash`) are not required if only Mattermost servers are configured.
 
 ## Keyboard shortcuts
 
@@ -114,20 +125,31 @@ timer. Ctrl+L remains available for manual locking.
 
 ## Accounts
 
-The Accounts screen lists saved numbers and their connection status. Use Up/Down
-or `j`/`k`, then Enter to switch to an online account. Select **Add account…** to
-sign in with another phone number, code, and optional 2FA password. Ctrl+C or
-Ctrl+D cancels a sign-in. An unfinished account remains available to resume.
-Select an account requiring sign-in and press Enter to authenticate again;
-`r` retries an offline account. Esc returns to the previously selected online
-account; `q`, Ctrl+D, or the Quit row exits the application.
+The Accounts screen lists all saved accounts — Telegram and Mattermost — and
+their connection status. Use Up/Down or `j`/`k`, then Enter to switch to an
+online account. Select **Add account…** to sign in with another phone number
+(Telegram), code, and optional 2FA password. Ctrl+C or Ctrl+D cancels a
+sign-in. An unfinished account remains available to resume. Select an account
+requiring sign-in and press Enter to authenticate again; `r` retries an offline
+account. Esc returns to the previously selected online account; `q`, Ctrl+D, or
+the Quit row exits the application.
 
-Saved accounts connect in the background at startup and stay connected while
-you switch. Each has independent sessions, caches, in-memory input history,
-updates, retries, and flood waits. The chat-list heading identifies the active
-name and number. Only the selected account's chats are displayed or marked read.
-The lock counter is the unread count for the open chat; it is not an account-wide
-or cross-account total.
+Telegram accounts connect in the background at startup and stay connected while
+you switch. Mattermost accounts authenticate and open a WebSocket for real-time
+events. Each account has independent sessions, caches, in-memory input history,
+and updates. The chat-list heading identifies the active account. Only the
+selected account's chats are displayed or marked read. The lock counter is the
+unread count for the open chat; it is not an account-wide or cross-account
+total.
+
+### Mattermost differences
+
+Mattermost channels from all teams appear in a single list sorted by last
+activity. Non-DM channels are prefixed with the team name: `[TeamName] general`.
+Features unsupported by Mattermost are hidden from the UI: forward, delete-for-me,
+outbox read receipts, view-once media, and Kitty graphics playback. File
+attachments can be uploaded (Ctrl+U) and saved (Alt+S). The AI assistant is
+currently Telegram-only.
 
 API credentials remain in `config.json`. New sessions are stored in private
 `accounts/account-*/session/session.json` directories next to that file, with
@@ -282,9 +304,9 @@ involved.
 Follow [CLAUDE.md](CLAUDE.md), the contributor guide. All source lives in the
 root `package main`. Build with `make`, format with `gofmt -w *.go`, and check
 with `go vet ./...`. No test suite is included.
-Direct dependencies are gotd/td, readline, and x/term; Go resolves their
-transitive dependencies through `go.mod` and `go.sum`. `mpv` is an optional runtime
-dependency for media; Wiregram itself remains cgo-free.
+Direct dependencies are gotd/td, readline, x/term, and nhooyr.io/websocket; Go
+resolves their transitive dependencies through `go.mod` and `go.sum`. `mpv` is an
+optional runtime dependency for media; Wiregram itself remains cgo-free.
 
 Copyright © 2026 wiregram contributors.
 Licensed under the GNU Affero General Public License v3.0 or later
