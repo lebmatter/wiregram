@@ -98,7 +98,7 @@ func (c *client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 	return entries, archiveUnread, nil
 }
 
-func renderChats(out io.Writer, chats []chat, selected int, archived bool, archiveUnread int, accountName string) {
+func renderChats(out io.Writer, chats []chatEntry, selected int, archived bool, archiveUnread int, accountName string) {
 	fmt.Fprint(out, "\033[2J\033[H")
 	fmt.Fprintln(out, accountName)
 	if archived {
@@ -110,10 +110,10 @@ func renderChats(out io.Writer, chats []chat, selected int, archived bool, archi
 			marker = ">"
 		}
 		unread := ""
-		if entry.unread > 0 {
-			unread = fmt.Sprintf(" - %d*", entry.unread)
+		if entry.Unread > 0 {
+			unread = fmt.Sprintf(" - %d*", entry.Unread)
 		}
-		fmt.Fprintf(out, "%s %2d  %s%s\n", marker, i+1, plain(entry.title), unread)
+		fmt.Fprintf(out, "%s %2d  %s%s\n", marker, i+1, plain(entry.Title), unread)
 	}
 	if len(chats) == 0 {
 		fmt.Fprintln(out, "No chats here. Press r to refresh or q to quit.")
@@ -143,14 +143,15 @@ func renderChats(out io.Writer, chats []chat, selected int, archived bool, archi
 	fmt.Fprintf(out, "%s     Accounts…\n", marker)
 }
 
-// Input is already raw; the application owns terminal state across both modes.
-func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, archived bool, archiveUnread int) (int, bool, error) {
+func selectChat(ctx context.Context, b backend, t *terminal, chats []chatEntry, archived bool, archiveUnread int) (int, bool, error) {
 	selected := 0
+	accountName := b.AccountLabel()
+	caps := b.Capabilities()
 	var confirm *struct {
-		entry  chat
+		entry  chatEntry
 		revoke bool
 	}
-	renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
+	renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 	for {
 		select {
 		case <-ctx.Done():
@@ -163,7 +164,7 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 				continue
 			}
 			if key == terminalUnlockKey {
-				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 				t.flushNotices()
 				continue
 			}
@@ -171,14 +172,14 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 				request := confirm
 				confirm = nil
 				if key == "y" || key == "Y" {
-					if err := c.deleteChat(ctx, request.entry, request.revoke); err != nil {
-						renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
+					if err := b.DeleteChat(ctx, request.entry, request.revoke); err != nil {
+						renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 						t.report(err)
 						continue
 					}
 					return -1, true, nil
 				}
-				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 				continue
 			}
 			switch key {
@@ -194,35 +195,35 @@ func (c *client) selectChat(ctx context.Context, t *terminal, chats []chat, arch
 				if selected > 0 {
 					selected--
 				}
-				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 			case "j", "\x1b[B", "\x1bOB":
 				if selected < len(chats)+2 {
 					selected++
 				}
-				renderChats(t.out(), chats, selected, archived, archiveUnread, c.accountName)
+				renderChats(t.out(), chats, selected, archived, archiveUnread, accountName)
 			case "\x1bd", "\x1bD", "\x1b\x04":
-				if selected >= len(chats) {
+				if selected >= len(chats) || !caps.DeleteChat {
 					continue
 				}
 				entry := chats[selected]
 				revoke := key == "\x1b\x04"
-				if entry.key.kind != 'u' {
+				if !entry.IsDM {
 					t.report(fmt.Errorf("chat deletion is currently supported only for private chats"))
 					continue
 				}
-				if _, self := entry.peer.(*tg.InputPeerSelf); self && revoke {
+				if entry.IsSelf && revoke {
 					t.report(fmt.Errorf("Saved Messages cannot be deleted for both sides"))
 					continue
 				}
 				confirm = &struct {
-					entry  chat
+					entry  chatEntry
 					revoke bool
 				}{entry, revoke}
 				scope := "only for you"
 				if revoke {
 					scope = "for both sides"
 				}
-				t.report(fmt.Errorf("Delete chat with %s %s? Press y to confirm; any other key cancels.", plain(entry.title), scope))
+				t.report(fmt.Errorf("Delete chat with %s %s? Press y to confirm; any other key cancels.", plain(entry.Title), scope))
 			case "\r", "\n":
 				return selected, false, nil
 			}

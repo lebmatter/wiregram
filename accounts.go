@@ -38,7 +38,7 @@ type account struct {
 	state     accountState
 	cancel    context.CancelFunc
 	done      chan struct{}
-	histories map[peerKey][]string // Owned exclusively by the UI.
+	histories map[chatID][]string // Owned exclusively by the UI.
 }
 
 func (a *account) snapshot() accountState {
@@ -82,7 +82,7 @@ func (a *account) set(m *accountManager, update func(*accountState)) {
 func loadAccounts(cfg config, dir string) (*accountManager, error) {
 	m := &accountManager{cfg: cfg, dir: dir, changed: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*account)}
 	add := func(path string) error {
-		a := &account{dir: path, histories: make(map[peerKey][]string)}
+		a := &account{dir: path, histories: make(map[chatID][]string)}
 		a.state.status = "offline"
 		data, err := os.ReadFile(filepath.Join(path, "account.json"))
 		if err == nil {
@@ -132,7 +132,7 @@ func (m *accountManager) add() (*account, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create account directory: %w", err)
 	}
-	a := &account{dir: dir, histories: make(map[peerKey][]string)}
+	a := &account{dir: dir, histories: make(map[chatID][]string)}
 	a.state.status, a.state.needsLogin = "sign-in required", true
 	m.accounts = append(m.accounts, a)
 	return a, nil
@@ -310,9 +310,9 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 			s = active.snapshot()
 		}
 		if s.client != nil && s.status == "online" {
-			c := s.client
+			b := &telegramBackend{c: s.client}
 			t.disableInactivity()
-			err := c.runModes(s.ctx, t, active.histories)
+			err := runModes(s.ctx, b, t, active.histories)
 			if err == nil {
 				return nil
 			}

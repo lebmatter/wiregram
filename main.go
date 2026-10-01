@@ -115,10 +115,10 @@ func run() (result error) {
 	return accounts.run(ctx, t)
 }
 
-func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKey][]string) error {
+func runModes(ctx context.Context, b backend, t *terminal, histories map[chatID][]string) error {
 	archived := false
 	for {
-		entries, archiveUnread, err := c.dialogs(ctx, archived)
+		entries, archiveUnread, err := b.Dialogs(ctx, archived)
 		if err != nil {
 			if !networkError(err) {
 				return err
@@ -129,7 +129,7 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 			}
 			continue
 		}
-		index, refresh, err := c.selectChat(ctx, t, entries, archived, archiveUnread)
+		index, refresh, err := selectChat(ctx, b, t, entries, archived, archiveUnread)
 		if err != nil {
 			return err
 		}
@@ -146,10 +146,10 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 			archived = !archived
 			continue
 		}
-		var entry chat
+		var entry chatEntry
 		if index == len(entries)+1 {
 			var selected bool
-			entry, selected, err = c.searchUsers(ctx, t, entries)
+			entry, selected, err = b.SearchUsers(ctx, t, entries)
 			if err != nil {
 				return err
 			}
@@ -159,15 +159,15 @@ func (c *client) runModes(ctx context.Context, t *terminal, histories map[peerKe
 		} else {
 			entry = entries[index]
 		}
-		history := histories[entry.key]
+		history := histories[entry.ID]
 		if history == nil {
 			history = make([]string, 0)
 		}
-		err = c.view(ctx, t, entry, &history)
-		histories[entry.key] = history
+		err = viewChat(ctx, b, t, entry, &history)
+		histories[entry.ID] = history
 		if err != nil {
-			if fwd, ok := err.(forwardRequest); ok {
-				c.handleForward(ctx, t, entries, fwd)
+			if fwd, ok := err.(forwardReq); ok {
+				b.HandleForward(ctx, t, entries, fwd.from, fwd.id)
 				continue
 			}
 			if errors.Is(err, context.Canceled) {
