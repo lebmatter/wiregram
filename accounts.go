@@ -28,17 +28,20 @@ type accountState struct {
 	status     string
 	notice     string
 	client     *client
+	backend    backend
 	ctx        context.Context
 	needsLogin bool
 }
 
 type account struct {
-	dir       string
-	mu        sync.Mutex
-	state     accountState
-	cancel    context.CancelFunc
-	done      chan struct{}
-	histories map[chatID][]string // Owned exclusively by the UI.
+	dir         string
+	backendType string // "telegram" or "mattermost"
+	mmBackend   *mmBackend
+	mu          sync.Mutex
+	state       accountState
+	cancel      context.CancelFunc
+	done        chan struct{}
+	histories   map[chatID][]string // Owned exclusively by the UI.
 }
 
 func (a *account) snapshot() accountState {
@@ -48,6 +51,12 @@ func (a *account) snapshot() accountState {
 }
 
 func (a *account) label() string {
+	if a.backendType == "mattermost" && a.mmBackend != nil {
+		if a.mmBackend.username != "" {
+			return a.mmBackend.AccountLabel()
+		}
+		return "[MM] awaiting sign-in"
+	}
 	s := a.snapshot()
 	if s.identity.ID == 0 {
 		return "Account awaiting sign-in"
@@ -82,7 +91,7 @@ func (a *account) set(m *accountManager, update func(*accountState)) {
 func loadAccounts(cfg config, dir string) (*accountManager, error) {
 	m := &accountManager{cfg: cfg, dir: dir, changed: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*account)}
 	add := func(path string) error {
-		a := &account{dir: path, histories: make(map[chatID][]string)}
+		a := &account{dir: path, backendType: "telegram", histories: make(map[chatID][]string)}
 		a.state.status = "offline"
 		data, err := os.ReadFile(filepath.Join(path, "account.json"))
 		if err == nil {
@@ -119,6 +128,20 @@ func loadAccounts(cfg config, dir string) (*accountManager, error) {
 				return nil, err
 			}
 		}
+	}
+	for _, mms := range cfg.Mattermost {
+		mb := newMMBackend(mms.URL)
+		if mms.Token != "" {
+			mb.token = mms.Token
+		}
+		a := &account{
+			backendType: "mattermost",
+			mmBackend:   mb,
+			histories:   make(map[chatID][]string),
+		}
+		a.state.status = "offline"
+		a.state.needsLogin = mms.Token == ""
+		m.accounts = append(m.accounts, a)
 	}
 	return m, nil
 }
@@ -162,6 +185,10 @@ func saveAccount(dir string, identity accountIdentity) error {
 
 // A supervisor owns one connection lifetime. Switching the UI never stops it.
 func (m *accountManager) start(parent context.Context, a *account, prompt promptFunc) {
+	if a.backendType == "mattermost" {
+		m.startMattermost(parent, a, prompt)
+		return
+	}
 	if a.done != nil {
 		select {
 		case <-a.done:
@@ -237,7 +264,7 @@ func (m *accountManager) start(parent context.Context, a *account, prompt prompt
 						}
 						delay = time.Second
 						a.set(m, func(s *accountState) {
-							s.identity, s.client, s.ctx, s.status, s.notice = identity, c, liveCtx, "online", ""
+							s.identity, s.client, s.backend, s.ctx, s.status, s.notice = identity, c, &telegramBackend{c: c}, liveCtx, "online", ""
 						})
 						release()
 					}})
@@ -250,7 +277,7 @@ func (m *accountManager) start(parent context.Context, a *account, prompt prompt
 			stopAttempt()
 			release()
 			a.set(m, func(s *accountState) {
-				s.client, s.ctx, s.status = nil, nil, "offline"
+				s.client, s.backend, s.ctx, s.status = nil, nil, nil, "offline"
 				if err != nil {
 					s.notice = cleanError(err)
 				}
@@ -295,7 +322,11 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 			}
 		}
 		s := active.snapshot()
-		if s.needsLogin || s.identity.ID == 0 {
+		needsAuth := s.needsLogin
+		if active.backendType == "telegram" {
+			needsAuth = needsAuth || s.identity.ID == 0
+		}
+		if needsAuth {
 			t.disableInactivity()
 			if err := m.login(ctx, t, active); err != nil {
 				if ctx.Err() != nil {
@@ -309,10 +340,9 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 			}
 			s = active.snapshot()
 		}
-		if s.client != nil && s.status == "online" {
-			b := &telegramBackend{c: s.client}
+		if s.backend != nil && s.status == "online" {
 			t.disableInactivity()
-			err := runModes(s.ctx, b, t, active.histories)
+			err := runModes(s.ctx, s.backend, t, active.histories)
 			if err == nil {
 				return nil
 			}
@@ -343,6 +373,51 @@ func (m *accountManager) close() {
 			<-a.done
 		}
 	}
+}
+
+func (m *accountManager) startMattermost(parent context.Context, a *account, prompt promptFunc) {
+	if a.done != nil {
+		select {
+		case <-a.done:
+		default:
+			return
+		}
+	}
+	mb := a.mmBackend
+	ctx, cancel := context.WithCancel(parent)
+	a.cancel, a.done = cancel, make(chan struct{})
+	a.set(m, func(s *accountState) { s.status, s.notice, s.needsLogin = "connecting", "", false })
+	go func() {
+		defer close(a.done)
+		defer m.notify()
+		if prompt != nil {
+			if err := mb.Authenticate(ctx, prompt, func(err error) {
+				a.set(m, func(s *accountState) { s.notice = cleanError(err) })
+			}); err != nil {
+				a.set(m, func(s *accountState) {
+					s.status, s.notice = "offline", cleanError(err)
+					if !errors.Is(err, context.Canceled) {
+						s.needsLogin = true
+					}
+				})
+				return
+			}
+		} else if mb.token != "" {
+			if err := mb.Authenticate(ctx, nil, func(err error) {}); err != nil {
+				a.set(m, func(s *accountState) { s.status, s.notice, s.needsLogin = "offline", cleanError(err), true })
+				return
+			}
+		} else {
+			a.set(m, func(s *accountState) { s.status, s.needsLogin = "offline", true })
+			return
+		}
+		mb.startWebSocket(ctx)
+		a.set(m, func(s *accountState) {
+			s.backend, s.ctx, s.status, s.notice = mb, ctx, "online", ""
+		})
+		<-ctx.Done()
+		a.set(m, func(s *accountState) { s.backend, s.ctx, s.status = nil, nil, "offline" })
+	}()
 }
 
 type loginPrompt struct {

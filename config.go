@@ -16,10 +16,16 @@ var buildAPIID string
 var buildAPIHash string
 
 type config struct {
-	APIID    int       `json:"api_id"`
-	APIHash  string    `json:"api_hash"`
-	AutoLock int       `json:"autolock"`
-	AI       *aiConfig `json:"ai,omitempty"`
+	APIID      int              `json:"api_id"`
+	APIHash    string           `json:"api_hash"`
+	AutoLock   int              `json:"autolock"`
+	AI         *aiConfig        `json:"ai,omitempty"`
+	Mattermost []mmServerConfig `json:"mattermost,omitempty"`
+}
+
+type mmServerConfig struct {
+	URL   string `json:"url"`
+	Token string `json:"token,omitempty"`
 }
 
 type promptFunc func(string, bool) (string, error)
@@ -40,8 +46,8 @@ func loadConfig(prompt promptFunc, out io.Writer) (config, string, error) {
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return cfg, dir, fmt.Errorf("read configuration: %w", err)
 		}
-		if cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "" {
-			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash")
+		if (cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "") && len(cfg.Mattermost) == 0 {
+			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash (or a mattermost section)")
 		}
 		if cfg.AutoLock != 0 && cfg.AutoLock != 1 {
 			return cfg, dir, fmt.Errorf("configuration autolock must be 0 or 1")
