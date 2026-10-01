@@ -1,7 +1,7 @@
 # Wiregram
 
 A minimal multi-backend chat client for the terminal, written in Go. Supports
-Telegram and Mattermost. Text conversations with on-demand Kitty graphics and
+Telegram, Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
 audio playback; no TUI framework or mouse.
 
 ## Build and run
@@ -20,6 +20,9 @@ For Telegram: builds with bundled app credentials start with your international
 phone number, then your Telegram login code. If enabled, your 2FA password is
 masked. Use an existing Telegram account. Plain source builds ask for an API ID
 and hash first. For Mattermost: add a server entry to `config.json` (see below).
+For Matrix: add a homeserver entry to `config.json`. For WhatsApp: select
+"WhatsApp" in the account picker, enter your phone number, and type the pairing
+code on your phone.
 
 ### Build with phone-number-first login
 
@@ -56,6 +59,9 @@ mode `0600`. Keep both private; never commit them.
   "autolock": 1,
   "mattermost": [
     {"url": "https://chat.example.com"}
+  ],
+  "matrix": [
+    {"homeserver": "https://matrix.org"}
   ]
 }
 ```
@@ -66,8 +72,11 @@ timer. Ctrl+L remains available for manual locking.
 The `mattermost` array is optional. Each entry adds a Mattermost server whose
 account appears in the account switcher alongside Telegram accounts. On first
 use, Wiregram prompts for email and password. To skip the interactive login,
-add `"token": "<bearer-token>"` to the entry. Telegram credentials (`api_id`,
-`api_hash`) are not required if only Mattermost servers are configured.
+add `"token": "<bearer-token>"` to the entry. The `matrix` array is optional;
+each entry adds a Matrix homeserver. On first use, Wiregram prompts for
+username and password. Telegram credentials (`api_id`, `api_hash`) are not
+required if only Mattermost or Matrix servers are configured. WhatsApp accounts
+do not need a config section; add them through the account picker.
 
 ## Keyboard shortcuts
 
@@ -125,8 +134,8 @@ add `"token": "<bearer-token>"` to the entry. Telegram credentials (`api_id`,
 
 ## Accounts
 
-The Accounts screen lists all saved accounts — Telegram and Mattermost — and
-their connection status. Use Up/Down or `j`/`k`, then Enter to switch to an
+The Accounts screen lists all saved accounts — Telegram, Mattermost, Matrix,
+and WhatsApp — and their connection status. Use Up/Down or `j`/`k`, then Enter to switch to an
 online account. Select **Add account…** to sign in with another phone number
 (Telegram), code, and optional 2FA password. Ctrl+C or Ctrl+D cancels a
 sign-in. An unfinished account remains available to resume. Select an account
@@ -136,20 +145,32 @@ the Quit row exits the application.
 
 Telegram accounts connect in the background at startup and stay connected while
 you switch. Mattermost accounts authenticate and open a WebSocket for real-time
-events. Each account has independent sessions, caches, in-memory input history,
-and updates. The chat-list heading identifies the active account. Only the
+events. Matrix accounts use long-polling `/sync` for real-time updates. WhatsApp
+accounts connect via the multi-device protocol; session keys are stored in a
+local SQLite database. Each account has independent sessions, caches, in-memory
+input history, and updates. The chat-list heading identifies the active account. Only the
 selected account's chats are displayed or marked read. The lock counter is the
 unread count for the open chat; it is not an account-wide or cross-account
 total.
 
-### Mattermost differences
+### Backend differences
 
-Mattermost channels from all teams appear in a single list sorted by last
+**Mattermost**: channels from all teams appear in a single list sorted by last
 activity. Non-DM channels are prefixed with the team name: `[TeamName] general`.
 Features unsupported by Mattermost are hidden from the UI: forward, delete-for-me,
 outbox read receipts, view-once media, and Kitty graphics playback. File
-attachments can be uploaded (Ctrl+U) and saved (Alt+S). The AI assistant is
-currently Telegram-only.
+attachments can be uploaded (Ctrl+U) and saved (Alt+S).
+
+**Matrix**: rooms from all joined spaces appear sorted by last activity.
+Encrypted rooms show `[encrypted message]` for messages that cannot be
+decrypted. Forward is not yet supported.
+
+**WhatsApp**: the chat list and message history come from a one-time history
+sync when the device is first paired. There is no server-side search, no deep
+history pagination, and no pin/archive/delete-chat. WhatsApp may ban numbers
+using unofficial clients; this risk is inherent to the underlying library.
+
+The AI assistant is currently Telegram-only.
 
 API credentials remain in `config.json`. New sessions are stored in private
 `accounts/account-*/session/session.json` directories next to that file, with
@@ -304,8 +325,9 @@ involved.
 Follow [CLAUDE.md](CLAUDE.md), the contributor guide. All source lives in the
 root `package main`. Build with `make`, format with `gofmt -w *.go`, and check
 with `go vet ./...`. No test suite is included.
-Direct dependencies are gotd/td, readline, x/term, and nhooyr.io/websocket; Go
-resolves their transitive dependencies through `go.mod` and `go.sum`. `mpv` is an
+Direct dependencies are gotd/td, readline, x/term, nhooyr.io/websocket,
+whatsmeow, and modernc.org/sqlite; Go resolves their transitive dependencies
+through `go.mod` and `go.sum`. `mpv` is an
 optional runtime dependency for media; Wiregram itself remains cgo-free.
 
 Copyright © 2026 wiregram contributors.
