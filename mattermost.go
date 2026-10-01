@@ -277,36 +277,51 @@ func (mb *mmBackend) Dialogs(ctx context.Context, archived bool) ([]chatEntry, i
 		unread   int
 		teamName string
 	}
-	seen := make(map[string]bool)
-	var channels []channelWithUnread
-
+	teamNames := make(map[string]string, len(teams))
 	for _, team := range teams {
-		var chans []mmChannel
-		if err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/teams/%s/channels", team.ID), nil, &chans); err != nil {
+		teamNames[team.ID] = team.DisplayName
+	}
+
+	var allChannels []mmChannel
+	page := 0
+	for {
+		var batch []mmChannel
+		if err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/channels?page=%d&per_page=100", page), nil, &batch); err != nil {
 			return nil, 0, fmt.Errorf("load channels: %w", err)
 		}
+		allChannels = append(allChannels, batch...)
+		if len(batch) < 100 {
+			break
+		}
+		page++
+	}
+
+	memberMap := make(map[string]mmChannelMember)
+	for _, team := range teams {
 		var members []mmChannelMember
 		if err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/teams/%s/channels/members", team.ID), nil, &members); err != nil {
 			return nil, 0, fmt.Errorf("load members: %w", err)
 		}
-		memberMap := make(map[string]mmChannelMember, len(members))
 		for _, m := range members {
 			memberMap[m.ChannelID] = m
 		}
-		for _, ch := range chans {
-			if seen[ch.ID] {
-				continue
-			}
-			seen[ch.ID] = true
-			unread := 0
-			if m, ok := memberMap[ch.ID]; ok {
-				unread = int(ch.TotalMsgCount - m.MsgCount)
-				if unread < 0 {
-					unread = 0
-				}
-			}
-			channels = append(channels, channelWithUnread{ch, unread, team.DisplayName})
+	}
+
+	seen := make(map[string]bool)
+	var channels []channelWithUnread
+	for _, ch := range allChannels {
+		if seen[ch.ID] {
+			continue
 		}
+		seen[ch.ID] = true
+		unread := 0
+		if m, ok := memberMap[ch.ID]; ok {
+			unread = int(ch.TotalMsgCount - m.MsgCount)
+			if unread < 0 {
+				unread = 0
+			}
+		}
+		channels = append(channels, channelWithUnread{ch, unread, teamNames[ch.TeamID]})
 	}
 
 	sort.Slice(channels, func(i, j int) bool {
