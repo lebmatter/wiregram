@@ -43,6 +43,7 @@ type waBackend struct {
 	msgCache    map[types.JID][]message
 	userCache   map[types.JID]string
 	recentEmoji []string
+	subs        subscriberSet
 
 	configDir string
 }
@@ -251,9 +252,9 @@ func (wa *waBackend) handleMessage(evt *events.Message) {
 		wa.mu.Unlock()
 	}
 
-	wa.mu.Lock()
-	defer wa.mu.Unlock()
+	chat := chatID{backend: "whatsapp", id: chatJID.String()}
 
+	wa.mu.Lock()
 	wa.touchChat(chatJID, evt.Info.Timestamp)
 
 	if evt.IsEdit {
@@ -265,6 +266,8 @@ func (wa *waBackend) handleMessage(evt *events.Message) {
 			})
 			wa.doNotify()
 		}
+		wa.mu.Unlock()
+		wa.subs.broadcast(backendEvent{Kind: "edit", Chat: chat, Message: &msg})
 		return
 	}
 
@@ -282,6 +285,7 @@ func (wa *waBackend) handleMessage(evt *events.Message) {
 			wa.doNotify()
 		}
 		_ = emoji
+		wa.mu.Unlock()
 		return
 	}
 
@@ -293,6 +297,9 @@ func (wa *waBackend) handleMessage(evt *events.Message) {
 		wa.pending = append(wa.pending, waEvent{kind: "message", msg: msg})
 		wa.doNotify()
 	}
+	wa.mu.Unlock()
+
+	wa.subs.broadcast(backendEvent{Kind: "message", Chat: chat, Message: &msg})
 }
 
 func getEditTargetID(evt *events.Message) string {
@@ -935,6 +942,14 @@ func (wa *waBackend) Drain() ([]message, []genericReactionUpdate, []string) {
 
 func (wa *waBackend) Changed() <-chan struct{} { return wa.changed }
 
+func (wa *waBackend) AddSubscriber(id string, filter func(chatID) bool, bufSize int) <-chan backendEvent {
+	return wa.subs.add(id, filter, bufSize)
+}
+
+func (wa *waBackend) RemoveSubscriber(id string) {
+	wa.subs.remove(id)
+}
+
 func (wa *waBackend) IsTyping() bool {
 	wa.mu.Lock()
 	defer wa.mu.Unlock()
@@ -1300,19 +1315,6 @@ func (wa *waBackend) HandleForward(ctx context.Context, t *terminal, recentChats
 	if err := wa.Forward(ctx, fromChat, target, msgID); err != nil {
 		t.report(err)
 	}
-}
-
-// AI — not available for WhatsApp.
-
-func (wa *waBackend) AIAvailable() bool                   { return false }
-func (wa *waBackend) AIOn(ch chatEntry) bool              { return false }
-func (wa *waBackend) AIToggle(ch chatEntry) (bool, error) { return false, nil }
-func (wa *waBackend) AIShouldAnswer(msg message) bool     { return false }
-func (wa *waBackend) AIRequest(ch chatEntry, msgs []message) (aiPrompt, error) {
-	return aiPrompt{}, nil
-}
-func (wa *waBackend) AIComplete(ctx context.Context, prompt aiPrompt) (string, error) {
-	return "", fmt.Errorf("AI is not available for WhatsApp")
 }
 
 // Emoji.

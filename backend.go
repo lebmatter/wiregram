@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,6 +60,60 @@ type messageReaction struct {
 type genericReactionUpdate struct {
 	MessageID string
 	Reactions []messageReaction
+}
+
+// backendEvent is a unified event delivered to subscribers.
+type backendEvent struct {
+	Kind     string                 // "message", "edit", "delete", "reaction"
+	Chat     chatID                 // which chat the event belongs to
+	Message  *message               // for "message" and "edit"
+	DeleteID string                 // message ID for "delete"
+	Reaction *genericReactionUpdate // for "reaction"
+}
+
+type backendSubscriber struct {
+	filter func(chatID) bool
+	ch     chan backendEvent
+}
+
+// subscriberSet manages a set of event subscribers. Each backend embeds one.
+type subscriberSet struct {
+	mu   sync.Mutex
+	subs map[string]*backendSubscriber
+}
+
+func (ss *subscriberSet) add(id string, filter func(chatID) bool, bufSize int) <-chan backendEvent {
+	ch := make(chan backendEvent, bufSize)
+	ss.mu.Lock()
+	if ss.subs == nil {
+		ss.subs = make(map[string]*backendSubscriber)
+	}
+	ss.subs[id] = &backendSubscriber{filter: filter, ch: ch}
+	ss.mu.Unlock()
+	return ch
+}
+
+func (ss *subscriberSet) remove(id string) {
+	ss.mu.Lock()
+	if sub, ok := ss.subs[id]; ok {
+		close(sub.ch)
+		delete(ss.subs, id)
+	}
+	ss.mu.Unlock()
+}
+
+func (ss *subscriberSet) broadcast(ev backendEvent) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	for _, sub := range ss.subs {
+		if sub.filter != nil && !sub.filter(ev.Chat) {
+			continue
+		}
+		select {
+		case sub.ch <- ev:
+		default:
+		}
+	}
 }
 
 type capabilities struct {
@@ -142,13 +197,9 @@ type backend interface {
 	SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error)
 	HandleForward(ctx context.Context, t *terminal, recentChats []chatEntry, fromChat chatEntry, msgID string)
 
-	// AI
-	AIAvailable() bool
-	AIOn(ch chatEntry) bool
-	AIToggle(ch chatEntry) (bool, error)
-	AIShouldAnswer(msg message) bool
-	AIRequest(ch chatEntry, msgs []message) (aiPrompt, error)
-	AIComplete(ctx context.Context, prompt aiPrompt) (string, error)
+	// Subscribers
+	AddSubscriber(id string, filter func(chatID) bool, bufSize int) <-chan backendEvent
+	RemoveSubscriber(id string)
 
 	// Emoji
 	RecentEmoji() []string

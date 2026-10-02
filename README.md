@@ -113,10 +113,6 @@ do not need a config section; add them through the account picker.
 | Chat | Alt+P | Pin or unpin the selected message |
 | Chat | Alt+F | Forward selected message (opens search picker) |
 | Chat | Alt+S | Save selected attachment to ~/Downloads |
-| Chat | Alt+A | Turn the AI assistant on or off for this chat |
-| AI suggestion | `y` | Send the suggested reply |
-| AI suggestion | `n` / Esc | Discard the suggestion |
-| AI suggestion | Any other key | Discard it and keep typing |
 | Chat | Esc while replying | Cancel the reply |
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
 | Emoji picker | Type | Filter emoji by name |
@@ -169,8 +165,6 @@ sync when the device is first paired. There is no server-side search, no deep
 history pagination, and no pin/archive/delete-chat. WhatsApp may ban numbers
 using unofficial clients; this risk is inherent to the underlying library.
 
-The AI assistant is currently Telegram-only.
-
 API credentials remain in `config.json`. New sessions are stored in private
 `accounts/account-*/session/session.json` directories next to that file, with
 identity metadata in `account.json`. The original `session/session.json` is
@@ -178,8 +172,7 @@ discovered in place, so an existing installation does not need to sign in again.
 Identity files are written atomically with mode `0600`; directories use `0700`.
 Do not run multiple Wiregram processes against the same configuration directory.
 
-See [the account architecture](ACCOUNTS.md) for concurrency, capacity limits, and
-the planned boundary for AI processing.
+See [the account architecture](ACCOUNTS.md) for concurrency and capacity limits.
 
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.
@@ -259,65 +252,56 @@ output, and terminal graphics replies do not reset the timer.
 
 This is a screen collapse, not password protection or a terminal scrollback eraser.
 
-## AI assistant
+## Agent Mode
 
-Optional and off by default. With no `ai` section in `config.json` nothing
-changes: no network calls, no keys required. Add one to enable it:
+Optional and off by default. With no providers or agents configured, nothing
+changes: no network calls, no keys required. Select **Agents...** from the
+account chooser to open the agent management UI.
 
-```json
-{
-  "api_id": 123456,
-  "api_hash": "abcdef1234567890",
-  "autolock": 1,
-  "ai": {
-    "enabled": true,
-    "model": "<model-id>",
-    "prompt": "You are my assistant. Reply briefly and in my voice.",
-    "autoreply": 0,
-    "knowledge": ["knowledge/faq.md"]
-  }
-}
-```
+### Providers
 
-The API key is read from the environment, not the config file. The variable
-name defaults to `OPENAI_API_KEY` and can be changed with `api_key_env`.
-`base_url` defaults to `https://api.openai.com/v1` and may point at any
-OpenAI-compatible server that implements `/chat/completions`; plain `http://`
-is rejected unless the address is local. Other optional settings are
-`max_output_tokens` (`0` omits the limit), `context_messages` (default 20),
-and `timeout_seconds` (default 45).
+Add one or more AI providers under **Providers** in the agent UI. Each
+provider has a name, base URL, model ID, and the name of an environment
+variable holding the API key. Any OpenAI-compatible server that implements
+`/chat/completions` works — OpenRouter, self-hosted models, or any other
+compatible endpoint. HTTPS is required unless the address is localhost.
 
-Press **Alt+A** in a private chat to turn the assistant on or off there. The
-choice is saved to `config.json`, so it survives a restart. A status line
-shows `[AI suggest]` or `[AI auto]` while it is on.
+### Creating agents
 
-With `autoreply` set to `0`, an incoming message produces a suggested reply:
+Each agent has a name, a system prompt, a provider, a mode (suggest or auto),
+knowledge files, and a retention policy. Assign specific private chats from
+any connected account (Telegram, Mattermost, Matrix, WhatsApp) to an agent
+through the chat picker.
 
-```
-alice> do you deliver on sundays?
-[AI suggest — y send · n discard] No, we're closed Sundays. Pickup is Mon-Sat, 9-6.
-```
+- **Suggest mode**: incoming messages produce a suggested reply visible in
+  the agent's thread view. Press `y` to send, `n` to discard.
+- **Auto mode**: the agent sends its reply automatically.
 
-Press `y` to send it, `n` or Esc to discard it, or simply keep typing to
-discard it and write your own. With `autoreply` set to `1` the assistant
-sends its reply itself.
+Agents run in the background as long as Wiregram is open, not only when the
+agent UI is visible. An agent never replies to its own messages or to other
+bots, only one request runs at a time per chat, and a burst of messages
+produces a single reply.
 
-Files listed in `knowledge` are read on every request and given to the model
-as reference material, so editing one takes effect immediately. Paths resolve
-relative to the configuration directory and are capped at 64 KB in total,
-which is enough for an FAQ or a small catalogue.
+### Knowledge files
 
-Only private chats are answered; groups and channels are never automatic. The
-assistant never replies to its own messages or to other bots, only one request
-runs at a time per chat, and a burst of messages produces a single reply.
-Sending a message yourself cancels anything pending.
+Files listed in an agent's knowledge field are read on every request and
+given to the model as reference material. Paths resolve relative to the
+configuration directory and are capped at 64 KB in total. Editing a file
+takes effect on the next request.
 
-Requests go to whichever `base_url` is configured, so the recent conversation
+### Storage
+
+Agent configuration and message history are stored in
+`~/.config/wiregram/wiregram.db` (SQLite). Each agent's retention policy
+controls how long message history is kept.
+
+### Privacy
+
+Requests go to whichever provider is configured, so the recent conversation
 and the knowledge files leave your machine for that provider. Message text
-from other people is untrusted: the assistant is instructed to ignore
-instructions embedded in it, but suggestion mode is the real protection. If
-you run an account that answers customers, tell them an assistant is
-involved.
+from other people is untrusted: the agent is instructed to ignore instructions
+embedded in it, but suggest mode is the real safeguard. If you run an account
+that answers customers, tell them an agent is involved.
 
 ## Development
 

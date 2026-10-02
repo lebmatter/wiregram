@@ -351,6 +351,14 @@ func (tb *telegramBackend) Changed() <-chan struct{} { return tb.c.changed }
 func (tb *telegramBackend) IsTyping() bool           { return tb.c.isTyping() }
 func (tb *telegramBackend) ClearTyping()             { tb.c.clearTyping() }
 
+func (tb *telegramBackend) AddSubscriber(id string, filter func(chatID) bool, bufSize int) <-chan backendEvent {
+	return tb.c.subs.add(id, filter, bufSize)
+}
+
+func (tb *telegramBackend) RemoveSubscriber(id string) {
+	tb.c.subs.remove(id)
+}
+
 func (tb *telegramBackend) ReadMarker(ch chatEntry, msg message) string {
 	m, ok := msg.Raw.(*tg.Message)
 	if !ok {
@@ -474,41 +482,6 @@ func (tb *telegramBackend) HandleForward(ctx context.Context, t *terminal, recen
 	chats := chatEntriesToChats(recentChats)
 	fwd := forwardRequest{from: entryToChat(fromChat).peer, id: msgIDToInt(msgID)}
 	tb.c.handleForward(ctx, t, chats, fwd)
-}
-
-func (tb *telegramBackend) AIAvailable() bool { return tb.c.aiAvailable() }
-
-func (tb *telegramBackend) AIOn(ch chatEntry) bool {
-	return tb.c.aiOn(entryToChat(ch))
-}
-
-func (tb *telegramBackend) AIToggle(ch chatEntry) (bool, error) {
-	return tb.c.aiToggle(entryToChat(ch))
-}
-
-func (tb *telegramBackend) AIShouldAnswer(msg message) bool {
-	m, ok := msg.Raw.(*tg.Message)
-	if !ok {
-		return false
-	}
-	return tb.c.aiShouldAnswer(m)
-}
-
-func (tb *telegramBackend) AIRequest(ch chatEntry, msgs []message) (aiPrompt, error) {
-	tgMsgs := make([]*tg.Message, 0, len(msgs))
-	for _, msg := range msgs {
-		if m, ok := msg.Raw.(*tg.Message); ok {
-			tgMsgs = append(tgMsgs, m)
-		}
-	}
-	return tb.c.aiRequest(entryToChat(ch), tgMsgs)
-}
-
-func (tb *telegramBackend) AIComplete(ctx context.Context, prompt aiPrompt) (string, error) {
-	if tb.c.ai == nil {
-		return "", fmt.Errorf("AI is not configured")
-	}
-	return tb.c.ai.complete(ctx, prompt)
 }
 
 func (tb *telegramBackend) RecentEmoji() []string                   { return tb.c.recentEmoji() }

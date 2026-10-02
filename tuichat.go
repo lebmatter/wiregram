@@ -70,8 +70,6 @@ type chatViewModel struct {
 	privateMode    bool
 	lastTypingSent time.Time
 
-	aiStatus aiStatus
-
 	locked       bool
 	autoLock     bool
 	lockDeadline time.Time
@@ -144,12 +142,6 @@ type chatSearchResult struct {
 	err      error
 }
 type chatSearchDebounce struct{}
-
-type chatAIResult struct {
-	text string
-	err  error
-}
-type chatAIDebounce struct{}
 
 func newChatViewModel(ctx context.Context, b backend, entry chatEntry, histories *[]string) chatViewModel {
 	ctx, cancel := context.WithCancel(ctx)
@@ -324,7 +316,6 @@ func (m chatViewModel) clearSelectedChanged() chatViewModel {
 	if m.selected >= 0 && m.selected < len(m.messages) {
 		delete(m.changedMessages, m.messages[m.selected].ID)
 	}
-	m.aiStatus.on = m.b.AIOn(m.entry)
 	return m
 }
 
@@ -454,21 +445,6 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 			return m, m.doSearch()
 		}
 
-	case chatAIDebounce:
-		if !m.aiStatus.thinking && m.b.AIOn(m.entry) {
-			return m, m.doAIComplete()
-		}
-
-	case chatAIResult:
-		m.aiStatus.thinking = false
-		if msg.err != nil {
-			if !isContextCanceled(msg.err) {
-				m.notice = msg.err.Error()
-			}
-		} else {
-			m.aiStatus.suggestion = msg.text
-		}
-
 	case lockTick:
 		if m.autoLock && !m.locked && time.Now().After(m.lockDeadline) {
 			m.locked = true
@@ -541,15 +517,11 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 }
 
 func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel, tea.Cmd) {
-	answerable := false
 	for _, inc := range msg.incoming {
 		if !inc.Outgoing {
 			m.typing = false
 		}
 		m = m.appendMessage(inc)
-		if m.b.AIShouldAnswer(inc) {
-			answerable = true
-		}
 	}
 	for _, update := range msg.reactions {
 		for i, existing := range m.messages {
@@ -594,12 +566,6 @@ func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel
 	if msg.typing {
 		cmds = append(cmds, m.typingTimeoutCmd())
 	}
-	if answerable && m.b.AIOn(m.entry) {
-		m.aiStatus.suggestion = ""
-		cmds = append(cmds, tea.Tick(aiDebounce, func(time.Time) tea.Msg {
-			return chatAIDebounce{}
-		}))
-	}
 	return m, tea.Batch(cmds...)
 }
 
@@ -626,10 +592,6 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		return m.handleConfirmChatDeleteKey(msg)
 	case chatSubConfirmMsgDelete:
 		return m.handleConfirmMsgDeleteKey(msg)
-	}
-
-	if m.aiStatus.suggestion != "" {
-		return m.handleAISuggestionKey(msg)
 	}
 
 	switch msg.String() {
@@ -659,7 +621,6 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		m.cancelAI()
 		replyTo := ""
 		if m.replying != nil {
 			replyTo = m.replying.ID
@@ -805,23 +766,6 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		m.subMode = chatSubConfirmMsgDelete
 		m.confirmRevoke = true
 		m.notice = "Delete this message for both sides? y to confirm; any other key cancels."
-	case "alt+a", "alt+A":
-		if !m.b.AIAvailable() {
-			m.notice = "AI is not configured; add an ai section to config.json"
-			return m, nil
-		}
-		if !m.entry.IsDM {
-			m.notice = "AI replies are available only in private chats"
-			return m, nil
-		}
-		on, err := m.b.AIToggle(m.entry)
-		if !on {
-			m.cancelAI()
-		}
-		m.aiStatus.on = on
-		if err != nil {
-			m.notice = err.Error()
-		}
 	case "alt+h", "alt+H":
 		m.privateMode = !m.privateMode
 		if m.privateMode {
@@ -1008,29 +952,6 @@ func (m chatViewModel) handleConfirmMsgDeleteKey(msg tea.KeyPressMsg) (chatViewM
 	return m, nil
 }
 
-func (m chatViewModel) handleAISuggestionKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	switch msg.String() {
-	case "y", "Y":
-		text := m.aiStatus.suggestion
-		m.aiStatus.suggestion = ""
-		replyTo := ""
-		if m.replying != nil {
-			replyTo = m.replying.ID
-			m.replying = nil
-		}
-		return m, m.sendMessage(chatOutgoing{text: text, replyTo: replyTo})
-	case "n", "N", "esc":
-		m.aiStatus.suggestion = ""
-	default:
-		m.aiStatus.suggestion = ""
-	}
-	return m, nil
-}
-
-func (m *chatViewModel) cancelAI() {
-	m.aiStatus = aiStatus{}
-}
-
 func (m chatViewModel) doReact(target message, emoticon string) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
@@ -1123,22 +1044,6 @@ func (m chatViewModel) openMediaCmd(sel message, player string) tea.Cmd {
 	}
 }
 
-func (m chatViewModel) doAIComplete() tea.Cmd {
-	ctx := m.ctx
-	b := m.b
-	entry := m.entry
-	msgs := m.messages
-	m.aiStatus.thinking = true
-	return func() tea.Msg {
-		request, err := b.AIRequest(entry, msgs)
-		if err != nil {
-			return chatAIResult{"", err}
-		}
-		text, err := b.AIComplete(ctx, request)
-		return chatAIResult{text, err}
-	}
-}
-
 func (m chatViewModel) View() string {
 	if m.locked {
 		unread := m.b.CachedUnread(m.entry)
@@ -1160,9 +1065,9 @@ func (m chatViewModel) View() string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, m.replying, m.aiStatus, m.typing)
+		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, m.replying, m.typing)
 	} else {
-		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.replying, m.aiStatus, m.typing)
+		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.replying, m.typing)
 	}
 
 	var b strings.Builder

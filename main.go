@@ -727,5 +727,4 @@ func withLegacyTerminal(ctx context.Context, fn func(t *terminal)) error {
 	return term.Restore(int(os.Stdin.Fd()), state)
 }
 
-
 func cleanError(err error) string { return strings.TrimSpace(plain(err.Error())) }

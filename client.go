@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -46,7 +47,6 @@ type client struct {
 	accountID        int64  // Set before publishing this connection to the UI.
 	accountName      string // Set before publishing this connection to the UI.
 	cfg              config
-	ai               *aiConfig
 	telegram         *telegram.Client
 	updates          *updates.Manager
 	api              *tg.Client
@@ -67,6 +67,7 @@ type client struct {
 	peerTyping       bool
 	autoLock         bool
 	changed          chan struct{}
+	subs             subscriberSet
 	report           func(error)
 }
 
@@ -78,7 +79,7 @@ func newClient(cfg config, dir string, report func(error)) (*client, error) {
 	c := &client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
 		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
-		changed: make(chan struct{}, 1), cfg: cfg, ai: cfg.AI,
+		changed: make(chan struct{}, 1), cfg: cfg,
 	}
 	middleware := telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
 		return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -190,19 +191,25 @@ func (c *client) accept(value tg.MessageClass, newMessage bool) {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	key := keyOf(m.PeerID)
 	if newMessage && !m.Out {
 		c.unreads[key]++
 	}
-	if c.active == (peerKey{}) || key != c.active {
-		return
+	if c.active != (peerKey{}) && key == c.active {
+		c.pending = append(c.pending, m)
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
 	}
-	c.pending = append(c.pending, m)
-	select {
-	case c.changed <- struct{}{}:
-	default:
+	c.mu.Unlock()
+
+	kind := "message"
+	if !newMessage {
+		kind = "edit"
 	}
+	msg := tgToMessage(c, m)
+	c.subs.broadcast(backendEvent{Kind: kind, Chat: peerKeyToID(key), Message: &msg})
 }
 
 func (c *client) acceptTyping(userID int64) {
@@ -244,16 +251,28 @@ func (c *client) acceptDeletion(ids []int) {
 }
 
 func (c *client) acceptReaction(update *tg.UpdateMessageReactions) {
+	key := keyOf(update.Peer)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.active == (peerKey{}) || keyOf(update.Peer) != c.active {
-		return
+	if c.active != (peerKey{}) && key == c.active {
+		c.pendingReactions = append(c.pendingReactions, reactionUpdate{update.MsgID, update.Reactions})
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
 	}
-	c.pendingReactions = append(c.pendingReactions, reactionUpdate{update.MsgID, update.Reactions})
-	select {
-	case c.changed <- struct{}{}:
-	default:
+	c.mu.Unlock()
+
+	var reactions []messageReaction
+	for _, count := range update.Reactions.Results {
+		label := reactionLabel(count.Reaction)
+		if label == "" {
+			continue
+		}
+		_, chosen := count.GetChosenOrder()
+		reactions = append(reactions, messageReaction{Emoji: label, Count: count.Count, Chosen: chosen})
 	}
+	ru := genericReactionUpdate{MessageID: strconv.Itoa(update.MsgID), Reactions: reactions}
+	c.subs.broadcast(backendEvent{Kind: "reaction", Chat: peerKeyToID(key), Reaction: &ru})
 }
 
 func (c *client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {

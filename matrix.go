@@ -42,6 +42,8 @@ type mxBackend struct {
 	ownReactions map[string]string // "eventID\x00emoji" → reaction event ID
 	recentEmoji  []string
 
+	subs subscriberSet
+
 	client     *http.Client
 	syncCancel context.CancelFunc
 	txnCounter int64
@@ -501,6 +503,17 @@ func (mx *mxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 					mx.mu.Unlock()
 					mx.notify()
 				}
+				if targetID != "" {
+					msg := mx.eventToMessage(ev)
+					msg.ID = targetID
+					if newContent, ok := ev.Content["m.new_content"].(map[string]any); ok {
+						if body, ok := newContent["body"].(string); ok {
+							msg.Text = body
+						}
+					}
+					msg.EditDate = int(ev.OriginServerTS / 1000)
+					mx.subs.broadcast(backendEvent{Kind: "edit", Chat: chatID{backend: "matrix", id: roomID}, Message: &msg})
+				}
 				return
 			}
 		}
@@ -515,6 +528,8 @@ func (mx *mxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			mx.mu.Unlock()
 			mx.notify()
 		}
+		msg := mx.eventToMessage(ev)
+		mx.subs.broadcast(backendEvent{Kind: "message", Chat: chatID{backend: "matrix", id: roomID}, Message: &msg})
 
 	case "m.room.encrypted":
 		if roomID == subscribed {
@@ -523,6 +538,8 @@ func (mx *mxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			mx.mu.Unlock()
 			mx.notify()
 		}
+		msg := mx.eventToMessage(ev)
+		mx.subs.broadcast(backendEvent{Kind: "message", Chat: chatID{backend: "matrix", id: roomID}, Message: &msg})
 
 	case "m.room.redaction":
 		targetID := ev.Redacts
@@ -1244,6 +1261,14 @@ func (mx *mxBackend) Drain() ([]message, []genericReactionUpdate, []string) {
 
 func (mx *mxBackend) Changed() <-chan struct{} { return mx.changed }
 
+func (mx *mxBackend) AddSubscriber(id string, filter func(chatID) bool, bufSize int) <-chan backendEvent {
+	return mx.subs.add(id, filter, bufSize)
+}
+
+func (mx *mxBackend) RemoveSubscriber(id string) {
+	mx.subs.remove(id)
+}
+
 func (mx *mxBackend) IsTyping() bool {
 	mx.mu.Lock()
 	defer mx.mu.Unlock()
@@ -1757,19 +1782,6 @@ func (mx *mxBackend) openDM(ctx context.Context, userID string) (chatEntry, erro
 }
 
 func (mx *mxBackend) HandleForward(ctx context.Context, t *terminal, recentChats []chatEntry, fromChat chatEntry, msgID string) {
-}
-
-// AI — not available for Matrix.
-
-func (mx *mxBackend) AIAvailable() bool                   { return false }
-func (mx *mxBackend) AIOn(ch chatEntry) bool              { return false }
-func (mx *mxBackend) AIToggle(ch chatEntry) (bool, error) { return false, nil }
-func (mx *mxBackend) AIShouldAnswer(msg message) bool     { return false }
-func (mx *mxBackend) AIRequest(ch chatEntry, msgs []message) (aiPrompt, error) {
-	return aiPrompt{}, nil
-}
-func (mx *mxBackend) AIComplete(ctx context.Context, prompt aiPrompt) (string, error) {
-	return "", fmt.Errorf("AI is not available for Matrix")
 }
 
 // Emoji.

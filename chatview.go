@@ -154,21 +154,6 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 	defer typingTimeout.Stop()
 	var lastTypingSent time.Time
 	var saveDone <-chan error
-	var aiSuggestion string
-	var aiResults <-chan aiResult
-	var aiStop context.CancelFunc
-	aiThinking, aiTriggered := false, false
-	aiTimer := time.NewTimer(time.Hour)
-	aiTimer.Stop()
-	defer aiTimer.Stop()
-	cancelAI := func() {
-		if aiStop != nil {
-			aiStop()
-			aiStop = nil
-		}
-		aiTimer.Stop()
-		aiResults, aiThinking, aiTriggered, aiSuggestion = nil, false, false, ""
-	}
 	finishEdit := func() {
 		if editEditor != nil {
 			editEditor.close()
@@ -222,19 +207,13 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 		if selected >= 0 && selected < len(messages) {
 			delete(changedMessages, messages[selected].ID)
 		}
-		status := aiStatus{
-			on:         b.AIOn(entry),
-			auto:       b.AIAvailable() && false, // TODO: check auto mode per backend
-			thinking:   aiThinking,
-			suggestion: aiSuggestion,
-		}
 		var lines []string
 		var readID string
 		if privateMode && len(messages) > 0 {
 			last := len(messages) - 1
-			lines, readID = genericSelectedLines(b, messages[last:], entry, 0, changedMessages, replying, status, b.IsTyping())
+			lines, readID = genericSelectedLines(b, messages[last:], entry, 0, changedMessages, replying, b.IsTyping())
 		} else {
-			lines, readID = genericSelectedLines(b, messages, entry, selected, changedMessages, replying, status, b.IsTyping())
+			lines, readID = genericSelectedLines(b, messages, entry, selected, changedMessages, replying, b.IsTyping())
 		}
 		t.unlock(lines)
 		reads.observe(readID)
@@ -586,16 +565,12 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 			render()
 		case <-b.Changed():
 			incoming, reactions, deletions := b.Drain()
-			answerable := false
 			for _, m := range incoming {
 				if !m.Outgoing {
 					b.ClearTyping()
 					typingTimeout.Stop()
 				}
 				appendMessage(m)
-				if b.AIShouldAnswer(m) {
-					answerable = true
-				}
 			}
 			if b.IsTyping() {
 				typingTimeout.Reset(6 * time.Second)
@@ -636,43 +611,8 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 					selected = max(0, len(messages)-1)
 				}
 			}
-			if answerable && b.AIOn(entry) {
-				aiSuggestion, aiTriggered = "", true
-				aiTimer.Reset(aiDebounce)
-			}
 			render()
 			t.updateLock(b.CachedUnread(entry))
-		case <-aiTimer.C:
-			if !aiTriggered || aiThinking || !b.AIOn(entry) {
-				aiTriggered = false
-				continue
-			}
-			aiTriggered = false
-			request, err := b.AIRequest(entry, messages)
-			if err != nil {
-				t.report(err)
-				continue
-			}
-			aiCtx, stop := context.WithCancel(ctx)
-			done := make(chan aiResult, 1)
-			aiStop, aiResults, aiThinking = stop, done, true
-			go func() {
-				defer stop()
-				text, err := b.AIComplete(aiCtx, request)
-				done <- aiResult{text, err}
-			}()
-			render()
-		case result := <-aiResults:
-			aiResults, aiThinking, aiStop = nil, false, nil
-			if result.err != nil {
-				if !errors.Is(result.err, context.Canceled) {
-					t.report(result.err)
-				}
-				render()
-				continue
-			}
-			aiSuggestion = result.text
-			render()
 		case <-probe.C:
 			if probing {
 				probing = false
@@ -928,21 +868,6 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 			if msgDeleteDone != nil {
 				continue
 			}
-			if aiSuggestion != "" {
-				switch key {
-				case "y", "Y":
-					queue = append(queue, genericOutgoing{text: aiSuggestion})
-					aiSuggestion = ""
-					render()
-					continue
-				case "n", "N", "\x1b":
-					aiSuggestion = ""
-					render()
-					continue
-				}
-				aiSuggestion = ""
-				render()
-			}
 			switch key {
 			case "\x1b":
 				if replying != nil {
@@ -976,24 +901,6 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 					continue
 				}
 				startUploadPrompt()
-				continue
-			case "\x1ba", "\x1bA":
-				if !b.AIAvailable() {
-					t.report(fmt.Errorf("AI is not configured; add an ai section to config.json"))
-					continue
-				}
-				if !entry.IsDM {
-					t.report(fmt.Errorf("AI replies are available only in private chats"))
-					continue
-				}
-				on, err := b.AIToggle(entry)
-				if !on {
-					cancelAI()
-				}
-				if err != nil {
-					t.report(err)
-				}
-				render()
 				continue
 			case "\x1bp", "\x1bP":
 				if !caps.Pin || selected < 0 || selected >= len(messages) || messages[selected].ID == "" || messages[selected].ID == "0" {
@@ -1196,7 +1103,6 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 				}
 				continue
 			}
-			cancelAI()
 			*history = append(*history, result.text)
 			if len(*history) > 500 {
 				*history = (*history)[len(*history)-500:]
@@ -1301,14 +1207,13 @@ func genericSearchResultLines(b backend, results []message, selected int, entry 
 }
 
 // Generic selected lines rendering.
-func genericSelectedLines(b backend, messages []message, entry chatEntry, selected int, changed map[string]bool, replying *message, status aiStatus, typing bool) ([]string, string) {
+func genericSelectedLines(b backend, messages []message, entry chatEntry, selected int, changed map[string]bool, replying *message, typing bool) ([]string, string) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
 	}
 	lineWidth := min(cols-1, maxChatLineWidth)
-	statusLines := status.lines(lineWidth)
-	reserved := 2 + len(statusLines)
+	reserved := 2
 	if replying != nil {
 		reserved++
 	}
@@ -1340,7 +1245,7 @@ func genericSelectedLines(b backend, messages []message, entry chatEntry, select
 		if replying != nil {
 			lines = append(lines, clipLine("replying to "+genericReplySummary(*replying, entry), lineWidth))
 		}
-		return append(lines, statusLines...), ""
+		return lines, ""
 	}
 	blocks := make(map[int][]string)
 	block := func(i int) []string {
@@ -1390,7 +1295,7 @@ func genericSelectedLines(b backend, messages []message, entry chatEntry, select
 	if typing {
 		lines = append(lines, clipLine(plain(entry.Title)+" is typing...", lineWidth))
 	}
-	return append(lines, statusLines...), readID
+	return lines, readID
 }
 
 func (c *client) history(ctx context.Context, entry chat) ([]*tg.Message, error) {

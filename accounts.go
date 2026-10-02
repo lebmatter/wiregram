@@ -80,6 +80,7 @@ type accountManager struct {
 	dir        string
 	creds      credStore
 	accounts   []*account // Owned exclusively by the UI after discovery.
+	agents     *agentRuntime
 	changed    chan struct{}
 	connecting chan struct{}
 	mu         sync.Mutex
@@ -714,8 +715,22 @@ type accountsRequested struct{}
 
 func (accountsRequested) Error() string { return "switch accounts" }
 
+type agentsRequested struct{}
+
+func (agentsRequested) Error() string { return "open agents" }
+
 func (m *accountManager) run(ctx context.Context) error {
 	defer m.close()
+
+	db, err := openAgentDB(m.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wiregram: agents disabled — %s\n", cleanError(err))
+	} else {
+		m.agents = newAgentRuntime(ctx, db, m)
+		m.agents.start()
+		defer m.agents.stop()
+	}
+
 	var active *account
 	for _, a := range m.accounts {
 		m.start(ctx, a, nil)
@@ -731,8 +746,15 @@ func (m *accountManager) run(ctx context.Context) error {
 		if active == nil {
 			var err error
 			active, err = tuiChooseAccount(ctx, m, nil)
-			if err != nil || active == nil {
+			if err != nil {
+				if _, ok := err.(agentsRequested); ok && m.agents != nil {
+					tuiAgentUI(ctx, m)
+					continue
+				}
 				return err
+			}
+			if active == nil {
+				return nil
 			}
 		}
 		s := active.snapshot()
@@ -774,8 +796,16 @@ func (m *accountManager) run(ctx context.Context) error {
 		}
 		var err error
 		active, err = tuiChooseAccount(ctx, m, active)
-		if err != nil || active == nil {
+		if err != nil {
+			if _, ok := err.(agentsRequested); ok && m.agents != nil {
+				tuiAgentUI(ctx, m)
+				active = nil
+				continue
+			}
 			return err
+		}
+		if active == nil {
+			return nil
 		}
 	}
 	return ctx.Err()

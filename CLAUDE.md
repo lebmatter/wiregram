@@ -86,6 +86,9 @@ All source is flat in `package main`. The mode loop is:
 10. **`config.go`** — loads/creates `~/.config/wiregram/config.json`.
 11. **`auth.go`** — phone/OTP/2FA authentication flow via gotd/td's `auth.Flow`.
 12. **`emoji.go`**, **`reaction.go`**, **`reply.go`**, **`edit.go`**, **`delete.go`**, **`read.go`** — small feature files for their respective chat interactions.
+13. **`agentdb.go`** — SQLite database layer for agent configuration and message history (`wiregram.db`).
+14. **`agentruntime.go`** — background agent runtime: subscribes to backend events, dispatches to LLM providers, manages suggest/auto modes.
+15. **`tuiagent.go`** — BubbleTea UI for agent and provider management, thread viewing, and chat assignment.
 
 ### Concurrency model
 
@@ -98,7 +101,8 @@ All source is flat in `package main`. The mode loop is:
 ### Config and session paths
 
 `os.UserConfigDir()/wiregram/` (typically `~/.config/wiregram/`):
-- `config.json` — API credentials, autolock, and the optional `ai` section
+- `config.json` — API credentials and autolock
+- `wiregram.db` — SQLite database for agent configuration and message history
 - `session/session.json` — primary account session
 - `accounts/account-*/` — additional account sessions and identity files
 
@@ -107,10 +111,6 @@ writes are atomic (temp file in the same directory, then rename) and must
 preserve fields the struct does not know about.
 
 ## Planned work
-
-`AI_PLAN.md` describes the optional AI assistant: off by default, opt-in per
-private chat, suggestion mode (`y`/`n`) by default with an automatic mode.
-Read it before touching `ai.go` or the AI paths in `chatview.go`.
 
 `TASKS.md` sequences the remaining work, including a local web UI. Phase 0
 of that plan lists rule changes above that need agreeing before the web work

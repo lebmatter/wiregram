@@ -10,9 +10,10 @@ import (
 )
 
 type accountChoice struct {
-	index int
-	add   bool
-	quit  bool
+	index  int
+	add    bool
+	agents bool
+	quit   bool
 }
 
 type accountListModel struct {
@@ -55,7 +56,7 @@ func newAccountListModel(ctx context.Context, mgr *accountManager, active *accou
 	}
 }
 
-func (m accountListModel) maxIndex() int { return len(m.accounts) + 1 }
+func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
 
 func (m accountListModel) Init() tea.Cmd {
 	return listenAccounts(m.mgr)
@@ -96,12 +97,16 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mgr.start(m.ctx, m.accounts[m.selected], nil)
 			}
 		case "enter":
-			if m.selected == len(m.accounts)+1 {
+			if m.selected == len(m.accounts)+2 {
 				m.result = &accountChoice{quit: true}
 				return m, tea.Quit
 			}
-			if m.selected == len(m.accounts) {
+			if m.selected == len(m.accounts)+1 {
 				m.result = &accountChoice{add: true}
+				return m, tea.Quit
+			}
+			if m.selected == len(m.accounts) {
+				m.result = &accountChoice{agents: true}
 				return m, tea.Quit
 			}
 			a := m.accounts[m.selected]
@@ -123,7 +128,7 @@ func (m accountListModel) View() tea.View {
 
 	limit := max(1, m.height-5)
 	start := max(0, m.selected-limit+1)
-	end := min(len(m.accounts)+2, start+limit)
+	end := min(len(m.accounts)+3, start+limit)
 
 	for i := start; i < end; i++ {
 		marker := "  "
@@ -132,8 +137,10 @@ func (m accountListModel) View() tea.View {
 		}
 		switch {
 		case i == len(m.accounts):
-			b.WriteString(fmt.Sprintf("%s    Add account…\n", marker))
+			b.WriteString(fmt.Sprintf("%s    Agents…\n", marker))
 		case i == len(m.accounts)+1:
+			b.WriteString(fmt.Sprintf("%s    Add account…\n", marker))
+		case i == len(m.accounts)+2:
 			b.WriteString(fmt.Sprintf("%s    Quit\n", marker))
 		default:
 			a := m.accounts[i]
@@ -183,6 +190,9 @@ func tuiChooseAccount(ctx context.Context, mgr *accountManager, active *account)
 	}
 	if final.result.quit {
 		return nil, nil
+	}
+	if final.result.agents {
+		return nil, agentsRequested{}
 	}
 	if final.result.add {
 		return tuiPickAndAdd(ctx, mgr)

@@ -37,6 +37,8 @@ type mmBackend struct {
 	userCache   map[string]mmUser
 	recentEmoji []string
 
+	subs subscriberSet
+
 	client *http.Client
 	wsConn *websocket.Conn
 	wsStop context.CancelFunc
@@ -876,6 +878,14 @@ func (mb *mmBackend) Drain() ([]message, []genericReactionUpdate, []string) {
 
 func (mb *mmBackend) Changed() <-chan struct{} { return mb.changed }
 
+func (mb *mmBackend) AddSubscriber(id string, filter func(chatID) bool, bufSize int) <-chan backendEvent {
+	return mb.subs.add(id, filter, bufSize)
+}
+
+func (mb *mmBackend) RemoveSubscriber(id string) {
+	mb.subs.remove(id)
+}
+
 func (mb *mmBackend) IsTyping() bool {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
@@ -1250,17 +1260,6 @@ func (mb *mmBackend) openDM(ctx context.Context, user mmUser) (chatEntry, error)
 func (mb *mmBackend) HandleForward(ctx context.Context, t *terminal, recentChats []chatEntry, fromChat chatEntry, msgID string) {
 }
 
-func (mb *mmBackend) AIAvailable() bool                   { return false }
-func (mb *mmBackend) AIOn(ch chatEntry) bool              { return false }
-func (mb *mmBackend) AIToggle(ch chatEntry) (bool, error) { return false, nil }
-func (mb *mmBackend) AIShouldAnswer(msg message) bool     { return false }
-func (mb *mmBackend) AIRequest(ch chatEntry, msgs []message) (aiPrompt, error) {
-	return aiPrompt{}, nil
-}
-func (mb *mmBackend) AIComplete(ctx context.Context, prompt aiPrompt) (string, error) {
-	return "", fmt.Errorf("AI is not available for Mattermost")
-}
-
 func (mb *mmBackend) RecentEmoji() []string { return mb.recentEmoji }
 
 func (mb *mmBackend) RememberEmoji(value string) {
@@ -1409,6 +1408,8 @@ func (mb *mmBackend) handleWSEvent(data []byte) {
 			mb.mu.Unlock()
 		}
 		mb.notify()
+		msg := mb.postToMessage(context.Background(), post)
+		mb.subs.broadcast(backendEvent{Kind: "message", Chat: chatID{backend: "mattermost", id: post.ChannelID}, Message: &msg})
 
 	case "post_edited":
 		var wrapper struct {
@@ -1427,6 +1428,8 @@ func (mb *mmBackend) handleWSEvent(data []byte) {
 			mb.mu.Unlock()
 			mb.notify()
 		}
+		msg := mb.postToMessage(context.Background(), post)
+		mb.subs.broadcast(backendEvent{Kind: "edit", Chat: chatID{backend: "mattermost", id: post.ChannelID}, Message: &msg})
 
 	case "post_deleted":
 		var wrapper struct {
