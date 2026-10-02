@@ -727,22 +727,5 @@ func withLegacyTerminal(ctx context.Context, fn func(t *terminal)) error {
 	return term.Restore(int(os.Stdin.Fd()), state)
 }
 
-func openTerminal(ctx context.Context) (*terminal, func() error, error) {
-	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return nil, nil, fmt.Errorf("wiregram needs an interactive terminal")
-	}
-	state, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return nil, nil, fmt.Errorf("enter raw terminal mode: %w", err)
-	}
-	t := &terminal{locking: make(chan inactivityConfig, 1), done: make(chan struct{})}
-	t.keys = t.manageInactivity(ctx, readKeys(ctx))
-	return t, func() error {
-		// Clear the visible screen and the scrollback buffer so private
-		// content does not remain in terminal history after exit.
-		fmt.Fprint(os.Stdout, "\033[2J\033[3J\033[H")
-		return term.Restore(int(os.Stdin.Fd()), state)
-	}, nil
-}
 
 func cleanError(err error) string { return strings.TrimSpace(plain(err.Error())) }

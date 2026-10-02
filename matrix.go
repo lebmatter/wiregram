@@ -1442,7 +1442,7 @@ func (mx *mxBackend) downloadMXC(ctx context.Context, mxcURL, dest string) error
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
 	}
-	f, err := os.Create(dest)
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}

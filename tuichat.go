@@ -320,6 +320,14 @@ func (m chatViewModel) selectedMsg() (message, bool) {
 	return message{}, false
 }
 
+func (m chatViewModel) clearSelectedChanged() chatViewModel {
+	if m.selected >= 0 && m.selected < len(m.messages) {
+		delete(m.changedMessages, m.messages[m.selected].ID)
+	}
+	m.aiStatus.on = m.b.AIOn(m.entry)
+	return m
+}
+
 func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -327,10 +335,12 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		return m, nil
 
 	case chatHistoryLoaded:
-		return m.handleHistoryLoaded(msg)
+		cm, cmd := m.handleHistoryLoaded(msg)
+		return cm.clearSelectedChanged(), cmd
 
 	case chatBackendUpdate:
-		return m.handleBackendUpdate(msg)
+		cm, cmd := m.handleBackendUpdate(msg)
+		return cm.clearSelectedChanged(), cmd
 
 	case chatTypingTimeout:
 		m.typing = false
@@ -485,7 +495,8 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.subMode = chatSubNone
 
 	case tea.KeyPressMsg:
-		return m.handleKey(msg)
+		cm, cmd := m.handleKey(msg)
+		return cm.clearSelectedChanged(), cmd
 	}
 	return m, nil
 }
@@ -1145,12 +1156,6 @@ func (m chatViewModel) View() string {
 	if m.subMode == chatSubSearch {
 		return m.viewSearch()
 	}
-
-	if m.selected >= 0 && m.selected < len(m.messages) {
-		delete(m.changedMessages, m.messages[m.selected].ID)
-	}
-
-	m.aiStatus.on = m.b.AIOn(m.entry)
 
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {

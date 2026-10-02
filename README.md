@@ -1,8 +1,8 @@
 # Wiregram
 
 A minimal multi-backend chat client for the terminal, written in Go. Supports
-Telegram, Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
-audio playback; no TUI framework or mouse.
+Telegram, Mattermost, Matrix, and WhatsApp. BubbleTea TUI with on-demand Kitty
+graphics and audio playback; no mouse.
 
 ## Build and run
 
@@ -67,7 +67,7 @@ mode `0600`. Keep both private; never commit them.
 ```
 
 `autolock` defaults to `1`. Set it to `0` to disable the 10-second inactivity
-timer. Ctrl+L remains available for manual locking.
+timer.
 
 The `mattermost` array is optional. Each entry adds a Mattermost server whose
 account appears in the account switcher alongside Telegram accounts. On first
@@ -107,7 +107,7 @@ do not need a config section; add them through the account picker.
 | Chat | Alt+D | Delete current private chat only for you |
 | Chat | Ctrl+Alt+D | Delete current private chat for both sides |
 | Chat | Enter with text | Send text |
-| Chat | Enter with empty input | Open selected media |
+| Chat | `o` | Open selected media |
 | Chat | Ctrl+U | Upload media or a file with an optional caption |
 | Chat | Ctrl+F | Search messages in this chat |
 | Chat | Alt+P | Pin or unpin the selected message |
@@ -117,7 +117,6 @@ do not need a config section; add them through the account picker.
 | AI suggestion | `y` | Send the suggested reply |
 | AI suggestion | `n` / Esc | Discard the suggestion |
 | AI suggestion | Any other key | Discard it and keep typing |
-| Chat | Ctrl+L | Lock immediately |
 | Chat | Esc while replying | Cancel the reply |
 | Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
 | Emoji picker | Type | Filter emoji by name |
@@ -235,13 +234,13 @@ mpv. TGS/Lottie stickers, PDFs, and other non-playable attachments remain text
 representations. No attachment is downloaded just by displaying or selecting it.
 
 View-once and self-destructing photos, videos, and audio are labelled in the
-message list. Press Enter to open them like any other media. After playback
+message list. Press `o` to open them like any other media. After playback
 completes, Wiregram acknowledges the view to Telegram so the sender sees
 "opened" and the server clears the media. If playback is interrupted (lock
 screen, Esc, leaving the chat), the media is not acknowledged — it remains
 available for another attempt. Once acknowledged, the message shows as opened.
 
-Enter opens media in the current terminal. Esc, Ctrl+C, or Ctrl+D closes it and
+`o` opens media in the current terminal. Esc, Ctrl+C, or Ctrl+D closes it and
 returns to the chat. Wiregram owns stdin throughout playback; other keys keep the
 inactivity timer alive but do not enter the message draft. Incoming messages
 are retained for the chat redraw without interrupting the viewer.
@@ -325,8 +324,9 @@ involved.
 Follow [CLAUDE.md](CLAUDE.md), the contributor guide. All source lives in the
 root `package main`. Build with `make`, format with `gofmt -w *.go`, and check
 with `go vet ./...`. No test suite is included.
-Direct dependencies are gotd/td, readline, x/term, nhooyr.io/websocket,
-whatsmeow, and modernc.org/sqlite; Go resolves their transitive dependencies
+Direct dependencies are gotd/td, bubbletea/v2, lipgloss/v2, bubbles/v2,
+nhooyr.io/websocket, whatsmeow, and modernc.org/sqlite; Go resolves their
+transitive dependencies
 through `go.mod` and `go.sum`. `mpv` is an
 optional runtime dependency for media; Wiregram itself remains cgo-free.
 

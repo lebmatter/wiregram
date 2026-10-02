@@ -969,7 +969,7 @@ func (mb *mmBackend) SaveMedia(ctx context.Context, msg message, destDir string)
 		return fmt.Errorf("download file: HTTP %d", resp.StatusCode)
 	}
 	dest := filepath.Join(destDir, filename)
-	f, err := os.Create(dest)
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
