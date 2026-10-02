@@ -1445,33 +1445,16 @@ func (mx *mxBackend) SaveMedia(ctx context.Context, msg message, destDir string)
 }
 
 func (mx *mxBackend) downloadMXC(ctx context.Context, mxcURL, dest string) error {
-	// Parse mxc://server/mediaId
-	if !strings.HasPrefix(mxcURL, "mxc://") {
-		return fmt.Errorf("invalid mxc URL: %s", mxcURL)
-	}
-	parts := strings.SplitN(mxcURL[6:], "/", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid mxc URL: %s", mxcURL)
-	}
-	downloadURL := mx.homeserver + "/_matrix/media/v3/download/" + parts[0] + "/" + parts[1]
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	body, err := mx.openMXC(ctx, mxcURL)
 	if err != nil {
-		return fmt.Errorf("create download request: %w", err)
+		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+mx.accessToken)
-	resp, err := mx.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
-	}
+	defer body.Close()
 	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	_, copyErr := io.Copy(f, resp.Body)
+	_, copyErr := io.Copy(f, body)
 	closeErr := f.Close()
 	if err := firstError(copyErr, closeErr); err != nil {
 		return fmt.Errorf("save file: %w", err)
@@ -1479,7 +1462,72 @@ func (mx *mxBackend) downloadMXC(ctx context.Context, mxcURL, dest string) error
 	return nil
 }
 
+// openMXC starts an authenticated download of an mxc:// URL.
+func (mx *mxBackend) openMXC(ctx context.Context, mxcURL string) (io.ReadCloser, error) {
+	// Parse mxc://server/mediaId
+	if !strings.HasPrefix(mxcURL, "mxc://") {
+		return nil, fmt.Errorf("invalid mxc URL: %s", mxcURL)
+	}
+	parts := strings.SplitN(mxcURL[6:], "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid mxc URL: %s", mxcURL)
+	}
+	// Escape both parts: mxc URLs come from remote events, and a raw "../"
+	// would otherwise reach other homeserver endpoints with our token.
+	downloadURL := mx.homeserver + "/_matrix/media/v3/download/" +
+		url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1])
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create download request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+mx.accessToken)
+	resp, err := mx.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("download: HTTP %d", resp.StatusCode)
+	}
+	return resp.Body, nil
+}
+
 func (mx *mxBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
+
+// InlinePhoto accepts unencrypted m.image events only: encrypted media
+// carries a "file" object instead of "url" and needs decryption.
+func (mx *mxBackend) InlinePhoto(msg message) (w, h int, ok bool) {
+	ev, isEvent := msg.Raw.(mxTimelineEvent)
+	if !isEvent || ev.Type != "m.room.message" {
+		return 0, 0, false
+	}
+	if msgtype, _ := ev.Content["msgtype"].(string); msgtype != "m.image" {
+		return 0, 0, false
+	}
+	if u, _ := ev.Content["url"].(string); u == "" {
+		return 0, 0, false
+	}
+	info, _ := ev.Content["info"].(map[string]any)
+	fw, _ := info["w"].(float64)
+	fh, _ := info["h"].(float64)
+	return int(fw), int(fh), fw > 0 && fh > 0
+}
+
+func (mx *mxBackend) DownloadPhoto(ctx context.Context, msg message, file *os.File) error {
+	if _, _, ok := mx.InlinePhoto(msg); !ok {
+		return fmt.Errorf("this message has no inline photo")
+	}
+	mxcURL, _ := msg.Raw.(mxTimelineEvent).Content["url"].(string)
+	body, err := mx.openMXC(ctx, mxcURL)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	if _, err := io.Copy(file, body); err != nil {
+		return fmt.Errorf("save photo: %w", err)
+	}
+	return nil
+}
 
 // User search.
 

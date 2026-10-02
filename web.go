@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,10 @@ type webServer struct {
 	sessions  map[string]*webSession
 	mu        sync.Mutex
 	sseConnID int64
+
+	photoDir      string
+	photoRefs     map[string]message
+	photoInflight map[string]chan struct{}
 }
 
 type webSession struct {
@@ -37,12 +42,21 @@ type webSession struct {
 }
 
 func startWeb(ctx context.Context, mgr *accountManager, port int, token string) error {
+	photoDir, err := os.MkdirTemp("", "wiregram-photos-")
+	if err != nil {
+		return fmt.Errorf("create photo cache: %w", err)
+	}
+	defer os.RemoveAll(photoDir)
+
 	ws := &webServer{
-		mgr:      mgr,
-		agents:   mgr.agents,
-		port:     port,
-		token:    token,
-		sessions: make(map[string]*webSession),
+		mgr:           mgr,
+		agents:        mgr.agents,
+		port:          port,
+		token:         token,
+		sessions:      make(map[string]*webSession),
+		photoDir:      photoDir,
+		photoRefs:     make(map[string]message),
+		photoInflight: make(map[string]chan struct{}),
 	}
 
 	e := echo.New()
@@ -73,6 +87,7 @@ func startWeb(ctx context.Context, mgr *accountManager, port int, token string) 
 	api.GET("/accounts/:idx/chats", ws.handleListChats)
 	api.GET("/accounts/:idx/chats/:id/messages", ws.handleListMessages)
 	api.POST("/accounts/:idx/chats/:id/messages", ws.handleSendMessage)
+	api.GET("/accounts/:idx/chats/:id/photos/:msg", ws.handlePhoto)
 	api.GET("/events", ws.handleSSE)
 
 	api.GET("/providers", ws.handleListProviders)

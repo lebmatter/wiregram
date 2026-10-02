@@ -372,8 +372,20 @@ body {
     line-height: 1.45;
     box-shadow: var(--shadow-small);
     overflow-wrap: anywhere;
-    white-space: pre-wrap;
 }
+
+/* pre-wrap only on the text: on .bubble it renders template whitespace. */
+.bubble-text { white-space: pre-wrap; }
+
+.bubble .photo {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    background: var(--muted);
+}
+
+.bubble .photo ~ .bubble-text:not(:empty) { display: block; margin-top: 8px; }
 
 .mine .bubble {
     background: var(--chat-own);

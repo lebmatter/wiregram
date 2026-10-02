@@ -37,6 +37,9 @@ type apiMessage struct {
 	ReplyToID  string               `json:"reply_to_id,omitempty"`
 	Forwarded  bool                 `json:"forwarded"`
 	MediaLabel string               `json:"media_label,omitempty"`
+	Photo      bool                 `json:"photo,omitempty"`
+	PhotoW     int                  `json:"photo_w,omitempty"`
+	PhotoH     int                  `json:"photo_h,omitempty"`
 	Reactions  []apiMessageReaction `json:"reactions,omitempty"`
 }
 
@@ -72,7 +75,7 @@ func (ws *webServer) findChat(c echo.Context, b backend, chatIDStr string) (chat
 	return chatEntry{}, fmt.Errorf("chat not found")
 }
 
-func (ws *webServer) handleListAccounts(c echo.Context) error {
+func (ws *webServer) accountList() []apiAccount {
 	result := make([]apiAccount, 0, len(ws.mgr.accounts))
 	for i, a := range ws.mgr.accounts {
 		s := a.snapshot()
@@ -84,7 +87,11 @@ func (ws *webServer) handleListAccounts(c echo.Context) error {
 			NeedsLogin:  s.needsLogin,
 		})
 	}
-	return c.JSON(http.StatusOK, result)
+	return result
+}
+
+func (ws *webServer) handleListAccounts(c echo.Context) error {
+	return c.JSON(http.StatusOK, ws.accountList())
 }
 
 func (ws *webServer) handleListChats(c echo.Context) error {
@@ -143,7 +150,7 @@ func (ws *webServer) handleListMessages(c echo.Context) error {
 
 	result := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
-		result = append(result, messageToAPI(m))
+		result = append(result, ws.apiMessageFor(idx, chatIDStr, b, m))
 	}
 	return c.JSON(http.StatusOK, result)
 }
@@ -178,7 +185,7 @@ func (ws *webServer) handleSendMessage(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to send message"})
 	}
-	return c.JSON(http.StatusOK, messageToAPI(msg))
+	return c.JSON(http.StatusOK, ws.apiMessageFor(idx, chatIDStr, b, msg))
 }
 
 func messageToAPI(m message) apiMessage {

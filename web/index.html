@@ -94,8 +94,13 @@
                 </template>
               </div>
               <div class="bubble">
-                <div class="media-label" x-show="msg.mediaLabel" x-text="msg.mediaLabel"></div>
-                <span x-text="msg.text"></span>
+                <template x-if="msg.photo">
+                  <img class="photo" loading="lazy" alt="Photo"
+                       :src="$store.chat.photoURL(msg)" :style="$store.chat.photoStyle(msg)">
+                </template>
+                <div class="media-label" x-show="msg.media_label && !msg.photo"
+                     x-text="msg.media_label"></div>
+                <span class="bubble-text" x-text="msg.text"></span>
               </div>
               <div class="reaction-row" x-show="msg.reactions && msg.reactions.length">
                 <template x-for="r in (msg.reactions || [])" :key="r.emoji">

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -40,79 +42,48 @@ func (ws *webServer) handleSSE(c echo.Context) error {
 	subID := fmt.Sprintf("web-%d", connID)
 	ctx := c.Request().Context()
 
-	type subEntry struct {
-		accountIdx int
-		ch         <-chan backendEvent
-	}
-	var subs []subEntry
-
-	for i, a := range ws.mgr.accounts {
-		s := a.snapshot()
-		if s.backend == nil {
-			continue
-		}
-		ch := s.backend.AddSubscriber(subID, nil, 128)
-		subs = append(subs, subEntry{accountIdx: i, ch: ch})
-	}
-	defer func() {
-		for _, a := range ws.mgr.accounts {
-			s := a.snapshot()
-			if s.backend != nil {
-				s.backend.RemoveSubscriber(subID)
-			}
-		}
-	}()
-
 	events := make(chan sseEvent, 64)
 
-	for _, sub := range subs {
-		sub := sub
-		go func() {
-			for {
-				select {
-				case ev, ok := <-sub.ch:
-					if !ok {
-						return
-					}
-					sseEv := backendEventToSSE(sub.accountIdx, ev)
-					if sseEv.Name != "" {
-						select {
-						case events <- sseEv:
-						default:
-						}
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-	}
-
-	go func() {
-		for {
-			select {
-			case <-ws.mgr.changed:
-				accts := make([]apiAccount, 0, len(ws.mgr.accounts))
-				for i, a := range ws.mgr.accounts {
-					s := a.snapshot()
-					accts = append(accts, apiAccount{
-						Index:       i,
-						Label:       a.label(),
-						BackendType: a.backendType,
-						Status:      s.status,
-						NeedsLogin:  s.needsLogin,
-					})
-				}
-				select {
-				case events <- sseEvent{Name: "accounts", Data: accts}:
-				default:
-				}
-			case <-ctx.Done():
-				return
-			}
+	// Accounts connect in the background and may reconnect with a new
+	// backend, so subscriptions are reconciled on every tick rather than
+	// taken once. ws.mgr.changed is not used: the agent runtime already
+	// consumes that single-slot channel.
+	subscribed := make(map[int]backend)
+	defer func() {
+		for _, b := range subscribed {
+			b.RemoveSubscriber(subID)
 		}
 	}()
+	var lastAccounts []apiAccount
+	reconcileSubs := func() {
+		for i, a := range ws.mgr.accounts {
+			b := a.snapshot().backend
+			if subscribed[i] == b {
+				continue
+			}
+			if old := subscribed[i]; old != nil {
+				old.RemoveSubscriber(subID)
+				delete(subscribed, i)
+			}
+			if b == nil {
+				continue
+			}
+			subscribed[i] = b
+			go ws.forwardEvents(ctx, i, b, b.AddSubscriber(subID, nil, 128), events)
+		}
+		accts := ws.accountList()
+		if !slices.Equal(accts, lastAccounts) {
+			lastAccounts = accts
+			select {
+			case events <- sseEvent{Name: "accounts", Data: accts}:
+			default:
+			}
+		}
+	}
+	reconcileSubs()
 
+	reconcile := time.NewTicker(2 * time.Second)
+	defer reconcile.Stop()
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
 
@@ -122,12 +93,37 @@ func (ws *webServer) handleSSE(c echo.Context) error {
 			if err := writeSSE(w, ev.Name, ev.Data); err != nil {
 				return nil
 			}
+		case <-reconcile.C:
+			reconcileSubs()
 		case <-ping.C:
 			if err := writeSSE(w, "ping", nil); err != nil {
 				return nil
 			}
 		case <-ctx.Done():
 			return nil
+		}
+	}
+}
+
+func (ws *webServer) forwardEvents(
+	ctx context.Context, accountIdx int, b backend, ch <-chan backendEvent, out chan<- sseEvent,
+) {
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			sseEv := ws.backendEventToSSE(accountIdx, b, ev)
+			if sseEv.Name == "" {
+				continue
+			}
+			select {
+			case out <- sseEv:
+			default:
+			}
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -170,7 +166,7 @@ type sseReactionEvent struct {
 	Reactions []apiMessageReaction `json:"reactions"`
 }
 
-func backendEventToSSE(accountIdx int, ev backendEvent) sseEvent {
+func (ws *webServer) backendEventToSSE(accountIdx int, b backend, ev backendEvent) sseEvent {
 	switch ev.Kind {
 	case "message":
 		if ev.Message == nil {
@@ -181,7 +177,7 @@ func backendEventToSSE(accountIdx int, ev backendEvent) sseEvent {
 			Data: sseMessageEvent{
 				Account: accountIdx,
 				ChatID:  ev.Chat.id,
-				Message: messageToAPI(*ev.Message),
+				Message: ws.apiMessageFor(accountIdx, ev.Chat.id, b, *ev.Message),
 			},
 		}
 	case "edit":
@@ -193,7 +189,7 @@ func backendEventToSSE(accountIdx int, ev backendEvent) sseEvent {
 			Data: sseMessageEvent{
 				Account: accountIdx,
 				ChatID:  ev.Chat.id,
-				Message: messageToAPI(*ev.Message),
+				Message: ws.apiMessageFor(accountIdx, ev.Chat.id, b, *ev.Message),
 			},
 		}
 	case "delete":

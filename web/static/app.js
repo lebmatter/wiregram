@@ -196,12 +196,24 @@ function wiregramInit() {
       return this.chats.filter(c => c.title.toLowerCase().includes(q));
     },
 
+    photoURL(msg) {
+      return '/api/accounts/' + this.accountIdx + '/chats/' + encodeURIComponent(this.selectedChat) +
+        '/photos/' + encodeURIComponent(msg.id);
+    },
+    // Size the box from the known dimensions so the layout doesn't jump
+    // (and scroll-to-bottom stays correct) when the image loads.
+    photoStyle(msg) {
+      const w = msg.photo_w, h = msg.photo_h;
+      const scale = Math.min(1, 320 / w, 360 / h);
+      return 'width:' + Math.round(w * scale) + 'px; aspect-ratio:' + w + ' / ' + h;
+    },
+
     async loadChats() {
       this.selectedChat = null;
       this.messages = [];
       try {
         const raw = await api('GET', '/accounts/' + this.accountIdx + '/chats');
-        this.chats = (raw || []).map(c => ({ ...c, _time: formatTime(c.lastAt), _ini: initials(c.title) }));
+        this.chats = (raw || []).map(c => ({ ...c, _time: formatTime(c.last_at), _ini: initials(c.title) }));
       } catch (_) { this.chats = []; }
     },
     async selectChat(id) {
@@ -237,10 +249,17 @@ function wiregramInit() {
       this.draft = '';
       const savedReply = this.replyTo;
       this.replyTo = null;
+      const chatId = this.selectedChat;
       try {
-        await api('POST',
-          '/accounts/' + this.accountIdx + '/chats/' + encodeURIComponent(this.selectedChat) + '/messages',
+        const sent = await api('POST',
+          '/accounts/' + this.accountIdx + '/chats/' + encodeURIComponent(chatId) + '/messages',
           body);
+        // The SSE echo may arrive first, or never for backends that don't
+        // report your own sends, so add it here too and dedupe by id.
+        if (sent && this.selectedChat === chatId && !this.messages.some(m => m.id === sent.id)) {
+          this.messages.push(enrichMsg(sent));
+          requestAnimationFrame(scrollDown);
+        }
       } catch (_) { this.draft = text; this.replyTo = savedReply; }
     },
   });

@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1001,6 +1002,40 @@ func firstError(errs ...error) error {
 }
 
 func (mb *mmBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
+
+// InlinePhoto accepts single-image posts only. With several attachments
+// the media label is the only place the others are listed, and the web UI
+// hides the label when it shows a photo.
+func (mb *mmBackend) InlinePhoto(msg message) (w, h int, ok bool) {
+	p, isPost := msg.Raw.(mmPost)
+	if !isPost || p.Metadata == nil || len(p.Metadata.Files) != 1 {
+		return 0, 0, false
+	}
+	f := p.Metadata.Files[0]
+	if !strings.HasPrefix(f.MimeType, "image/") {
+		return 0, 0, false
+	}
+	return f.Width, f.Height, f.Width > 0 && f.Height > 0
+}
+
+func (mb *mmBackend) DownloadPhoto(ctx context.Context, msg message, file *os.File) error {
+	if _, _, ok := mb.InlinePhoto(msg); !ok {
+		return fmt.Errorf("this message has no inline photo")
+	}
+	fileID := msg.Raw.(mmPost).Metadata.Files[0].ID
+	resp, err := mb.api(ctx, "GET", "/files/"+url.PathEscape(fileID), nil)
+	if err != nil {
+		return fmt.Errorf("download photo: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("download photo: HTTP %d", resp.StatusCode)
+	}
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return fmt.Errorf("save photo: %w", err)
+	}
+	return nil
+}
 
 func (mb *mmBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
 	type mmUserChoice struct {
