@@ -30,19 +30,19 @@ type agentRecord struct {
 }
 
 type agentChatAssignment struct {
-	BackendType string
-	AccountID   string
-	ChatID      string
+	BackendType string `json:"backend_type"`
+	AccountID   string `json:"account_id"`
+	ChatID      string `json:"chat_id"`
 }
 
 type agentLoggedMessage struct {
-	MessageID    string
-	Sender       string
-	SenderID     string
-	Text         string
-	Timestamp    time.Time
-	Outgoing     bool
-	IsAgentReply bool
+	MessageID    string    `json:"message_id"`
+	Sender       string    `json:"sender"`
+	SenderID     string    `json:"sender_id"`
+	Text         string    `json:"text"`
+	Timestamp    time.Time `json:"timestamp"`
+	Outgoing     bool      `json:"outgoing"`
+	IsAgentReply bool      `json:"is_agent_reply"`
 }
 
 type agentDB struct {
@@ -404,11 +404,11 @@ func (d *agentDB) purgeOldMessages(retentionDays int) (int64, error) {
 // Thread listing for agent UI.
 
 type agentThread struct {
-	BackendType  string
-	AccountID    string
-	ChatID       string
-	LastAt       time.Time
-	MessageCount int
+	BackendType  string    `json:"backend_type"`
+	AccountID    string    `json:"account_id"`
+	ChatID       string    `json:"chat_id"`
+	LastAt       time.Time `json:"last_at"`
+	MessageCount int       `json:"message_count"`
 }
 
 func (d *agentDB) agentThreads(agentID int64) ([]agentThread, error) {

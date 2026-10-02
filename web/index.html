@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wiregram</title>
+  <link rel="stylesheet" href="/static/oat.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+  <script src="/static/alpine.min.js" defer></script>
+  <script src="/static/oat.min.js" defer></script>
+</head>
+<body x-data>
+
+  <!-- Mode tabs -->
+  <header class="mode-tabs">
+    <button :class="{'active': $store.app.mode === 'chat'}"
+            @click="$store.app.mode = 'chat'">Chat</button>
+    <button :class="{'active': $store.app.mode === 'agents'}"
+            @click="$store.app.mode = 'agents'; $store.agents.init()">Agents</button>
+    <div style="flex:1"></div>
+    <button class="icon-btn" title="Accounts"
+            @click="$store.app.showAccounts = true; $store.app.loadAccounts()">&#9881;</button>
+  </header>
+
+  <!-- ==================== Chat mode ==================== -->
+  <div class="app-chat"
+       :class="{'sidebar-open': $store.chat.sidebarOpen, 'hidden': $store.app.mode !== 'chat'}">
+
+    <aside class="sidebar">
+      <header class="sidebar-head">
+        <select x-model="$store.chat.accountIdx"
+                @change="$store.chat.loadChats()">
+          <template x-for="(a, i) in $store.app.accounts" :key="i">
+            <option :value="i" x-text="a.label"></option>
+          </template>
+        </select>
+        <input type="search" class="search" placeholder="Search chats..."
+               x-model="$store.chat.searchQuery">
+      </header>
+      <nav class="chat-list">
+        <template x-for="c in $store.chat.filtered" :key="c.id">
+          <button class="chat-row"
+                  :class="{'active': $store.chat.selectedChat === c.id}"
+                  @click="$store.chat.selectChat(c.id)">
+            <span class="avatar" x-text="c._ini"></span>
+            <span class="chat-copy">
+              <span class="chat-name" x-text="c.title"></span>
+              <span class="chat-preview muted" x-text="c.lastMessage || ''"></span>
+            </span>
+            <span class="chat-side">
+              <span class="chat-time muted" x-text="c._time"></span>
+              <span class="badge" x-show="c.unread > 0" x-text="c.unread"></span>
+            </span>
+          </button>
+        </template>
+        <div class="empty-state" x-show="$store.chat.chats.length === 0"
+             style="padding:32px 12px">
+          <p>No chats loaded.</p>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- Conversation -->
+    <section class="conversation" :class="{'hidden': !$store.chat.selectedChat}">
+      <header class="topbar">
+        <div class="person">
+          <button class="icon-btn menu-btn"
+                  @click="$store.chat.sidebarOpen = !$store.chat.sidebarOpen">&#9776;</button>
+          <strong x-text="$store.chat.currentTitle"></strong>
+        </div>
+      </header>
+
+      <section class="messages" @scroll.debounce.200ms="
+        if ($el.scrollTop < 60) $store.chat.loadOlder()">
+        <div class="loading" x-show="$store.chat.loadingOlder">Loading older...</div>
+        <template x-for="msg in $store.chat.messages" :key="msg.id">
+          <article class="message-row" :class="{'mine': msg.outgoing}">
+            <span class="avatar small" x-text="msg._ini"></span>
+            <div class="message-main">
+              <div class="msg-meta">
+                <template x-if="!msg.outgoing">
+                  <strong x-text="msg.sender"></strong>
+                </template>
+                <span class="muted" x-text="msg._time"></span>
+                <template x-if="msg.outgoing">
+                  <strong>You</strong>
+                </template>
+              </div>
+              <div class="bubble">
+                <div class="media-label" x-show="msg.mediaLabel" x-text="msg.mediaLabel"></div>
+                <span x-text="msg.text"></span>
+              </div>
+              <div class="reaction-row" x-show="msg.reactions && msg.reactions.length">
+                <template x-for="r in (msg.reactions || [])" :key="r.emoji">
+                  <button class="reaction" :class="{'active': r.chosen}"
+                          x-text="r.emoji + ' ' + r.count"></button>
+                </template>
+              </div>
+            </div>
+          </article>
+        </template>
+        <div class="loading" x-show="$store.chat.loading">Loading messages...</div>
+      </section>
+
+      <footer class="composer-wrap">
+        <div class="replying-bar" x-show="$store.chat.replyTo">
+          <span class="replying-text">
+            <strong>Replying to <span x-text="$store.chat.replyTo?.sender || ''"></span></strong>
+          </span>
+          <button class="icon-btn" @click="$store.chat.replyTo = null">&times;</button>
+        </div>
+        <div class="composer">
+          <textarea x-model="$store.chat.draft" rows="1"
+                    placeholder="Write a message..."
+                    @keydown.enter.prevent="$store.chat.send()"
+                    @input="$el.style.height='auto'; $el.style.height=Math.min($el.scrollHeight,150)+'px'"></textarea>
+          <button class="send" @click="$store.chat.send()"
+                  :disabled="!$store.chat.draft.trim()">Send</button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- Empty state -->
+    <div class="empty-state" :class="{'hidden': $store.chat.selectedChat}">
+      <p>Select a conversation to start messaging</p>
+    </div>
+
+    <div class="scrim" @click="$store.chat.sidebarOpen = false"></div>
+  </div>
+
+  <!-- ==================== Agent mode ==================== -->
+  <div class="app-agents" :class="{'hidden': $store.app.mode !== 'agents'}" x-cloak>
+
+    <aside class="sidebar agent-sidebar">
+      <header class="sidebar-head">
+        <div class="agent-tabs">
+          <button :class="{'active': $store.agents.tab === 'agents'}"
+                  @click="$store.agents.tab = 'agents'">Agents</button>
+          <button :class="{'active': $store.agents.tab === 'providers'}"
+                  @click="$store.agents.tab = 'providers'">Providers</button>
+        </div>
+      </header>
+
+      <!-- Agent list -->
+      <nav class="agent-list" x-show="$store.agents.tab === 'agents'">
+        <button class="agent-row" style="justify-content:center; color:var(--chat-accent)"
+                @click="$store.agents.newAgent()">+ New Agent</button>
+        <template x-for="a in $store.agents.agents" :key="a.id">
+          <button class="agent-row"
+                  :class="{'active': $store.agents.editing?.id === a.id && $store.agents.editing?.type === 'agent'}"
+                  @click="$store.agents.editAgent(a)">
+            <span class="agent-row-info">
+              <span class="agent-row-name" x-text="a.name"></span>
+              <span class="agent-row-meta">
+                <span class="mode-badge" :class="a.autoreply ? 'auto' : 'suggest'"
+                      x-text="a.autoreply ? 'auto' : 'suggest'"></span>
+                <span x-show="!a.enabled" style="color:var(--muted-foreground)">disabled</span>
+              </span>
+            </span>
+          </button>
+        </template>
+      </nav>
+
+      <!-- Provider list -->
+      <nav class="agent-list" x-show="$store.agents.tab === 'providers'">
+        <button class="agent-row" style="justify-content:center; color:var(--chat-accent)"
+                @click="$store.agents.newProvider()">+ New Provider</button>
+        <template x-for="p in $store.agents.providers" :key="p.id">
+          <button class="agent-row"
+                  :class="{'active': $store.agents.editing?.id === p.id && $store.agents.editing?.type === 'provider'}"
+                  @click="$store.agents.editProvider(p)">
+            <span class="agent-row-info">
+              <span class="agent-row-name" x-text="p.name"></span>
+              <span class="agent-row-meta" x-text="p.model || p.base_url || p.baseURL"></span>
+            </span>
+          </button>
+        </template>
+      </nav>
+    </aside>
+
+    <!-- Agent/Provider editor -->
+    <section class="agent-editor">
+
+      <!-- Agent editor form -->
+      <div class="editor-form" x-show="$store.agents.editing?.type === 'agent'">
+        <h2 x-text="$store.agents.editing?.isNew ? 'New Agent' : 'Edit Agent'"></h2>
+
+        <div class="field-group">
+          <label>Name</label>
+          <input type="text" x-model="$store.agents.form.name" placeholder="My Agent">
+        </div>
+        <div class="field-group">
+          <label>System Prompt</label>
+          <textarea x-model="$store.agents.form.prompt"
+                    placeholder="You are replying on behalf of the account owner..."></textarea>
+        </div>
+        <div class="field-group">
+          <label>Provider</label>
+          <select x-model="$store.agents.form.provider_id">
+            <template x-for="p in $store.agents.providers" :key="p.id">
+              <option :value="p.id" x-text="p.name + ' (' + (p.model || '') + ')'"></option>
+            </template>
+          </select>
+        </div>
+        <div class="field-group toggle-row">
+          <label style="margin:0">Auto-reply</label>
+          <input type="checkbox" x-model="$store.agents.form.autoreply">
+        </div>
+        <div class="field-group toggle-row">
+          <label style="margin:0">Enabled</label>
+          <input type="checkbox" x-model="$store.agents.form.enabled">
+        </div>
+        <div class="field-group">
+          <label>Retention (days)</label>
+          <input type="number" x-model="$store.agents.form.retention_days" min="1">
+        </div>
+        <div class="field-group">
+          <label>Knowledge Files</label>
+          <textarea x-model="$store.agents.form.knowledge"
+                    placeholder="One file path per line" style="min-height:60px"></textarea>
+          <div class="help">One absolute file path per line (max 64 KB total)</div>
+        </div>
+
+        <div class="editor-actions">
+          <button @click="$store.agents.saveAgent()">Save</button>
+          <button @click="$store.agents.editing = null"
+                  style="background:var(--muted); color:var(--foreground)">Cancel</button>
+          <button x-show="!$store.agents.editing?.isNew"
+                  @click="$store.agents.deleteAgent($store.agents.editing.id)"
+                  style="background:var(--destructive, #dc3545); color:#fff; margin-left:auto">Delete</button>
+        </div>
+      </div>
+
+      <!-- Provider editor form -->
+      <div class="editor-form" x-show="$store.agents.editing?.type === 'provider'">
+        <h2 x-text="$store.agents.editing?.isNew ? 'New Provider' : 'Edit Provider'"></h2>
+
+        <div class="field-group">
+          <label>Name</label>
+          <input type="text" x-model="$store.agents.form.name" placeholder="OpenRouter">
+        </div>
+        <div class="field-group">
+          <label>Base URL</label>
+          <input type="url" x-model="$store.agents.form.base_url"
+                 placeholder="https://openrouter.ai/api/v1">
+        </div>
+        <div class="field-group">
+          <label>API Key Env Var</label>
+          <input type="text" x-model="$store.agents.form.api_key_env"
+                 placeholder="OPENROUTER_API_KEY">
+          <div class="help">Name of the environment variable holding the API key (not the key itself)</div>
+        </div>
+        <div class="field-group">
+          <label>Model</label>
+          <input type="text" x-model="$store.agents.form.model"
+                 placeholder="anthropic/claude-sonnet-4">
+        </div>
+
+        <div class="editor-actions">
+          <button @click="$store.agents.saveProvider()">Save</button>
+          <button @click="$store.agents.editing = null"
+                  style="background:var(--muted); color:var(--foreground)">Cancel</button>
+          <button x-show="!$store.agents.editing?.isNew"
+                  @click="$store.agents.deleteProvider($store.agents.editing.id)"
+                  style="background:var(--destructive, #dc3545); color:#fff; margin-left:auto">Delete</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" x-show="!$store.agents.editing">
+        <p>Select an agent or provider to edit, or create a new one</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ==================== Account modal ==================== -->
+  <div class="modal-backdrop" :class="{'open': $store.app.showAccounts}"
+       @click.self="$store.app.showAccounts = false">
+    <div class="modal">
+      <h2>Accounts</h2>
+      <template x-for="(a, i) in $store.app.accounts" :key="i">
+        <div class="account-item">
+          <span class="account-label" x-text="a.label"></span>
+          <span class="account-status" x-text="a.status"></span>
+        </div>
+      </template>
+      <div x-show="$store.app.accounts.length === 0"
+           style="padding:16px 0; color:var(--muted-foreground); text-align:center">
+        No accounts configured.
+      </div>
+      <div style="margin-top:16px; text-align:right">
+        <button @click="$store.app.showAccounts = false"
+                style="background:var(--muted); color:var(--foreground)">Close</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
