@@ -1,4 +1,4 @@
-# Wiregram
+# <img src="web/static/wiregram-logo.svg" alt="Wiregram" width="360">
 
 A minimal multi-backend chat client for the terminal, written in Go. Supports
 Telegram, Mattermost, Matrix, and WhatsApp. BubbleTea TUI with on-demand Kitty

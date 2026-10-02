@@ -14,6 +14,7 @@
 
   <!-- Mode tabs -->
   <header class="mode-tabs">
+    <img class="logo" src="/static/wiregram-logo.svg" alt="Wiregram">
     <button :class="{'active': $store.app.mode === 'chat'}"
             @click="$store.app.mode = 'chat'">Chat</button>
     <button :class="{'active': $store.app.mode === 'agents'}"

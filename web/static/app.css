@@ -30,6 +30,11 @@ button, input, textarea, select { font: inherit; }
     flex: 0 0 auto;
 }
 
+.mode-tabs .logo {
+    height: 20px;
+    margin-right: 12px;
+}
+
 .mode-tabs button {
     height: auto;
     padding: 6px 16px;
