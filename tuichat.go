@@ -76,8 +76,6 @@ type chatViewModel struct {
 	autoLock     bool
 	lockDeadline time.Time
 
-	thumbs *thumbCache
-
 	width, height int
 }
 
@@ -141,10 +139,6 @@ type chatSaveResult struct {
 	filename string
 	err      error
 }
-type thumbnailReady struct {
-	msgID    string
-	rendered string
-}
 type chatSearchResult struct {
 	messages []message
 	err      error
@@ -174,7 +168,6 @@ func newChatViewModel(ctx context.Context, b backend, entry chatEntry, histories
 		changedMessages: make(map[string]bool),
 		input:           ti,
 		sends:           make(chan chatOutgoing),
-		thumbs:          newThumbCache(100),
 		autoLock:        b.AutoLockEnabled(),
 		width:           w,
 		height:          h,
@@ -482,11 +475,6 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		}
 		return m, m.lockTickCmd()
 
-	case thumbnailReady:
-		if msg.rendered != "" {
-			m.thumbs.put(m.b.Name()+":"+msg.msgID, msg.rendered)
-		}
-
 	case mediaReady:
 		return m, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
 			if msg.cleanup != nil {
@@ -546,14 +534,10 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 		m.seen[msg.ID] = true
 	}
 	m.reads = newGenericReadReporter(m.b, m.entry)
-	cmds := []tea.Cmd{
+	return m, tea.Batch(
 		m.listenBackendChat(),
 		m.startReadTimer(),
-	}
-	if cmd := m.fetchSelectedThumbnail(); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	return m, tea.Batch(cmds...)
+	)
 }
 
 func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel, tea.Cmd) {
@@ -663,18 +647,12 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		}
 		if m.selected > 0 {
 			m.selected--
-			if cmd := m.fetchSelectedThumbnail(); cmd != nil {
-				return m, cmd
-			}
 		} else if !m.historyExhausted && len(m.messages) > 0 {
 			return m, m.loadOlderHistory()
 		}
 	case "down":
 		if m.selected+1 < len(m.messages) {
 			m.selected++
-			if cmd := m.fetchSelectedThumbnail(); cmd != nil {
-				return m, cmd
-			}
 		}
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
@@ -1130,37 +1108,6 @@ func (m chatViewModel) doSearch() tea.Cmd {
 	}
 }
 
-func (m chatViewModel) fetchSelectedThumbnail() tea.Cmd {
-	if m.selected < 0 || m.selected >= len(m.messages) {
-		return nil
-	}
-	return m.fetchThumbnailCmd(m.messages[m.selected])
-}
-
-func (m chatViewModel) fetchThumbnailCmd(msg message) tea.Cmd {
-	if !thumbEnabled || !msg.HasThumbnail {
-		return nil
-	}
-	key := m.b.Name() + ":" + msg.ID
-	if _, ok := m.thumbs.get(key); ok {
-		return nil
-	}
-	ctx := m.ctx
-	b := m.b
-	msgID := msg.ID
-	return func() tea.Msg {
-		data, err := b.ThumbnailData(ctx, msg)
-		if err != nil || len(data) == 0 {
-			return thumbnailReady{msgID, ""}
-		}
-		lines := renderThumbnail(data, 40, 10)
-		if len(lines) == 0 {
-			return thumbnailReady{msgID, ""}
-		}
-		return thumbnailReady{msgID, strings.Join(lines, "\n")}
-	}
-}
-
 func (m chatViewModel) openMediaCmd(sel message, player string) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
@@ -1213,9 +1160,9 @@ func (m chatViewModel) View() string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, m.replying, m.aiStatus, m.typing, m.thumbs)
+		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, m.replying, m.aiStatus, m.typing)
 	} else {
-		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.replying, m.aiStatus, m.typing, m.thumbs)
+		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.replying, m.aiStatus, m.typing)
 	}
 
 	var b strings.Builder

@@ -837,27 +837,18 @@ func (mx *mxBackend) eventToMessage(ev mxTimelineEvent) message {
 		}
 	}
 
-	hasThumbnail := false
-	if ev.Type != "m.room.encrypted" {
-		msgtype, _ := ev.Content["msgtype"].(string)
-		if msgtype == "m.image" {
-			hasThumbnail = true
-		}
-	}
-
 	return message{
-		ID:           ev.EventID,
-		Sender:       sender,
-		SenderID:     ev.Sender,
-		Text:         text,
-		Timestamp:    time.UnixMilli(ev.OriginServerTS).Local(),
-		Outgoing:     outgoing,
-		EditDate:     editDate,
-		ReplyToID:    replyToID,
-		MediaLabel:   mediaLabel,
-		HasThumbnail: hasThumbnail,
-		Multiline:    multiline,
-		Raw:          ev,
+		ID:         ev.EventID,
+		Sender:     sender,
+		SenderID:   ev.Sender,
+		Text:       text,
+		Timestamp:  time.UnixMilli(ev.OriginServerTS).Local(),
+		Outgoing:   outgoing,
+		EditDate:   editDate,
+		ReplyToID:  replyToID,
+		MediaLabel: mediaLabel,
+		Multiline:  multiline,
+		Raw:        ev,
 	}
 }
 
@@ -1292,55 +1283,6 @@ func (mx *mxBackend) CachedUnread(ch chatEntry) int {
 func (mx *mxBackend) InboxPosition(ch chatEntry) string { return "" }
 
 // Media.
-
-func (mx *mxBackend) ThumbnailData(ctx context.Context, msg message) ([]byte, error) {
-	ev, ok := msg.Raw.(mxTimelineEvent)
-	if !ok {
-		return nil, nil
-	}
-	msgtype, _ := ev.Content["msgtype"].(string)
-	if msgtype != "m.image" {
-		return nil, nil
-	}
-	// Prefer thumbnail_url from info, fall back to main url.
-	thumbURL := ""
-	if info, _ := ev.Content["info"].(map[string]any); info != nil {
-		thumbURL, _ = info["thumbnail_url"].(string)
-	}
-	if thumbURL == "" {
-		thumbURL, _ = ev.Content["url"].(string)
-	}
-	if thumbURL == "" || !strings.HasPrefix(thumbURL, "mxc://") {
-		return nil, nil
-	}
-	data, err := mx.downloadMXCBytes(ctx, thumbURL)
-	if err != nil {
-		return nil, fmt.Errorf("download thumbnail: %w", err)
-	}
-	return data, nil
-}
-
-func (mx *mxBackend) downloadMXCBytes(ctx context.Context, mxcURL string) ([]byte, error) {
-	parts := strings.SplitN(mxcURL[6:], "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid mxc URL: %s", mxcURL)
-	}
-	downloadURL := mx.homeserver + "/_matrix/media/v3/download/" + parts[0] + "/" + parts[1]
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+mx.accessToken)
-	resp, err := mx.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
-}
 
 func (mx *mxBackend) MediaPlayable(msg message) bool {
 	ev, ok := msg.Raw.(mxTimelineEvent)
