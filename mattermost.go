@@ -471,18 +471,19 @@ func (mb *mmBackend) postToMessage(ctx context.Context, p mmPost) message {
 	}
 
 	return message{
-		ID:         p.ID,
-		Sender:     sender,
-		SenderID:   senderID,
-		Text:       p.Message,
-		Timestamp:  time.UnixMilli(p.CreateAt).Local(),
-		Outgoing:   outgoing,
-		Pinned:     p.IsPinned,
-		EditDate:   editDate,
-		ReplyToID:  p.RootID,
-		MediaLabel: mediaLabel,
-		Multiline:  strings.Contains(p.Message, "\n"),
-		Raw:        p,
+		ID:           p.ID,
+		Sender:       sender,
+		SenderID:     senderID,
+		Text:         p.Message,
+		Timestamp:    time.UnixMilli(p.CreateAt).Local(),
+		Outgoing:     outgoing,
+		Pinned:       p.IsPinned,
+		EditDate:     editDate,
+		ReplyToID:    p.RootID,
+		MediaLabel:   mediaLabel,
+		HasThumbnail: mmHasThumbnail(p),
+		Multiline:    strings.Contains(p.Message, "\n"),
+		Raw:          p,
 	}
 }
 
@@ -918,6 +919,37 @@ func (mb *mmBackend) InboxPosition(ch chatEntry) string {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 	return mb.lastRead[ch.ID.id]
+}
+
+func mmHasThumbnail(p mmPost) bool {
+	if p.Metadata == nil {
+		return false
+	}
+	for _, f := range p.Metadata.Files {
+		if strings.HasPrefix(f.MimeType, "image/") {
+			return true
+		}
+	}
+	return false
+}
+
+func (mb *mmBackend) ThumbnailData(ctx context.Context, msg message) ([]byte, error) {
+	p, ok := msg.Raw.(mmPost)
+	if !ok || p.Metadata == nil {
+		return nil, nil
+	}
+	for _, f := range p.Metadata.Files {
+		if !strings.HasPrefix(f.MimeType, "image/") {
+			continue
+		}
+		resp, err := mb.api(ctx, "GET", "/files/"+f.ID+"/thumbnail", nil)
+		if err != nil {
+			return nil, fmt.Errorf("download thumbnail: %w", err)
+		}
+		defer resp.Body.Close()
+		return io.ReadAll(resp.Body)
+	}
+	return nil, nil
 }
 
 func (mb *mmBackend) MediaPlayable(msg message) bool { return false }

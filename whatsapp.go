@@ -978,6 +978,38 @@ func (wa *waBackend) InboxPosition(ch chatEntry) string { return "" }
 
 // Media.
 
+func waHasThumbnail(m *waE2E.Message) bool {
+	if m == nil {
+		return false
+	}
+	if img := m.GetImageMessage(); img != nil && len(img.GetJPEGThumbnail()) > 0 {
+		return true
+	}
+	if stk := m.GetStickerMessage(); stk != nil && len(stk.GetPngThumbnail()) > 0 {
+		return true
+	}
+	return false
+}
+
+func (wa *waBackend) ThumbnailData(_ context.Context, msg message) ([]byte, error) {
+	evt, ok := msg.Raw.(*events.Message)
+	if !ok || evt.Message == nil {
+		return nil, nil
+	}
+	m := evt.Message
+	if img := m.GetImageMessage(); img != nil {
+		if thumb := img.GetJPEGThumbnail(); len(thumb) > 0 {
+			return thumb, nil
+		}
+	}
+	if stk := m.GetStickerMessage(); stk != nil {
+		if thumb := stk.GetPngThumbnail(); len(thumb) > 0 {
+			return thumb, nil
+		}
+	}
+	return nil, nil
+}
+
 func (wa *waBackend) MediaPlayable(msg message) bool {
 	evt, ok := msg.Raw.(*events.Message)
 	if !ok {
@@ -1409,17 +1441,18 @@ func (wa *waBackend) eventMessageToMessage(evt *events.Message) message {
 	}
 	text, mediaLabel, multiline := wa.extractMessageContent(evt.Message)
 	return message{
-		ID:         info.ID,
-		Sender:     senderName,
-		SenderID:   info.Sender.String(),
-		Text:       text,
-		Timestamp:  info.Timestamp,
-		Outgoing:   outgoing,
-		MediaLabel: mediaLabel,
-		Multiline:  multiline,
-		ReplyToID:  extractReplyID(evt.Message),
-		Forwarded:  isForwarded(evt.Message),
-		Raw:        evt,
+		ID:           info.ID,
+		Sender:       senderName,
+		SenderID:     info.Sender.String(),
+		Text:         text,
+		Timestamp:    info.Timestamp,
+		Outgoing:     outgoing,
+		MediaLabel:   mediaLabel,
+		HasThumbnail: waHasThumbnail(evt.Message),
+		Multiline:    multiline,
+		ReplyToID:    extractReplyID(evt.Message),
+		Forwarded:    isForwarded(evt.Message),
+		Raw:          evt,
 	}
 }
 

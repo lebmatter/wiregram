@@ -112,6 +112,7 @@ func run() (result error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return fmt.Errorf("wiregram needs an interactive terminal")
 	}
+	initThumbnails()
 	prompt := func(label string, masked bool) (string, error) {
 		fmt.Fprint(os.Stdout, label)
 		if masked {
@@ -726,6 +727,5 @@ func withLegacyTerminal(ctx context.Context, fn func(t *terminal)) error {
 	fmt.Fprint(os.Stdout, "\033[2J\033[3J\033[H")
 	return term.Restore(int(os.Stdin.Fd()), state)
 }
-
 
 func cleanError(err error) string { return strings.TrimSpace(plain(err.Error())) }

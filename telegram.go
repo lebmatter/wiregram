@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gotd/td/tg"
@@ -101,21 +102,22 @@ func tgToMessage(c *client, m *tg.Message) message {
 	}
 
 	return message{
-		ID:         strconv.Itoa(m.ID),
-		Sender:     sender,
-		SenderID:   senderID,
-		Text:       m.Message,
-		Timestamp:  time.Unix(int64(m.Date), 0).Local(),
-		Outgoing:   m.Out,
-		Pinned:     m.Pinned,
-		EditDate:   editDate,
-		ReplyToID:  tgReplyToID(m),
-		Forwarded:  forwarded,
-		ViaBot:     m.ViaBotID != 0,
-		MediaLabel: formatMedia(m.Media),
-		Multiline:  len(m.Message) > 0 && (m.Message[0] == '\n' || m.Message[len(m.Message)-1] == '\n' || containsNewline(m.Message)),
-		Reactions:  reactions,
-		Raw:        m,
+		ID:           strconv.Itoa(m.ID),
+		Sender:       sender,
+		SenderID:     senderID,
+		Text:         m.Message,
+		Timestamp:    time.Unix(int64(m.Date), 0).Local(),
+		Outgoing:     m.Out,
+		Pinned:       m.Pinned,
+		EditDate:     editDate,
+		ReplyToID:    tgReplyToID(m),
+		Forwarded:    forwarded,
+		ViaBot:       m.ViaBotID != 0,
+		MediaLabel:   formatMedia(m.Media),
+		HasThumbnail: tgHasThumbnail(m),
+		Multiline:    len(m.Message) > 0 && (m.Message[0] == '\n' || m.Message[len(m.Message)-1] == '\n' || containsNewline(m.Message)),
+		Reactions:    reactions,
+		Raw:          m,
 	}
 }
 
@@ -374,6 +376,111 @@ func (tb *telegramBackend) CachedUnread(ch chatEntry) int {
 func (tb *telegramBackend) InboxPosition(ch chatEntry) string {
 	state := tb.c.readState(entryToChat(ch).key)
 	return strconv.Itoa(state.inbox)
+}
+
+func tgHasThumbnail(m *tg.Message) bool {
+	switch media := m.Media.(type) {
+	case *tg.MessageMediaPhoto:
+		_, ok := media.Photo.(*tg.Photo)
+		return ok
+	case *tg.MessageMediaDocument:
+		d, ok := media.Document.(*tg.Document)
+		if !ok {
+			return false
+		}
+		return strings.HasPrefix(d.MimeType, "image/")
+	}
+	return false
+}
+
+func thumbnailAttachment(m *tg.Message) (attachment, bool) {
+	switch media := m.Media.(type) {
+	case *tg.MessageMediaPhoto:
+		photo, ok := media.Photo.(*tg.Photo)
+		if !ok {
+			return attachment{}, false
+		}
+		// Pick the smallest reasonable size (type "m" ≤320px, or "s" ≤100px).
+		preferred := []string{"m", "s", "x", "y"}
+		for _, want := range preferred {
+			for _, value := range photo.Sizes {
+				var kind string
+				switch s := value.(type) {
+				case *tg.PhotoSize:
+					kind = s.Type
+				case *tg.PhotoSizeProgressive:
+					kind = s.Type
+				case *tg.PhotoCachedSize:
+					kind = s.Type
+				}
+				if kind == want {
+					return attachment{
+						location: &tg.InputPhotoFileLocation{
+							ID: photo.ID, AccessHash: photo.AccessHash,
+							FileReference: photo.FileReference, ThumbSize: kind,
+						},
+						dc: photo.DCID,
+					}, true
+				}
+			}
+		}
+	case *tg.MessageMediaDocument:
+		d, ok := media.Document.(*tg.Document)
+		if !ok || !strings.HasPrefix(d.MimeType, "image/") {
+			return attachment{}, false
+		}
+		// Use the document's own thumbnail if available.
+		for _, thumb := range d.Thumbs {
+			var kind string
+			switch s := thumb.(type) {
+			case *tg.PhotoSize:
+				kind = s.Type
+			case *tg.PhotoCachedSize:
+				kind = s.Type
+			}
+			if kind != "" {
+				return attachment{
+					location: &tg.InputDocumentFileLocation{
+						ID: d.ID, AccessHash: d.AccessHash,
+						FileReference: d.FileReference, ThumbSize: kind,
+					},
+					dc: d.DCID,
+				}, true
+			}
+		}
+	}
+	return attachment{}, false
+}
+
+func (tb *telegramBackend) ThumbnailData(ctx context.Context, msg message) ([]byte, error) {
+	m, ok := msg.Raw.(*tg.Message)
+	if !ok {
+		return nil, nil
+	}
+	a, ok := thumbnailAttachment(m)
+	if !ok {
+		return nil, nil
+	}
+	dir, err := os.MkdirTemp("", "wiregram-thumb-")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "thumb")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("create temp file: %w", err)
+	}
+	dlErr := tb.c.downloadMedia(ctx, a, file)
+	closeErr := file.Close()
+	if err := errors.Join(dlErr, closeErr); err != nil {
+		return nil, fmt.Errorf("download thumbnail: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read thumbnail: %w", err)
+	}
+	return data, nil
 }
 
 func (tb *telegramBackend) MediaPlayable(msg message) bool {

@@ -232,9 +232,9 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 		var readID string
 		if privateMode && len(messages) > 0 {
 			last := len(messages) - 1
-			lines, readID = genericSelectedLines(b, messages[last:], entry, 0, changedMessages, replying, status, b.IsTyping())
+			lines, readID = genericSelectedLines(b, messages[last:], entry, 0, changedMessages, replying, status, b.IsTyping(), nil)
 		} else {
-			lines, readID = genericSelectedLines(b, messages, entry, selected, changedMessages, replying, status, b.IsTyping())
+			lines, readID = genericSelectedLines(b, messages, entry, selected, changedMessages, replying, status, b.IsTyping(), nil)
 		}
 		t.unlock(lines)
 		reads.observe(readID)
@@ -1301,7 +1301,7 @@ func genericSearchResultLines(b backend, results []message, selected int, entry 
 }
 
 // Generic selected lines rendering.
-func genericSelectedLines(b backend, messages []message, entry chatEntry, selected int, changed map[string]bool, replying *message, status aiStatus, typing bool) ([]string, string) {
+func genericSelectedLines(b backend, messages []message, entry chatEntry, selected int, changed map[string]bool, replying *message, status aiStatus, typing bool, tc *thumbCache) ([]string, string) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols < 4 || rows < 4 {
 		cols, rows = 80, 24
@@ -1333,7 +1333,19 @@ func genericSelectedLines(b backend, messages []message, entry chatEntry, select
 			}
 		}
 		indent := displayWidth(marker) + msgPrefixWidth
-		return wrapLineIndent(marker+genericMessageLine(messages[i], entry, byID), lineWidth, indent)
+		lines := wrapLineIndent(marker+genericMessageLine(messages[i], entry, byID), lineWidth, indent)
+		if i == selected && messages[i].HasThumbnail && tc != nil {
+			key := b.Name() + ":" + messages[i].ID
+			if rendered, ok := tc.get(key); ok && rendered != "" {
+				pad := strings.Repeat(" ", indent)
+				for _, tl := range strings.Split(rendered, "\n") {
+					if tl != "" {
+						lines = append(lines, pad+tl)
+					}
+				}
+			}
+		}
+		return lines
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines := []string{}
@@ -1618,18 +1630,41 @@ func wrapLineIndent(text string, width int, indent int) []string {
 
 func displayWidth(text string) int {
 	width := 0
-	inEscape := false
+	inCSI := false
+	inString := false // APC (\033_), OSC (\033]), DCS (\033P)
+	prevEsc := false
 	for _, r := range text {
-		if r == '\033' {
-			inEscape = true
+		if inString {
+			if prevEsc && r == '\\' {
+				inString = false
+				prevEsc = false
+				continue
+			}
+			if r == '\007' {
+				inString = false
+				continue
+			}
+			prevEsc = r == '\033'
 			continue
 		}
-		if inEscape {
+		if r == '\033' {
+			inCSI = true
+			prevEsc = true
+			continue
+		}
+		if inCSI {
+			prevEsc = false
+			if r == '_' || r == ']' || r == 'P' {
+				inString = true
+				inCSI = false
+				continue
+			}
 			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
+				inCSI = false
 			}
 			continue
 		}
+		prevEsc = false
 		width += runeWidth(r)
 	}
 	return width
@@ -1640,26 +1675,51 @@ func takeCells(text string, limit int) (string, string) {
 		limit = 1
 	}
 	used, end := 0, 0
-	inEscape := false
+	inCSI := false
+	inString := false
+	prevEsc := false
 	for index, r := range text {
-		if r == '\033' {
-			inEscape = true
-			end = index + len(string(r))
+		rLen := len(string(r))
+		if inString {
+			end = index + rLen
+			if prevEsc && r == '\\' {
+				inString = false
+				prevEsc = false
+				continue
+			}
+			if r == '\007' {
+				inString = false
+				continue
+			}
+			prevEsc = r == '\033'
 			continue
 		}
-		if inEscape {
-			end = index + len(string(r))
+		if r == '\033' {
+			inCSI = true
+			prevEsc = true
+			end = index + rLen
+			continue
+		}
+		if inCSI {
+			prevEsc = false
+			end = index + rLen
+			if r == '_' || r == ']' || r == 'P' {
+				inString = true
+				inCSI = false
+				continue
+			}
 			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
+				inCSI = false
 			}
 			continue
 		}
+		prevEsc = false
 		cells := runeWidth(r)
 		if used > 0 && used+cells > limit {
 			break
 		}
 		used += cells
-		end = index + len(string(r))
+		end = index + rLen
 	}
 	return text[:end], text[end:]
 }
@@ -1679,20 +1739,44 @@ func runeWidth(r rune) int {
 func clipLine(text string, width int) string {
 	var out strings.Builder
 	used := 0
-	inEscape := false
+	inCSI := false
+	inString := false
+	prevEsc := false
 	for _, r := range text {
+		if inString {
+			out.WriteRune(r)
+			if prevEsc && r == '\\' {
+				inString = false
+				prevEsc = false
+				continue
+			}
+			if r == '\007' {
+				inString = false
+				continue
+			}
+			prevEsc = r == '\033'
+			continue
+		}
 		if r == '\033' {
-			inEscape = true
+			inCSI = true
+			prevEsc = true
 			out.WriteRune(r)
 			continue
 		}
-		if inEscape {
+		if inCSI {
+			prevEsc = false
 			out.WriteRune(r)
+			if r == '_' || r == ']' || r == 'P' {
+				inString = true
+				inCSI = false
+				continue
+			}
 			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
+				inCSI = false
 			}
 			continue
 		}
+		prevEsc = false
 		cells := runeWidth(r)
 		if used+cells > width {
 			break

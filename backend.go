@@ -33,21 +33,22 @@ type forwardReq struct {
 func (forwardReq) Error() string { return "forward message" }
 
 type message struct {
-	ID         string
-	Sender     string
-	SenderID   string
-	Text       string
-	Timestamp  time.Time
-	Outgoing   bool
-	Pinned     bool
-	EditDate   int
-	ReplyToID  string
-	Forwarded  bool
-	ViaBot     bool
-	MediaLabel string
-	Multiline  bool
-	Reactions  []messageReaction
-	Raw        any
+	ID           string
+	Sender       string
+	SenderID     string
+	Text         string
+	Timestamp    time.Time
+	Outgoing     bool
+	Pinned       bool
+	EditDate     int
+	ReplyToID    string
+	Forwarded    bool
+	ViaBot       bool
+	MediaLabel   string
+	HasThumbnail bool
+	Multiline    bool
+	Reactions    []messageReaction
+	Raw          any
 }
 
 type messageReaction struct {
@@ -131,6 +132,7 @@ type backend interface {
 	InboxPosition(ch chatEntry) string
 
 	// Media
+	ThumbnailData(ctx context.Context, msg message) ([]byte, error)
 	MediaPlayable(msg message) bool
 	PlayMedia(ctx context.Context, t *terminal, msg message, player string) error
 	MediaExec(ctx context.Context, msg message, player string) (cmd *exec.Cmd, cleanup func(), err error)
