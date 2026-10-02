@@ -1,3 +1,8 @@
+try {
+  const saved = localStorage.getItem('wiregram-theme');
+  if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+} catch (_) {}
+
 function wiregramInit() {
   let csrfToken = '';
   let sse = null;
@@ -151,6 +156,12 @@ function wiregramInit() {
     accounts: [],
     suggestions: [],
     showAccounts: false,
+    theme: document.documentElement.dataset.theme,
+    toggleTheme() {
+      this.theme = this.theme === 'light' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = this.theme;
+      try { localStorage.setItem('wiregram-theme', this.theme); } catch (_) {}
+    },
     async init() {
       try { csrfToken = (await api('GET', '/session')).csrf; } catch (_) {}
       await this.loadAccounts();

@@ -1,14 +1,36 @@
 [x-cloak] { display: none !important; }
 
+/* Slate neutrals with a single teal accent, overriding oat's zinc defaults. */
 :root {
-    --chat-own: light-dark(#edf5ff, #1c2a3d);
-    --chat-own-border: light-dark(#d8e6f8, #2b4160);
-    --chat-accent: light-dark(#2166d1, #7fb0ff);
-    --chat-online: light-dark(#1f9d55, #4fc27a);
-    --chat-unread: light-dark(#2166d1, #3b82f6);
+    --background: light-dark(#ffffff, #0f1419);
+    --foreground: light-dark(#151a21, #e6e9ee);
+    --card: light-dark(#ffffff, #161c23);
+    --card-foreground: var(--foreground);
+    --primary: light-dark(#0d7d74, #3cc7b8);
+    --primary-foreground: light-dark(#ffffff, #06201d);
+    --secondary: light-dark(#eef1f4, #1e252e);
+    --secondary-foreground: var(--foreground);
+    --muted: light-dark(#eef1f4, #1e252e);
+    --muted-foreground: light-dark(#5f6b7a, #94a0b0);
+    --faint: light-dark(#f7f8fa, #131920);
+    --faint-foreground: light-dark(#97a1ae, #5f6b7a);
+    --accent: light-dark(#e8ecf0, #232b35);
+    --border: light-dark(#dde2e8, #2a333e);
+    --input: light-dark(#cfd6de, #36404c);
+    --ring: var(--primary);
+
+    --chat-own: light-dark(#e3f4f1, #12302d);
+    --chat-own-border: light-dark(#c4e6e0, #1d4842);
+    --chat-accent: var(--primary);
+    --chat-online: var(--success);
+    --chat-unread: var(--primary);
     --sidebar-w: 280px;
     --suggestion-w: 300px;
 }
+
+/* oat colors come from light-dark(), so pinning color-scheme picks the theme. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 html, body {
     height: 100%;
@@ -230,7 +252,7 @@ body {
     padding: 0 6px;
     border-radius: 999px;
     background: var(--chat-unread);
-    color: #fff;
+    color: var(--primary-foreground);
     display: grid;
     place-items: center;
     font-size: 11px;
@@ -625,7 +647,7 @@ body {
     text-transform: uppercase;
 }
 
-.mode-badge.auto { background: var(--chat-accent); color: #fff; }
+.mode-badge.auto { background: var(--chat-accent); color: var(--primary-foreground); }
 .mode-badge.suggest { background: var(--muted); color: var(--foreground); }
 
 .agent-editor {

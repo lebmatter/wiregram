@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -20,6 +20,11 @@
     <button :class="{'active': $store.app.mode === 'agents'}"
             @click="$store.app.mode = 'agents'; $store.agents.init()">Agents</button>
     <div style="flex:1"></div>
+    <button class="icon-btn theme-toggle"
+            :data-tooltip="$store.app.theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'"
+            :aria-label="$store.app.theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'"
+            @click="$store.app.toggleTheme()"
+            x-text="$store.app.theme === 'light' ? '☾' : '☀'"></button>
     <button class="icon-btn" title="Accounts"
             @click="$store.app.showAccounts = true; $store.app.loadAccounts()">&#9881;</button>
   </header>
@@ -229,7 +234,7 @@
                   style="background:var(--muted); color:var(--foreground)">Cancel</button>
           <button x-show="!$store.agents.editing?.isNew"
                   @click="$store.agents.deleteAgent($store.agents.editing.id)"
-                  style="background:var(--destructive, #dc3545); color:#fff; margin-left:auto">Delete</button>
+                  style="background:var(--danger); color:var(--danger-foreground); margin-left:auto">Delete</button>
         </div>
       </div>
 
@@ -264,7 +269,7 @@
                   style="background:var(--muted); color:var(--foreground)">Cancel</button>
           <button x-show="!$store.agents.editing?.isNew"
                   @click="$store.agents.deleteProvider($store.agents.editing.id)"
-                  style="background:var(--destructive, #dc3545); color:#fff; margin-left:auto">Delete</button>
+                  style="background:var(--danger); color:var(--danger-foreground); margin-left:auto">Delete</button>
         </div>
       </div>
 
