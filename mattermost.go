@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -923,6 +924,10 @@ func (mb *mmBackend) MediaPlayable(msg message) bool { return false }
 
 func (mb *mmBackend) PlayMedia(ctx context.Context, t *terminal, msg message, player string) error {
 	return fmt.Errorf("media playback is not supported on Mattermost")
+}
+
+func (mb *mmBackend) MediaExec(ctx context.Context, msg message, player string) (*exec.Cmd, func(), error) {
+	return nil, nil, fmt.Errorf("media playback is not supported on Mattermost")
 }
 
 func (mb *mmBackend) MediaSaveable(msg message) (string, bool) {

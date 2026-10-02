@@ -37,12 +37,15 @@ adding a test framework.
 
 These are project constraints, not suggestions:
 
-- **No new dependencies** beyond the approved set: gotd/td, readline,
-  x/term, x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow, and
-  modernc.org/sqlite. Standard library for everything else — no color,
-  logging, or CLI libraries.
+- **No new dependencies** beyond the approved set: gotd/td,
+  x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow,
+  modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
+  and charm.land/bubbles/v2. Standard library for everything else — no
+  logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
-- **No TUI frameworks** (bubbletea, tview, tcell).
+- **No TUI frameworks** other than charm.land/bubbletea/v2 and its
+  companion libraries (lipgloss, bubbles). tview and tcell remain
+  prohibited.
 - **YAGNI.** Build what is asked for and nothing more.
 - **No panics.** Wrap and return errors: `fmt.Errorf("context: %w", err)`.
   Never a bare string error.
@@ -55,10 +58,9 @@ These are project constraints, not suggestions:
 
 ## Display conventions
 
-- Plain text only. No bold. The allowed escapes are `\033[2J`
-  (clear), `\033[H` (home), `\033[K` (clear line), and `\033[7m`/`\033[0m`.
-  ANSI color escapes are used only for nick coloring in group/channel chats.
-  Kitty graphics sequences are used only by the media viewer.
+- The UI is a BubbleTea TUI styled with lipgloss. Nick coloring adapts
+  to terminal color depth via termenv. Kitty graphics sequences are
+  used only by the media viewer (mpv via `tea.Exec`).
 - `>` marks the selected row in lists and the selected message in a chat.
 - Messages render as `[HH:MM] <sender> text` with a fixed-width nick column;
   the user is always `you`.

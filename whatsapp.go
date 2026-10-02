@@ -1066,6 +1066,44 @@ func (wa *waBackend) PlayMedia(ctx context.Context, t *terminal, msg message, pl
 	return nil
 }
 
+func (wa *waBackend) MediaExec(ctx context.Context, msg message, player string) (*exec.Cmd, func(), error) {
+	evt, ok := msg.Raw.(*events.Message)
+	if !ok {
+		return nil, nil, fmt.Errorf("this message has no playable media")
+	}
+	var dl whatsmeow.DownloadableMessage
+	var filename string
+	var isAudio bool
+	m := evt.Message
+	switch {
+	case m.GetImageMessage() != nil:
+		dl, filename = m.GetImageMessage(), "image.jpg"
+	case m.GetVideoMessage() != nil:
+		dl, filename = m.GetVideoMessage(), "video.mp4"
+	case m.GetAudioMessage() != nil:
+		dl, filename, isAudio = m.GetAudioMessage(), "audio.ogg", true
+	case m.GetStickerMessage() != nil:
+		dl, filename = m.GetStickerMessage(), "sticker.webp"
+	default:
+		return nil, nil, fmt.Errorf("this message has no playable media")
+	}
+	data, err := wa.client.Download(ctx, dl)
+	if err != nil {
+		return nil, nil, fmt.Errorf("download media: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp("", "wiregram-wa-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) }
+	dest := filepath.Join(tmpDir, filename)
+	if err := os.WriteFile(dest, data, 0600); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("write media file: %w", err)
+	}
+	return mpvCmd(ctx, player, isAudio, dest), cleanup, nil
+}
+
 func (wa *waBackend) MediaSaveable(msg message) (string, bool) {
 	evt, ok := msg.Raw.(*events.Message)
 	if !ok {

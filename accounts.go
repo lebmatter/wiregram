@@ -15,7 +15,6 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
 	"go.mau.fi/whatsmeow/types"
-	"golang.org/x/term"
 )
 
 type accountIdentity struct {
@@ -353,21 +352,6 @@ func (m *accountManager) addWhatsApp() (*account, error) {
 	return a, nil
 }
 
-func (m *accountManager) promptMatrix(ctx context.Context, t *terminal) (*account, error) {
-	serverURL, err := t.prompt(ctx, "Matrix homeserver URL: ", false)
-	if err != nil {
-		return nil, err
-	}
-	serverURL = strings.TrimSpace(serverURL)
-	if serverURL == "" {
-		return nil, context.Canceled
-	}
-	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
-		serverURL = "https://" + serverURL
-	}
-	return m.addMatrix(serverURL)
-}
-
 func (m *accountManager) discard(a *account) {
 	if a.cancel != nil {
 		a.cancel()
@@ -533,52 +517,6 @@ func saveMMAccountJSON(dir string, identity mmAccountIdentity) error {
 		return fmt.Errorf("save mattermost account: %w", err)
 	}
 	return nil
-}
-
-func (m *accountManager) pickAndAdd(ctx context.Context, t *terminal) (*account, error) {
-	fmt.Fprint(t.out(), "\033[2J\033[HAdd account\n\n")
-	fmt.Fprintln(t.out(), "  1  Telegram")
-	fmt.Fprintln(t.out(), "  2  Mattermost")
-	fmt.Fprintln(t.out(), "  3  Matrix")
-	fmt.Fprintln(t.out(), "  4  WhatsApp")
-	fmt.Fprintln(t.out(), "\nPress 1-4; Esc to cancel.")
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case key, ok := <-t.keys:
-			if !ok {
-				return nil, context.Canceled
-			}
-			switch key {
-			case "1":
-				return m.addTelegram()
-			case "2":
-				return m.promptMattermost(ctx, t)
-			case "3":
-				return m.promptMatrix(ctx, t)
-			case "4":
-				return m.addWhatsApp()
-			case "\x1b", "\x03", "\x04":
-				return nil, context.Canceled
-			}
-		}
-	}
-}
-
-func (m *accountManager) promptMattermost(ctx context.Context, t *terminal) (*account, error) {
-	serverURL, err := t.prompt(ctx, "Mattermost server URL: ", false)
-	if err != nil {
-		return nil, err
-	}
-	serverURL = strings.TrimSpace(serverURL)
-	if serverURL == "" {
-		return nil, context.Canceled
-	}
-	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
-		serverURL = "https://" + serverURL
-	}
-	return m.addMattermost(serverURL)
 }
 
 func saveAccount(dir string, identity accountIdentity) error {
@@ -776,7 +714,7 @@ type accountsRequested struct{}
 
 func (accountsRequested) Error() string { return "switch accounts" }
 
-func (m *accountManager) run(ctx context.Context, t *terminal) error {
+func (m *accountManager) run(ctx context.Context) error {
 	defer m.close()
 	var active *account
 	for _, a := range m.accounts {
@@ -784,17 +722,15 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 	}
 	if len(m.accounts) == 0 {
 		var err error
-		active, err = m.pickAndAdd(ctx, t)
+		active, err = tuiPickAndAdd(ctx, m)
 		if err != nil {
 			return err
 		}
 	}
-	defer t.disableInactivity()
 	for ctx.Err() == nil {
 		if active == nil {
-			t.disableInactivity()
 			var err error
-			active, err = m.choose(ctx, t, nil)
+			active, err = tuiChooseAccount(ctx, m, nil)
 			if err != nil || active == nil {
 				return err
 			}
@@ -805,16 +741,12 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 			needsAuth = needsAuth || s.identity.ID == 0
 		}
 		if needsAuth {
-			t.disableInactivity()
-			if err := m.login(ctx, t, active); err != nil {
+			if err := tuiLogin(ctx, m, active); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				if active.neverAuthenticated() {
 					m.discard(active)
-				}
-				if !errors.Is(err, context.Canceled) {
-					t.report(err)
 				}
 				active = nil
 				continue
@@ -822,34 +754,14 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 			s = active.snapshot()
 		}
 		if !needsAuth && (s.backend == nil || s.status != "online") {
-			fmt.Fprintf(t.out(), "\033[2J\033[HConnecting to %s…\n", active.label())
-			done := false
-			for !done {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-active.done:
-					done = true
-				case <-m.changed:
-					s = active.snapshot()
-					if (s.backend != nil && s.status == "online") || s.needsLogin {
-						done = true
-					}
-				case key, ok := <-t.keys:
-					if !ok || key == "\x1b" || key == "\x03" || key == "\x04" {
-						active = nil
-						done = true
-					}
-				}
-			}
-			if active == nil {
+			if !tuiWaitConnecting(ctx, m, active) {
+				active = nil
 				continue
 			}
 			s = active.snapshot()
 		}
 		if s.backend != nil && s.status == "online" {
-			t.disableInactivity()
-			err := runModes(s.ctx, s.backend, t, active.histories)
+			err := runModes(s.ctx, s.backend, active.histories)
 			if err == nil {
 				return nil
 			}
@@ -857,11 +769,11 @@ func (m *accountManager) run(ctx context.Context, t *terminal) error {
 				return ctx.Err()
 			}
 			if _, switching := err.(accountsRequested); !switching && !errors.Is(err, context.Canceled) {
-				t.report(err)
+				fmt.Fprintf(os.Stderr, "%s\n", cleanError(err))
 			}
 		}
 		var err error
-		active, err = m.choose(ctx, t, active)
+		active, err = tuiChooseAccount(ctx, m, active)
 		if err != nil || active == nil {
 			return err
 		}
@@ -978,171 +890,4 @@ type loginPrompt struct {
 	label  string
 	masked bool
 	answer chan lineResult
-}
-
-func (m *accountManager) login(ctx context.Context, t *terminal, a *account) error {
-	if a.cancel != nil {
-		a.cancel()
-		<-a.done
-	}
-	requests := make(chan loginPrompt)
-	loginCtx, cancel := context.WithCancel(ctx)
-	// This context belongs to the running account after a successful login.
-	prompt := func(label string, masked bool) (string, error) {
-		if label == "Phone (international format): " {
-			if phone := a.snapshot().identity.Phone; phone != "" {
-				return "+" + strings.TrimPrefix(phone, "+"), nil
-			}
-		}
-		r := loginPrompt{label, masked, make(chan lineResult, 1)}
-		select {
-		case requests <- r:
-		case <-loginCtx.Done():
-			return "", loginCtx.Err()
-		}
-		select {
-		case result := <-r.answer:
-			return result.text, result.err
-		case <-loginCtx.Done():
-			return "", loginCtx.Err()
-		}
-	}
-	fmt.Fprintf(t.out(), "\033[2J\033[HSign in — %s\n", a.label())
-	m.start(loginCtx, a, prompt)
-	stopAccount := a.cancel
-	a.cancel = func() { cancel(); stopAccount() }
-	for {
-		if a.snapshot().status == "online" {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			cancel()
-			return ctx.Err()
-		case <-a.done:
-			cancel()
-			return fmt.Errorf("account sign-in: %s", a.snapshot().notice)
-		case key, ok := <-t.keys:
-			if !ok || key == "\x03" || key == "\x04" || key == "\x1b" {
-				cancel()
-				<-a.done
-				return context.Canceled
-			}
-		case <-m.changed:
-			if notice := a.snapshot().notice; notice != "" {
-				t.report(fmt.Errorf("%s", notice))
-			}
-		case request := <-requests:
-			value, err := t.prompt(loginCtx, request.label, request.masked)
-			request.answer <- lineResult{text: value, err: err}
-			if err != nil {
-				cancel()
-				<-a.done
-				return err
-			}
-		}
-	}
-}
-
-func (m *accountManager) choose(ctx context.Context, t *terminal, active *account) (*account, error) {
-	selected := 0
-	for i, a := range m.accounts {
-		if a == active {
-			selected = i
-		}
-	}
-	render := func() {
-		fmt.Fprint(t.out(), "\033[2J\033[HAccounts\n")
-		_, rows, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil || rows < 8 {
-			rows = 24
-		}
-		limit := rows - 5
-		start := max(0, selected-limit+1)
-		for i := start; i < min(len(m.accounts)+2, start+limit); i++ {
-			marker := " "
-			if i == selected {
-				marker = ">"
-			}
-			switch {
-			case i == len(m.accounts):
-				fmt.Fprintf(t.out(), "%s Add account…\n", marker)
-			case i == len(m.accounts)+1:
-				fmt.Fprintf(t.out(), "%s Quit\n", marker)
-			default:
-				a := m.accounts[i]
-				s := a.snapshot()
-				current := ""
-				if a == active {
-					current = " [current]"
-				}
-				fmt.Fprintf(t.out(), "%s %s — %s%s\n", marker, a.label(), s.status, current)
-			}
-		}
-		if selected < len(m.accounts) {
-			if notice := m.accounts[selected].snapshot().notice; notice != "" {
-				fmt.Fprintln(t.out(), plain(notice))
-			}
-		}
-		fmt.Fprintln(t.out(), "Enter: switch/sign in   r: reconnect   Esc: back")
-	}
-	render()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-m.changed:
-			render()
-		case key, ok := <-t.keys:
-			if !ok {
-				return nil, context.Canceled
-			}
-			switch key {
-			case terminalLockKey:
-				continue
-			case terminalUnlockKey:
-				render()
-				continue
-			case "q", "\x04":
-				return nil, nil
-			case "\x1b", "\x03":
-				if active != nil && active.snapshot().status == "online" {
-					return active, nil
-				}
-			case "k", "\x1b[A", "\x1bOA":
-				selected = max(0, selected-1)
-			case "j", "\x1b[B", "\x1bOB":
-				selected = min(len(m.accounts)+1, selected+1)
-			case "r":
-				if selected < len(m.accounts) {
-					m.start(ctx, m.accounts[selected], nil)
-				}
-			case "\r", "\n":
-				if selected == len(m.accounts)+1 {
-					return nil, nil
-				}
-				if selected == len(m.accounts) {
-					a, err := m.pickAndAdd(ctx, t)
-					if err != nil {
-						if errors.Is(err, context.Canceled) {
-							render()
-							continue
-						}
-						return nil, err
-					}
-					if a == nil {
-						render()
-						continue
-					}
-					return a, nil
-				}
-				a := m.accounts[selected]
-				if s := a.snapshot(); s.status == "online" || s.needsLogin || s.identity.ID == 0 {
-					return a, nil
-				}
-				m.start(ctx, a, nil)
-			}
-			render()
-		}
-	}
 }

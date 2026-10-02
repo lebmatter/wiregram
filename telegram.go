@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -392,6 +395,35 @@ func (tb *telegramBackend) PlayMedia(ctx context.Context, t *terminal, msg messa
 		return err
 	}
 	return tb.c.playMedia(ctx, t, a, player)
+}
+
+func (tb *telegramBackend) MediaExec(ctx context.Context, msg message, player string) (*exec.Cmd, func(), error) {
+	m, ok := msg.Raw.(*tg.Message)
+	if !ok {
+		return nil, nil, fmt.Errorf("this message has no playable attachment")
+	}
+	a, err := mediaAttachment(m)
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, err := os.MkdirTemp("", "wiregram-media-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create private media directory: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+	path := filepath.Join(dir, "attachment")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("create temporary media file: %w", err)
+	}
+	dlErr := tb.c.downloadMedia(ctx, a, file)
+	closeErr := file.Close()
+	if err := errors.Join(dlErr, closeErr); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("download media: %w", err)
+	}
+	return mpvCmd(ctx, player, a.audio, path), cleanup, nil
 }
 
 func (tb *telegramBackend) MediaSaveable(msg message) (string, bool) {

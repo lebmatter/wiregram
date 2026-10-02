@@ -4,18 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/gotd/td/tg"
 )
-
-type reactionResult struct {
-	messageID int
-	emoticon  string
-	reactions tg.MessageReactions
-	err       error
-}
 
 func reactionLabel(reaction tg.ReactionClass) string {
 	switch value := reaction.(type) {
@@ -39,32 +30,6 @@ func sameReaction(a, b tg.ReactionClass) bool {
 	default:
 		return false
 	}
-}
-
-func formatReactions(message *tg.Message) string {
-	reactions, ok := message.GetReactions()
-	if !ok {
-		return ""
-	}
-	parts := make([]string, 0, len(reactions.Results))
-	for _, result := range reactions.Results {
-		label := reactionLabel(result.Reaction)
-		if label == "" || result.Count < 1 {
-			continue
-		}
-		part := label + " " + strconv.Itoa(result.Count)
-		if _, chosen := result.GetChosenOrder(); chosen {
-			part += "*"
-		}
-		parts = append(parts, part)
-	}
-	return strings.Join(parts, "  ")
-}
-
-func visibleReactionChange(message *tg.Message, reactions tg.MessageReactions) bool {
-	copy := *message
-	copy.SetReactions(reactions)
-	return formatReactions(message) != formatReactions(&copy)
 }
 
 func chosenReactions(message *tg.Message, selected tg.ReactionClass) ([]tg.ReactionClass, bool) {

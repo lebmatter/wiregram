@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -23,7 +24,7 @@ const usageText = `Usage: wiregram [--insecure]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
 Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
-audio playback; no TUI framework or mouse.
+audio playback via mpv.
 
 First launch asks for API credentials (or use -ldflags to embed them),
 then your phone number, login code, and optional 2FA password.
@@ -46,11 +47,10 @@ Keyboard shortcuts:
 
   Chat
     Up/Down           Select message
-    Alt+Up/Down       Input history
-    Enter             Send text, or open selected media if input is empty
+    Enter             Send text
+    o                 Open selected media (when input is empty)
     Ctrl+U            Upload file
     Ctrl+F            Search messages
-    Ctrl+L            Lock screen
     Alt+R             Reply (toggle)
     Alt+E             Edit outgoing message
     Alt+M             React with emoji
@@ -109,17 +109,26 @@ func run() (result error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	t, restore, err := openTerminal(ctx)
-	if err != nil {
-		return err
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return fmt.Errorf("wiregram needs an interactive terminal")
 	}
-	defer func() {
-		if err := restore(); err != nil {
-			result = errors.Join(result, fmt.Errorf("restore terminal: %w", err))
+	prompt := func(label string, masked bool) (string, error) {
+		fmt.Fprint(os.Stdout, label)
+		if masked {
+			pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stdout)
+			return string(pw), err
 		}
-	}()
-	prompt := func(label string, masked bool) (string, error) { return t.prompt(ctx, label, masked) }
-	cfg, dir, err := loadConfig(prompt, t.out())
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return "", err
+			}
+			return "", context.Canceled
+		}
+		return scanner.Text(), nil
+	}
+	cfg, dir, err := loadConfig(prompt, os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -127,10 +136,10 @@ func run() (result error) {
 	if err != nil {
 		return err
 	}
-	return accounts.run(ctx, t)
+	return accounts.run(ctx)
 }
 
-func runModes(ctx context.Context, b backend, t *terminal, histories map[chatID][]string) error {
+func runModes(ctx context.Context, b backend, histories map[chatID][]string) error {
 	archived := false
 	for {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
@@ -138,14 +147,22 @@ func runModes(ctx context.Context, b backend, t *terminal, histories map[chatID]
 			if !networkError(err) {
 				return err
 			}
-			t.report(err)
+			fmt.Fprintf(os.Stderr, "%s\n", cleanError(err))
 			if err := waitFor(ctx, time.Second); err != nil {
 				return err
 			}
 			continue
 		}
-		index, refresh, err := selectChat(ctx, b, t, entries, archived, archiveUnread)
+		index, refresh, err := tuiSelectChat(ctx, b, histories, entries, archived, archiveUnread)
 		if err != nil {
+			if fwd, ok := err.(forwardReq); ok {
+				if err := withLegacyTerminal(ctx, func(t *terminal) {
+					b.HandleForward(ctx, t, entries, fwd.from, fwd.id)
+				}); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
 		if refresh {
@@ -164,7 +181,11 @@ func runModes(ctx context.Context, b backend, t *terminal, histories map[chatID]
 		var entry chatEntry
 		if index == len(entries)+1 {
 			var selected bool
-			entry, selected, err = b.SearchUsers(ctx, t, entries)
+			if err := withLegacyTerminal(ctx, func(t *terminal) {
+				entry, selected, err = b.SearchUsers(ctx, t, entries)
+			}); err != nil {
+				return err
+			}
 			if err != nil {
 				return err
 			}
@@ -178,17 +199,25 @@ func runModes(ctx context.Context, b backend, t *terminal, histories map[chatID]
 		if history == nil {
 			history = make([]string, 0)
 		}
-		err = viewChat(ctx, b, t, entry, &history)
+		if err := withLegacyTerminal(ctx, func(t *terminal) {
+			err = viewChat(ctx, b, t, entry, &history)
+		}); err != nil {
+			return err
+		}
 		histories[entry.ID] = history
 		if err != nil {
 			if fwd, ok := err.(forwardReq); ok {
-				b.HandleForward(ctx, t, entries, fwd.from, fwd.id)
+				if err := withLegacyTerminal(ctx, func(t *terminal) {
+					b.HandleForward(ctx, t, entries, fwd.from, fwd.id)
+				}); err != nil {
+					return err
+				}
 				continue
 			}
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
-			t.report(err)
+			fmt.Fprintf(os.Stderr, "%s\n", cleanError(err))
 		}
 	}
 }
@@ -678,6 +707,24 @@ func (t *terminal) unlock(lines []string) {
 	for _, notice := range notices {
 		t.report(fmt.Errorf("%s", notice))
 	}
+}
+
+func withLegacyTerminal(ctx context.Context, fn func(t *terminal)) error {
+	state, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("enter raw terminal mode: %w", err)
+	}
+	legacyCtx, cancel := context.WithCancel(ctx)
+	t := &terminal{locking: make(chan inactivityConfig, 1), done: make(chan struct{})}
+	t.keys = t.manageInactivity(legacyCtx, readKeys(legacyCtx))
+	fn(t)
+	cancel()
+	// Unblock the stdin reader goroutine so it can observe the cancelled context.
+	os.Stdin.SetReadDeadline(time.Now())
+	<-t.done
+	os.Stdin.SetReadDeadline(time.Time{})
+	fmt.Fprint(os.Stdout, "\033[2J\033[3J\033[H")
+	return term.Restore(int(os.Stdin.Fd()), state)
 }
 
 func openTerminal(ctx context.Context) (*terminal, func() error, error) {

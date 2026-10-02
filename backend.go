@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -132,6 +133,7 @@ type backend interface {
 	// Media
 	MediaPlayable(msg message) bool
 	PlayMedia(ctx context.Context, t *terminal, msg message, player string) error
+	MediaExec(ctx context.Context, msg message, player string) (cmd *exec.Cmd, cleanup func(), err error)
 	MediaSaveable(msg message) (filename string, ok bool)
 	SaveMedia(ctx context.Context, msg message, destDir string) error
 	AcknowledgeMedia(ctx context.Context, msg message)

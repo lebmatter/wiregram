@@ -1359,6 +1359,34 @@ func (mx *mxBackend) PlayMedia(ctx context.Context, t *terminal, msg message, pl
 	return nil
 }
 
+func (mx *mxBackend) MediaExec(ctx context.Context, msg message, player string) (*exec.Cmd, func(), error) {
+	ev, ok := msg.Raw.(mxTimelineEvent)
+	if !ok {
+		return nil, nil, fmt.Errorf("this message has no playable media")
+	}
+	mxcURL, _ := ev.Content["url"].(string)
+	if mxcURL == "" {
+		return nil, nil, fmt.Errorf("this message has no playable media")
+	}
+	body, _ := ev.Content["body"].(string)
+	if body == "" {
+		body = "media"
+	}
+	tmpDir, err := os.MkdirTemp("", "wiregram-mx-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) }
+	dest := filepath.Join(tmpDir, filepath.Base(body))
+	if err := mx.downloadMXC(ctx, mxcURL, dest); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	msgtype, _ := ev.Content["msgtype"].(string)
+	audio := msgtype == "m.audio"
+	return mpvCmd(ctx, player, audio, dest), cleanup, nil
+}
+
 func (mx *mxBackend) MediaSaveable(msg message) (string, bool) {
 	ev, ok := msg.Raw.(mxTimelineEvent)
 	if !ok {
