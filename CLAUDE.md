@@ -40,7 +40,7 @@ These are project constraints, not suggestions:
 - **No new dependencies** beyond the approved set: gotd/td,
   x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow,
   modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
-  charm.land/bubbles/v2, and github.com/labstack/echo/v4 (web UI).
+  and charm.land/bubbles/v2.
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -109,24 +109,6 @@ All source is flat in `package main`. The mode loop is:
 Directories are `0700`; credential and session files are `0600`. Config
 writes are atomic (temp file in the same directory, then rename) and must
 preserve fields the struct does not know about.
-
-## Web UI
-
-`wiregram serve [--port 7800]` starts a headless instance with a local web
-UI bound to `127.0.0.1` only. A lock file prevents running alongside the
-TUI. The web UI uses:
-
-- **Echo** (`github.com/labstack/echo/v4`) for HTTP routing and middleware.
-- **Alpine.js** and **knadh/oat CSS**, vendored in `web/static/` and served
-  via Go `embed.FS`. Pinned to exact versions with sha256 recorded in the
-  repo. No CDN, no npm, no build step.
-- **SSE** (`text/event-stream`) for real-time updates — no WebSocket.
-- Token auth exchanged for an HttpOnly session cookie; CSRF via custom
-  header; Host allowlist against DNS rebinding; no CORS.
-
-The web UI is a local single-operator control panel (like Syncthing or
-Transmission). It is not a multi-tenant service and must never bind to
-`0.0.0.0`.
 
 ## Planned work
 

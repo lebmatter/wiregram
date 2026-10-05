@@ -21,7 +21,6 @@ import (
 )
 
 const usageText = `Usage: wiregram [--insecure]
-       wiregram serve [--port 7800] [--insecure]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
 Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
@@ -33,10 +32,6 @@ Config and sessions are stored in ~/.config/wiregram/.
 
 Credentials are stored in the OS keyring by default (secret-tool on Linux,
 Keychain on macOS). Use --insecure to store them in plain JSON files instead.
-
-Commands:
-  (none)              Start the interactive TUI
-  serve               Start the headless web UI (loopback only)
 
 Keyboard shortcuts:
 
@@ -89,9 +84,6 @@ func main() {
 }
 
 func run() (result error) {
-	if len(os.Args) > 1 && os.Args[1] == "serve" {
-		return runServe(os.Args[2:])
-	}
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	insecure := flags.Bool("insecure", false, "store credentials in plain JSON instead of the OS keyring")
@@ -103,7 +95,7 @@ func run() (result error) {
 		return fmt.Errorf("parse arguments: %w", err)
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("unknown command %q; see wiregram --help", flags.Arg(0))
+		return fmt.Errorf("wiregram does not accept positional arguments")
 	}
 	var creds credStore
 	if *insecure {

@@ -1187,34 +1187,6 @@ func (wa *waBackend) SaveMedia(ctx context.Context, msg message, destDir string)
 
 func (wa *waBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
 
-// InlinePhoto excludes view-once images, matching Telegram's behavior.
-func (wa *waBackend) InlinePhoto(msg message) (w, h int, ok bool) {
-	evt, isEvent := msg.Raw.(*events.Message)
-	if !isEvent || evt.IsViewOnce {
-		return 0, 0, false
-	}
-	img := evt.Message.GetImageMessage()
-	if img == nil || img.GetViewOnce() {
-		return 0, 0, false
-	}
-	w, h = int(img.GetWidth()), int(img.GetHeight())
-	return w, h, w > 0 && h > 0
-}
-
-func (wa *waBackend) DownloadPhoto(ctx context.Context, msg message, file *os.File) error {
-	if _, _, ok := wa.InlinePhoto(msg); !ok {
-		return fmt.Errorf("this message has no inline photo")
-	}
-	data, err := wa.client.Download(ctx, msg.Raw.(*events.Message).Message.GetImageMessage())
-	if err != nil {
-		return fmt.Errorf("download photo: %w", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("save photo: %w", err)
-	}
-	return nil
-}
-
 // User search.
 
 func (wa *waBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {

@@ -458,37 +458,6 @@ func (tb *telegramBackend) SaveMedia(ctx context.Context, msg message, destPath 
 	return tb.c.saveMedia(ctx, dl, destPath)
 }
 
-// InlinePhoto reports whether msg is a photo the web UI may show inline.
-// View-once and self-destructing photos are excluded: displaying them
-// would bypass the sender's intent and the explicit open in the TUI.
-func (tb *telegramBackend) InlinePhoto(msg message) (w, h int, ok bool) {
-	m, isMsg := msg.Raw.(*tg.Message)
-	if !isMsg {
-		return 0, 0, false
-	}
-	media, isPhoto := m.Media.(*tg.MessageMediaPhoto)
-	if !isPhoto || expiringMediaLabel(media) != "" {
-		return 0, 0, false
-	}
-	p, isPhoto := media.Photo.(*tg.Photo)
-	if !isPhoto {
-		return 0, 0, false
-	}
-	w, h, _ = photoSize(p.Sizes)
-	return w, h, w > 0 && h > 0
-}
-
-func (tb *telegramBackend) DownloadPhoto(ctx context.Context, msg message, file *os.File) error {
-	if _, _, ok := tb.InlinePhoto(msg); !ok {
-		return fmt.Errorf("this message has no inline photo")
-	}
-	dl, err := mediaDownloadable(msg.Raw.(*tg.Message))
-	if err != nil {
-		return err
-	}
-	return tb.c.downloadMedia(ctx, attachment{location: dl.location, dc: dl.dc}, file)
-}
-
 func (tb *telegramBackend) AcknowledgeMedia(ctx context.Context, msg message) {
 	m, ok := msg.Raw.(*tg.Message)
 	if !ok {

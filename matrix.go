@@ -1494,41 +1494,6 @@ func (mx *mxBackend) openMXC(ctx context.Context, mxcURL string) (io.ReadCloser,
 
 func (mx *mxBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
 
-// InlinePhoto accepts unencrypted m.image events only: encrypted media
-// carries a "file" object instead of "url" and needs decryption.
-func (mx *mxBackend) InlinePhoto(msg message) (w, h int, ok bool) {
-	ev, isEvent := msg.Raw.(mxTimelineEvent)
-	if !isEvent || ev.Type != "m.room.message" {
-		return 0, 0, false
-	}
-	if msgtype, _ := ev.Content["msgtype"].(string); msgtype != "m.image" {
-		return 0, 0, false
-	}
-	if u, _ := ev.Content["url"].(string); u == "" {
-		return 0, 0, false
-	}
-	info, _ := ev.Content["info"].(map[string]any)
-	fw, _ := info["w"].(float64)
-	fh, _ := info["h"].(float64)
-	return int(fw), int(fh), fw > 0 && fh > 0
-}
-
-func (mx *mxBackend) DownloadPhoto(ctx context.Context, msg message, file *os.File) error {
-	if _, _, ok := mx.InlinePhoto(msg); !ok {
-		return fmt.Errorf("this message has no inline photo")
-	}
-	mxcURL, _ := msg.Raw.(mxTimelineEvent).Content["url"].(string)
-	body, err := mx.openMXC(ctx, mxcURL)
-	if err != nil {
-		return err
-	}
-	defer body.Close()
-	if _, err := io.Copy(file, body); err != nil {
-		return fmt.Errorf("save photo: %w", err)
-	}
-	return nil
-}
-
 // User search.
 
 func (mx *mxBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
