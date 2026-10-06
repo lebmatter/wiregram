@@ -47,13 +47,11 @@ type tuiModel struct {
 	fullHelp      bool
 	result        *tuiResult
 	loadErr       error
-	listenGen     int
 	width         int
 	height        int
 }
 
 type tuiDialogsLoaded struct {
-	b             backend.Backend
 	entries       []backend.ChatEntry
 	archiveUnread int
 	err           error
@@ -66,17 +64,7 @@ type chatDrainNow struct{}
 func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
 	return func() tea.Msg {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
-		return tuiDialogsLoaded{b, entries, archiveUnread, err}
-	}
-}
-
-// accountCtxDone reports that an account's connection context ended.
-type accountCtxDone struct{ ctx context.Context }
-
-func waitAccount(ctx context.Context) tea.Cmd {
-	return func() tea.Msg {
-		<-ctx.Done()
-		return accountCtxDone{ctx}
+		return tuiDialogsLoaded{entries, archiveUnread, err}
 	}
 }
 
@@ -103,7 +91,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(listenBackend(m.b, m.listenGen), waitAccount(m.ctx), chipsTick())
+	return tea.Batch(listenBackend(m.b), chipsTick())
 }
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
@@ -147,26 +135,6 @@ func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// switchAccount makes another account active without leaving the program, so
-// the screen stays up while its chats load. Accounts that still need to sign
-// in or connect go back to the account loop.
-func (m tuiModel) switchAccount(to *account.Account) (tuiModel, tea.Cmd) {
-	m = m.closeChat()
-	s := to.Snapshot()
-	needsAuth := s.NeedsLogin || (to.BackendType == "telegram" && s.Identity.ID == 0)
-	if needsAuth || s.Backend == nil || s.Status != "online" || s.Ctx == nil {
-		return m.done(tuiResult{switchTo: to})
-	}
-	m.ctx, m.active, m.b, m.histories = s.Ctx, to, s.Backend, to.Histories
-	m.entries, m.archived, m.archiveUnread, m.loadErr = nil, false, 0, nil
-	m.list = newChatListModel(m.ctx, m.mgr, to, m.b, nil, false, 0)
-	m.list.loading = true
-	m.list.selected = m.list.before()
-	m.listenGen++
-	return m, tea.Batch(loadDialogs(m.ctx, m.b, false), listenBackend(m.b, m.listenGen),
-		waitAccount(m.ctx))
-}
-
 func (m tuiModel) closeChat() tuiModel {
 	m.searchOpen = false
 	if !m.chatOpen {
@@ -208,16 +176,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case tuiChipsTick:
 		return m, chipsTick()
 
-	case accountCtxDone:
-		if msg.ctx != m.ctx {
-			return m, nil
-		}
-		return m.done(tuiResult{accounts: true})
-
 	case backendChanged:
-		if msg.b != m.b {
-			return m, nil
-		}
 		// The root owns the only Changed() listener so the list and the chat
 		// never race each other for update signals.
 		var cmd tea.Cmd
@@ -227,10 +186,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			m.b.Drain()
 		}
 		m.list = m.list.refreshUnread()
-		if msg.gen != m.listenGen {
-			return m, cmd
-		}
-		return m, tea.Batch(cmd, listenBackend(m.b, m.listenGen))
+		return m, tea.Batch(cmd, listenBackend(m.b))
 
 	case chatDrainNow:
 		var cmd tea.Cmd
@@ -332,7 +288,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
 		i := int(k[4] - '1')
 		if m.mgr != nil && i < len(m.mgr.Accounts) && m.mgr.Accounts[i] != m.active {
-			return m.switchAccount(m.mgr.Accounts[i])
+			m = m.closeChat()
+			return m.done(tuiResult{switchTo: m.mgr.Accounts[i]})
 		}
 		return m, nil
 	}
@@ -379,9 +336,6 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 
 	case tuiDialogsLoaded:
-		if msg.b != m.b {
-			return m, nil
-		}
 		if msg.err != nil {
 			m.loadErr = msg.err
 			if !backend.NetworkError(msg.err) {
@@ -430,7 +384,8 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m.done(tuiResult{accounts: true})
 
 	case chatListSwitch:
-		return m.switchAccount(msg.to)
+		m = m.closeChat()
+		return m.done(tuiResult{switchTo: msg.to})
 
 	case chatListQuit:
 		m = m.closeChat()
@@ -527,26 +482,24 @@ func (m tuiModel) emptyPane(width, height int) string {
 	return renderBox("", centerLines(width-4, height-2, hint), width, height, colorDim)
 }
 
-// tuiSelectChat runs the main screen until the user quits (nil), asks for
-// the account picker, or switches to an account that is not ready. It returns
-// the account active at exit, which may differ from the one it started with.
-// The program lives on appCtx so it outlasts any one account's connection.
-func tuiSelectChat(appCtx, ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) (*account.Account, error) {
+// tuiSelectChat runs one account's main screen until the user quits (nil),
+// asks for the account picker, or switches account.
+func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) error {
 	m := newTuiModel(ctx, mgr, active, b, histories, entries, archiveUnread)
-	result, err := tea.NewProgram(m, tea.WithContext(appCtx)).Run()
+	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil {
-		return active, fmt.Errorf("run TUI: %w", err)
+		return fmt.Errorf("run TUI: %w", err)
 	}
 	final := result.(tuiModel)
 	switch {
 	case final.result == nil:
-		return final.active, nil
+		return nil
 	case final.result.switchTo != nil:
-		return final.active, accountSwitch{to: final.result.switchTo}
+		return accountSwitch{to: final.result.switchTo}
 	case final.result.accounts:
-		return final.active, accountsRequested{}
+		return accountsRequested{}
 	case final.result.agents:
-		return final.active, agentsRequested{}
+		return agentsRequested{}
 	}
-	return final.active, nil
+	return nil
 }

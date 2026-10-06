@@ -28,7 +28,6 @@ type chatListModel struct {
 	archiveUnread int
 	caps          backend.Capabilities
 	confirm       *chatDeleteConfirm
-	loading       bool
 	offset        int
 	width, height int
 }
@@ -46,14 +45,7 @@ type chatListSearch struct{}
 type chatListArchiveToggle struct{}
 type chatListQuit struct{}
 type chatListDeleteDone struct{ err error }
-
-// backendChanged carries its backend and listener generation: a listener
-// left over from before an account switch delivers its signal but does not
-// re-arm, so each backend keeps one listener.
-type backendChanged struct {
-	b   backend.Backend
-	gen int
-}
+type backendChanged struct{}
 
 func newChatListModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
 	w, h := termSize()
@@ -105,10 +97,10 @@ func (m chatListModel) chatIndex() (int, bool) {
 
 func (m chatListModel) Init() tea.Cmd { return nil }
 
-func listenBackend(b backend.Backend, gen int) tea.Cmd {
+func listenBackend(b backend.Backend) tea.Cmd {
 	return func() tea.Msg {
 		<-b.Changed()
-		return backendChanged{b, gen}
+		return backendChanged{}
 	}
 }
 
@@ -286,9 +278,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, "    "+chatListLine(entry, index == m.selected, focused, max(1, width-4)))
 		index++
 	}
-	if m.loading {
-		rows = append(rows, styleSubtle.Render("      Loading…"))
-	} else if len(m.entries) == 0 {
+	if len(m.entries) == 0 {
 		rows = append(rows, styleSubtle.Render("      No chats here"))
 	}
 	rows = append(rows, "    "+styleDim.Render(strings.Repeat("─", max(1, width-4))))
