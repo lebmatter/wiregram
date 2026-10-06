@@ -129,13 +129,14 @@ func (c *Client) setActive(key peerKey) {
 }
 
 // isDM reports whether key is a one-to-one chat with a person: not Saved
-// Messages and not a bot. Callers hold c.mu.
+// Messages and not a bot. Short updates carry no user object, so a user who
+// is not cached yet counts as a person. Callers hold c.mu.
 func (c *Client) isDM(key peerKey) bool {
 	if key.kind != 'u' || key.id == c.AccountID {
 		return false
 	}
 	u := c.users[key.id]
-	return u != nil && !u.Bot && !u.Self
+	return u == nil || (!u.Bot && !u.Self)
 }
 
 func (c *Client) rememberUnread(key peerKey, unread int) {
