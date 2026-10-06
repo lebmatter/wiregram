@@ -31,7 +31,11 @@ type uploadPanel struct {
 	kind    string
 	mime    string
 	lastDir string
-	matches []string // Tab completion candidates shown under the path
+	// Tab completion: candidate names under the path, the text they follow,
+	// and the highlighted one (↑↓ to move, Tab or Enter to accept).
+	matches     []string
+	matchPrefix string
+	matchIdx    int
 }
 
 type pendingUpload struct {
@@ -110,9 +114,28 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		case "esc", "ctrl+c":
 			u.step = uploadPick
 			return m, nil
+		case "up", "down":
+			if n := len(u.matches); n > 0 {
+				step := 1
+				if msg.String() == "up" {
+					step = n - 1
+				}
+				u.matchIdx = (u.matchIdx + step) % n
+			}
+			return m, nil
 		case "enter":
-			return m.pickUpload(u.input.Value())
+			if len(u.matches) == 0 {
+				return m.pickUpload(u.input.Value())
+			}
+			if !u.acceptMatch() {
+				return m.pickUpload(u.input.Value())
+			}
+			u.completePath()
+			return m, nil
 		case "tab":
+			if len(u.matches) > 0 {
+				u.acceptMatch()
+			}
 			u.completePath()
 			return m, nil
 		}
@@ -144,11 +167,21 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 
 // completePath extends the typed path by the longest common prefix of the
 // matching entries and lists them when more than one remains.
+// acceptMatch puts the highlighted candidate into the path. It reports
+// whether the candidate is a folder, so completion can carry on inside it.
+func (u *uploadPanel) acceptMatch() bool {
+	match := u.matches[u.matchIdx]
+	u.input.SetValue(u.matchPrefix + match)
+	u.input.CursorEnd()
+	u.matches = nil
+	return strings.HasSuffix(match, string(filepath.Separator))
+}
+
 func (u *uploadPanel) completePath() {
 	value := u.input.Value()
 	line := []rune(value)
 	candidates, _ := pathCompleter{}.Do(line, len(line))
-	u.matches = nil
+	u.matches, u.matchIdx = nil, 0
 	if len(candidates) == 0 {
 		return
 	}
@@ -169,6 +202,7 @@ func (u *uploadPanel) completePath() {
 		if strings.HasSuffix(value, string(filepath.Separator)) || value == "" {
 			typedBase = ""
 		}
+		u.matchPrefix = value[:len(value)-len(typedBase)]
 		for _, c := range candidates {
 			u.matches = append(u.matches, typedBase+string(c))
 		}
@@ -209,8 +243,14 @@ func (m chatViewModel) uploadBody(width, height int) []string {
 	case uploadTyping:
 		lines = []string{heading, ""}
 		lines = append(lines, composerBox("Path", nil, "file › ", u.input, width, colorQuote)...)
-		for _, match := range u.matches {
-			lines = append(lines, "  "+styleSubtle.Render(match))
+		limit := max(1, height-len(lines))
+		start := max(0, u.matchIdx-limit+1)
+		for i := start; i < min(len(u.matches), start+limit); i++ {
+			if i == u.matchIdx {
+				lines = append(lines, styleSelectedRow.Render(styleAccent.Render("> ")+u.matches[i]))
+			} else {
+				lines = append(lines, "  "+styleSubtle.Render(u.matches[i]))
+			}
 		}
 	case uploadCaption:
 		card := []string{
@@ -232,6 +272,9 @@ func (m chatViewModel) uploadBody(width, height int) []string {
 func (m chatViewModel) uploadHelp() []helpKey {
 	switch m.upload.step {
 	case uploadTyping:
+		if len(m.upload.matches) > 0 {
+			return []helpKey{{"↑↓", "choose"}, {"tab/⏎", "accept"}, {"esc", "back to browser"}}
+		}
 		return []helpKey{{"tab", "complete"}, {"⏎", "continue"}, {"esc", "back to browser"}}
 	case uploadCaption:
 		return []helpKey{{"⏎", "send"}, {"esc", "pick another file"}}
