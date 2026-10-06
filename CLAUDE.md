@@ -7,25 +7,25 @@ AGENTS.md, whose durable rules were folded in here.)
 
 ## Project
 
-Wiregram is a minimal Telegram CLI client in Go. No TUI framework, no mouse, no cgo. It uses gotd/td for MTProto, chzyer/readline for line editing, and x/term for raw mode. Everything is `package main` in the repo root — no sub-packages, no `cmd/` directory.
+Wiregram is a minimal Telegram CLI client in Go. No TUI framework, no mouse, no cgo. It uses gotd/td for MTProto, chzyer/readline for line editing, and x/term for raw mode. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 
 ```sh
-make                                   # CGO_ENABLED=0 go build -buildvcs=false -o wiregram .
+make                                   # CGO_ENABLED=0 go build -buildvcs=false -o wiregram ./cmd/wiregram
 ```
 
 To embed app credentials (users then skip the API-ID prompt):
 ```sh
 CGO_ENABLED=0 go build -buildvcs=false \
-  -ldflags "-X main.buildAPIID=${TG_API_ID} -X main.buildAPIHash=${TG_API_HASH}" \
-  -o wiregram .
+  -ldflags "-X wiregram/internal/config.buildAPIID=${TG_API_ID} -X wiregram/internal/config.buildAPIHash=${TG_API_HASH}" \
+  -o wiregram ./cmd/wiregram
 ```
 
 ## Lint / Format
 
 ```sh
-gofmt -w *.go
+gofmt -w cmd internal
 go vet ./...
 ```
 
@@ -60,9 +60,9 @@ These are project constraints, not suggestions:
 ## Display conventions
 
 - The UI is a BubbleTea TUI styled with lipgloss; shared colors, boxes,
-  header and footer live in `tuirender.go`. Kitty graphics sequences are
+  header and footer live in `internal/tui/render.go`. Kitty graphics sequences are
   used only by the media viewer (mpv via `tea.Exec`).
-- Startup shows the `wiregramLogo` splash (`tuisplash.go`) for about a second.
+- Startup shows the `wiregramLogo` splash (`internal/tui/splash.go`) for about a second.
 - Inside an account: a one-line header (wordmark plus one chip per account:
   status glyph, label, backend tag; Alt+N switches), the body, and a
   `bubbles/help` footer with the notice on the right. Help hides keys the
@@ -74,34 +74,42 @@ These are project constraints, not suggestions:
 - `>` marks the selected row in lists and the selected message in a chat.
 - Messages render as `[HH:MM] <sender> text` with a fixed-width nick column;
   the user is always `you`. A reply puts `┃ sender: excerpt` on the header
-  row with its text below; threads (`tuithread.go`) are built from loaded
+  row with its text below; threads (`internal/tui/thread.go`) are built from loaded
   reply chains only.
 - Private chats show the first name, else username, else `Deleted Account`.
   Groups show the title; channels show `Channel: TITLE`.
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with
-  ` — ` before a caption. See `media.go` for the full set.
+  ` — ` before a caption. See `internal/telegram/media.go` for the full set.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 
 ## Architecture
 
-All source is flat in `package main`. The mode loop is:
+```
+cmd/wiregram/        main(): flags, keyring choice, config load, hands off to tui
+internal/
+  textfmt/           pure text helpers: plain(), wrapping, cell widths, nick colours
+  config/            config.json loading, keyring / insecure credential stores
+  terminal/          legacy raw-mode terminal: readline editor, inactivity lock,
+                     mpv/Kitty media screen (still used by HandleForward/PlayMedia)
+  backend/           the Backend interface and shared types (ChatEntry, Message,
+                     events, capabilities, emoji catalog, upload classification)
+  telegram/          gotd/td client and backend (dialogs, history, media, search…)
+  matrix/            Matrix backend
+  mattermost/        Mattermost backend
+  whatsapp/          whatsmeow backend
+  agent/             SQLite store for agents, providers and message history
+  account/           account manager (discovery, connect, login state) and the
+                     account-owned agent runtime
+  tui/               BubbleTea screens, the account/mode loop (run.go) and the
+                     legacy readline chat view (chatview.go)
+docs/                design notes and plans
+assets/              logo and other static files
+```
 
-1. **`main.go`** — entry point (`run()`), the `terminal` struct (raw-mode I/O, inactivity lock manager, readline-based `editor` wrapper), and the mode-switching loop (`runModes`).
-2. **`accounts.go`** — multi-account manager. Discovers account directories, connects each in the background, drives the account-selection UI, and delegates to `runModes` for the active account.
-3. **`client.go`** — wraps a single gotd/td connection. Holds the `users`/`chats`/`unreads` caches, the update handler that dispatches incoming messages and reactions, and the flood-wait retry middleware.
-4. **`chatlist.go`** — fetches dialogs, renders the plain-text list with `>` marker, handles arrow-key selection.
-5. **`chatview.go`** — the largest file. Message history display, readline send loop, incoming-message interleaving, read-receipt tracking, media open/upload dispatch, reply/edit/delete/reaction entry points.
-6. **`search.go`** — contact and global username search with incremental filtering.
-7. **`media.go`** — pure functions formatting media bracket tags.
-8. **`mediaopen.go`** — downloads attachments to temp dirs, spawns `mpv` for playback, probes Kitty graphics support.
-9. **`upload.go`** — file upload with Tab-completion path picker, MIME detection, caption prompt.
-10. **`config.go`** — loads/creates `~/.config/wiregram/config.json`.
-11. **`auth.go`** — phone/OTP/2FA authentication flow via gotd/td's `auth.Flow`.
-12. **`emoji.go`**, **`reaction.go`**, **`reply.go`**, **`edit.go`**, **`delete.go`**, **`read.go`** — small feature files for their respective chat interactions.
-13. **`agentdb.go`** — SQLite database layer for agent configuration and message history (`wiregram.db`).
-14. **`agentruntime.go`** — background agent runtime: subscribes to backend events, dispatches to LLM providers, manages suggest/auto modes.
-15. **`tuiagent.go`** — BubbleTea UI for agent and provider management, thread viewing, and chat assignment.
-16. **`tui.go`**, **`tuilist.go`**, **`tuichat.go`**, **`tuithread.go`**, **`tuiupload.go`**, **`tuisearch.go`**, **`tuiaccount.go`**, **`tuisplash.go`**, **`tuirender.go`** — the BubbleTea screens: root layout, sidebar, chat pane, thread panel, upload picker, user search, account screens, splash, shared styling.
+Imports only point downwards in the list above: `textfmt` imports nothing
+internal, backends never import each other or `tui`, and only `tui` and
+`cmd/wiregram` import `account`. Keep it acyclic — put shared helpers in the
+lowest package that needs them rather than importing sideways.
 
 ### Concurrency model
 
@@ -125,4 +133,4 @@ preserve fields the struct does not know about.
 
 ## Planned work
 
-`TASKS.md` sequences the remaining work.
+`docs/TASKS.md` sequences the remaining work.

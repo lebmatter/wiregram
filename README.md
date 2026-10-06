@@ -1,4 +1,4 @@
-# <img src="wiregram-logo.svg" alt="Wiregram" width="360">
+# <img src="assets/wiregram-logo.svg" alt="Wiregram" width="360">
 
 A minimal multi-backend chat client for the terminal, written in Go. Supports
 Telegram, Mattermost, Matrix, and WhatsApp. BubbleTea TUI with on-demand Kitty
@@ -9,12 +9,12 @@ graphics and audio playback; no mouse.
 Requires Go 1.22 or newer and an interactive terminal.
 
 ```sh
-CGO_ENABLED=0 go build -o wiregram .
+CGO_ENABLED=0 go build -o wiregram ./cmd/wiregram
 ./wiregram
 ```
 
 If your source directory contains incomplete Git metadata, build with
-`go build -buildvcs=false -o wiregram .` instead.
+`go build -buildvcs=false -o wiregram ./cmd/wiregram` instead.
 
 For Telegram: builds with bundled app credentials start with your international
 phone number, then your Telegram login code. If enabled, your 2FA password is
@@ -31,8 +31,8 @@ supply its API ID and hash when building the binary:
 
 ```sh
 CGO_ENABLED=0 go build -buildvcs=false \
-  -ldflags "-X main.buildAPIID=${TG_API_ID} -X main.buildAPIHash=${TG_API_HASH}" \
-  -o wiregram .
+  -ldflags "-X wiregram/internal/config.buildAPIID=${TG_API_ID} -X wiregram/internal/config.buildAPIHash=${TG_API_HASH}" \
+  -o wiregram ./cmd/wiregram
 ```
 
 Set `TG_API_ID` and `TG_API_HASH` in the build environment to your application's
@@ -183,7 +183,7 @@ discovered in place, so an existing installation does not need to sign in again.
 Identity files are written atomically with mode `0600`; directories use `0700`.
 Do not run multiple Wiregram processes against the same configuration directory.
 
-See [the account architecture](ACCOUNTS.md) for concurrency and capacity limits.
+See [the account architecture](docs/ACCOUNTS.md) for concurrency and capacity limits.
 
 The selected outgoing message in a private chat shows `✓` when sent and `✓✓`
 when read. Visible incoming messages are marked read after a short batching delay.
@@ -320,8 +320,9 @@ that answers customers, tell them an agent is involved.
 
 ## Development
 
-Follow [CLAUDE.md](CLAUDE.md), the contributor guide. All source lives in the
-root `package main`. Build with `make`, format with `gofmt -w *.go`, and check
+Follow [CLAUDE.md](CLAUDE.md), the contributor guide. The entry point is
+`cmd/wiregram`; everything else lives in `internal/`. Build with `make`, format
+with `gofmt -w cmd internal`, and check
 with `go vet ./...`. No test suite is included.
 Direct dependencies are gotd/td, bubbletea/v2, lipgloss/v2, bubbles/v2,
 nhooyr.io/websocket, whatsmeow, and modernc.org/sqlite; Go resolves their

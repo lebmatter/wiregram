@@ -1,0 +1,476 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"wiregram/internal/account"
+	"wiregram/internal/backend"
+	"wiregram/internal/textfmt"
+)
+
+type tuiFocus int
+
+const (
+	focusList tuiFocus = iota
+	focusChat
+)
+
+type tuiResult struct {
+	index    int
+	refresh  bool
+	switchTo *account.Account
+	err      error
+}
+
+// tuiModel is one account's main screen: header, chat list, chat, footer.
+// At twoPaneWidth columns and wider the list and chat sit side by side.
+type tuiModel struct {
+	ctx           context.Context
+	mgr           *account.AccountManager
+	active        *account.Account
+	b             backend.Backend
+	histories     map[backend.ChatID][]string
+	entries       []backend.ChatEntry
+	archived      bool
+	archiveUnread int
+	list          chatListModel
+	chat          chatViewModel
+	chatOpen      bool
+	search        userSearchModel
+	searchOpen    bool
+	focus         tuiFocus
+	fullHelp      bool
+	result        *tuiResult
+	loadErr       error
+	width         int
+	height        int
+}
+
+type tuiDialogsLoaded struct {
+	entries       []backend.ChatEntry
+	archiveUnread int
+	err           error
+}
+
+type tuiRetryDialogs struct{}
+type tuiChipsTick struct{}
+type chatDrainNow struct{}
+
+func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
+	return func() tea.Msg {
+		entries, archiveUnread, err := b.Dialogs(ctx, archived)
+		return tuiDialogsLoaded{entries, archiveUnread, err}
+	}
+}
+
+// chipsTick refreshes the account chips; mgr.changed already has a consumer.
+func chipsTick() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tuiChipsTick{} })
+}
+
+func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archived bool, archiveUnread int) tuiModel {
+	w, h := termSize()
+	m := tuiModel{
+		ctx:           ctx,
+		mgr:           mgr,
+		active:        active,
+		b:             b,
+		histories:     histories,
+		entries:       entries,
+		archived:      archived,
+		archiveUnread: archiveUnread,
+		width:         w,
+		height:        h,
+	}
+	m.list = newChatListModel(ctx, b, entries, archived, archiveUnread)
+	return m.sized()
+}
+
+func (m tuiModel) Init() tea.Cmd {
+	return tea.Batch(listenBackend(m.b), chipsTick())
+}
+
+func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
+
+// paneOpen reports whether the right-hand pane holds a chat or the user search.
+func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen }
+
+func (m tuiModel) bodyHeight() int {
+	return max(4, m.height-1-lipgloss.Height(m.footer()))
+}
+
+// sized pushes the current layout down to the list and chat models.
+func (m tuiModel) sized() tuiModel {
+	bodyHeight := m.bodyHeight()
+	if !m.twoPane() && m.paneOpen() {
+		m.focus = focusChat
+	}
+	if m.twoPane() {
+		m.list.width, m.list.height = sidebarWidth-4, bodyHeight-2
+		m.chat.width, m.chat.height = m.width-sidebarWidth, bodyHeight
+	} else {
+		m.list.width, m.list.height = m.width-4, bodyHeight-2
+		m.chat.width, m.chat.height = m.width, bodyHeight
+	}
+	if m.searchOpen && m.twoPane() {
+		m.search = m.search.resized(m.width-sidebarWidth, bodyHeight)
+	} else if m.searchOpen {
+		m.search = m.search.resized(m.width, bodyHeight)
+	}
+	m.chat.embedded = m.twoPane()
+	m.chat.focused = m.focus == focusChat
+	m.list = m.list.scrolled()
+	return m
+}
+
+func (m tuiModel) done(index int, refresh bool) (tuiModel, tea.Cmd) {
+	m.result = &tuiResult{index: index, refresh: refresh}
+	return m, tea.Quit
+}
+
+func (m tuiModel) closeChat() tuiModel {
+	m.searchOpen = false
+	if !m.chatOpen {
+		m.focus = focusList
+		return m
+	}
+	m.histories[m.chat.entry.ID] = *m.chat.histories
+	m.chat.cleanup()
+	m.chatOpen = false
+	m.focus = focusList
+	return m
+}
+
+func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
+	m = m.closeChat()
+	h := m.histories[entry.ID]
+	if h == nil {
+		h = make([]string, 0)
+	}
+	m.histories[entry.ID] = h
+	m.chat = newChatViewModel(m.ctx, m.b, entry, &h)
+	m.chatOpen = true
+	m.focus = focusChat
+	m = m.sized()
+	return m, m.chat.Init()
+}
+
+func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	return next.sized(), cmd
+}
+
+func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
+	case tuiChipsTick:
+		return m, chipsTick()
+
+	case backendChanged:
+		// The root owns the only Changed() listener so the list and the chat
+		// never race each other for update signals.
+		var cmd tea.Cmd
+		if m.chatOpen && m.chat.messages != nil {
+			m.chat, cmd = m.chat.Update(m.chat.drainBackend())
+		} else if !m.chatOpen {
+			m.b.Drain()
+		}
+		m.list = m.list.refreshUnread()
+		return m, tea.Batch(cmd, listenBackend(m.b))
+
+	case chatDrainNow:
+		var cmd tea.Cmd
+		if m.chatOpen {
+			m.chat, cmd = m.chat.Update(m.chat.drainBackend())
+		}
+		m.list = m.list.refreshUnread()
+		return m, cmd
+
+	case chatHistoryLoaded:
+		if !m.chatOpen {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.chat, cmd = m.chat.Update(msg)
+		if !msg.older && msg.err == nil {
+			// Catch up on anything queued while history was loading.
+			cmd = tea.Batch(cmd, func() tea.Msg { return chatDrainNow{} })
+		}
+		return m, cmd
+
+	case chatReturnToList:
+		m = m.closeChat()
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+
+	case chatFocusSidebar:
+		m.focus = focusList
+		return m, nil
+
+	case chatForwardReq:
+		m = m.closeChat()
+		m.result = &tuiResult{err: msg.req}
+		return m, tea.Quit
+
+	case userSearchOpened:
+		if msg.err != nil {
+			break
+		}
+		return m.openChat(msg.entry)
+
+	case userSearchClosed:
+		m = m.closeChat()
+		return m, nil
+
+	case tea.KeyPressMsg:
+		return m.handleKey(msg)
+	}
+
+	if m.isListMsg(msg) {
+		return m.updateList(msg)
+	}
+	var cmd tea.Cmd
+	switch {
+	case m.searchOpen:
+		m.search, cmd = m.search.Update(msg)
+	case m.chatOpen:
+		m.chat, cmd = m.chat.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m tuiModel) isListMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
+		chatListArchiveToggle, chatListSearch, chatListAccounts, chatListQuit,
+		chatListDeleteDone:
+		return true
+	}
+	return false
+}
+
+func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
+	var cmd tea.Cmd
+	if m.chatOpen && m.chat.locked {
+		m.chat, cmd = m.chat.Update(msg)
+		return m, cmd
+	}
+	paneFocused := m.paneOpen() && m.focus == focusChat
+	chatFocused := m.chatOpen && m.focus == focusChat
+	idle := !paneFocused || (chatFocused && m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
+
+	k := msg.String()
+	if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
+		i := int(k[4] - '1')
+		if m.mgr != nil && i < len(m.mgr.Accounts) && m.mgr.Accounts[i] != m.active {
+			m = m.closeChat()
+			m.result = &tuiResult{switchTo: m.mgr.Accounts[i]}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	switch {
+	case k == "tab" && m.twoPane() && m.paneOpen() && (!chatFocused || m.chat.subMode == chatSubNone):
+		if paneFocused {
+			m.focus = focusList
+		} else {
+			m.focus = focusChat
+		}
+		return m, nil
+	case k == "?" && idle:
+		m.fullHelp = !m.fullHelp
+		return m, nil
+	case k == "esc" && !paneFocused && m.paneOpen() && m.list.confirm == nil:
+		m = m.closeChat()
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+	}
+	if paneFocused && m.searchOpen {
+		m.search, cmd = m.search.Update(msg)
+		return m, cmd
+	}
+	if chatFocused {
+		m.chat, cmd = m.chat.Update(msg)
+		return m, cmd
+	}
+	return m.updateList(msg)
+}
+
+func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if m.loadErr != nil {
+			m.loadErr = nil
+			return m, loadDialogs(m.ctx, m.b, m.archived)
+		}
+
+	case tuiDialogsLoaded:
+		if msg.err != nil {
+			m.loadErr = msg.err
+			if !backend.NetworkError(msg.err) {
+				return m, nil
+			}
+			return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
+				return tuiRetryDialogs{}
+			})
+		}
+		m.loadErr = nil
+		selected, offset := m.list.selected, m.list.offset
+		m.entries = msg.entries
+		m.archiveUnread = msg.archiveUnread
+		m.list = newChatListModel(m.ctx, m.b, msg.entries, m.archived, msg.archiveUnread)
+		m.list.selected = min(selected, m.list.maxIndex())
+		m.list.offset = offset
+		return m, nil
+
+	case tuiRetryDialogs:
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+
+	case chatListChoice:
+		if msg.index >= 0 && msg.index < len(m.entries) {
+			return m.openChat(m.entries[msg.index])
+		}
+
+	case chatListRefresh:
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+
+	case chatListArchiveToggle:
+		m = m.closeChat()
+		m.archived = !m.archived
+		m.list.selected, m.list.offset = 0, 0
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+
+	case chatListSearch:
+		m = m.closeChat()
+		var cmd tea.Cmd
+		m.search, cmd = newUserSearch(m.ctx, m.b, m.entries)
+		m.searchOpen = true
+		m.focus = focusChat
+		return m, cmd
+
+	case chatListAccounts:
+		m = m.closeChat()
+		return m.done(len(m.entries)+2, false)
+
+	case chatListQuit:
+		m = m.closeChat()
+		return m.done(-1, false)
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m tuiModel) footer() string {
+	var keys []helpKey
+	notice := m.list.notice()
+	switch {
+	case m.searchOpen && m.focus == focusChat:
+		keys = userSearchHelp
+		if m.twoPane() {
+			keys = append(keys, helpKey{"tab", "chats"})
+		}
+	case m.chatOpen && m.focus == focusChat:
+		keys = m.chat.helpKeys()
+		notice = m.chat.notice
+	default:
+		keys = append(keys, chatListHelp...)
+		if m.searchOpen {
+			keys = append(keys, helpKey{"tab", "search"}, helpKey{"esc", "close search"})
+		}
+		if m.chatOpen {
+			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
+			if notice == "" {
+				notice = m.chat.notice
+			}
+		}
+		if m.mgr != nil && len(m.mgr.Accounts) > 1 {
+			keys = append(keys, helpKey{"M-1…9", "account"})
+		}
+		keys = append(keys, helpKey{"?", "more"})
+	}
+	return renderFooter(keys, m.fullHelp, notice, m.width)
+}
+
+func (m tuiModel) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+func (m tuiModel) render() string {
+	if m.chatOpen && m.chat.locked {
+		return m.chat.lockView(m.width, m.height)
+	}
+	bodyHeight := m.bodyHeight()
+	listFocused := m.focus == focusList
+	var body string
+	switch {
+	case m.loadErr != nil && !m.paneOpen():
+		msg := styleError.Render("Error: "+textfmt.CleanError(m.loadErr)) + "\n" +
+			styleSubtle.Render("Press any key to retry.")
+		body = renderBox(m.list.title(), centerLines(m.width-4, bodyHeight-2, msg),
+			m.width, bodyHeight, colorRed)
+	case m.twoPane():
+		list := renderBox(m.list.title(), m.list.body(sidebarWidth-4, bodyHeight-2, listFocused),
+			sidebarWidth, bodyHeight, boxBorder(listFocused))
+		right := m.emptyPane(m.width-sidebarWidth, bodyHeight)
+		switch {
+		case m.searchOpen:
+			right = m.search.view(m.width-sidebarWidth, bodyHeight, !listFocused)
+		case m.chatOpen:
+			right = m.chat.View()
+		}
+		body = lipgloss.JoinHorizontal(lipgloss.Top, list, right)
+	case m.searchOpen:
+		body = m.search.view(m.width, bodyHeight, true)
+	case m.chatOpen:
+		body = m.chat.View()
+	default:
+		body = renderBox(m.list.title(), m.list.body(m.width-4, bodyHeight-2, true),
+			m.width, bodyHeight, colorAccent)
+	}
+	header := renderHeader(accountChips(m.mgr, m.active), m.width)
+	return header + "\n" + body + "\n" + m.footer()
+}
+
+func (m tuiModel) emptyPane(width, height int) string {
+	hint := lipgloss.JoinVertical(lipgloss.Center,
+		renderLogo(width-4),
+		"",
+		styleSubtle.Render("Pick a chat and press ⏎"),
+		styleDim.Render(textfmt.Plain(m.b.AccountLabel())),
+	)
+	return renderBox("", centerLines(width-4, height-2, hint), width, height, colorDim)
+}
+
+func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archived bool, archiveUnread int) (int, bool, error) {
+	m := newTuiModel(ctx, mgr, active, b, histories, entries, archived, archiveUnread)
+	p := tea.NewProgram(m, tea.WithContext(ctx))
+	result, err := p.Run()
+	if err != nil {
+		return -1, false, fmt.Errorf("run TUI: %w", err)
+	}
+	final := result.(tuiModel)
+	if final.result == nil {
+		return -1, false, nil
+	}
+	if final.result.switchTo != nil {
+		return -1, false, accountSwitch{to: final.result.switchTo}
+	}
+	// runModes interprets the search/accounts rows relative to the entries it
+	// passed in, which may differ from the list after a reload.
+	index := final.result.index
+	if index >= len(final.entries) {
+		index = len(entries) + index - len(final.entries)
+	}
+	return index, final.result.refresh, final.result.err
+}
