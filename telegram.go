@@ -466,16 +466,48 @@ func (tb *telegramBackend) AcknowledgeMedia(ctx context.Context, msg message) {
 	tb.c.acknowledgeMedia(ctx, m)
 }
 
-func (tb *telegramBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
+func (tb *telegramBackend) UserSearchBase(ctx context.Context, recentChats []chatEntry) (userSearchBase, error) {
+	c := tb.c
 	chats := chatEntriesToChats(recentChats)
-	result, selected, err := tb.c.searchUsers(ctx, t, chats)
+	contacts, contactsErr := c.loadContacts(ctx)
+	frequent, frequentErr := c.loadFrequentUsers(ctx)
+	local := mergeChoices(choicesFromUsers(contacts, "contact"), c.recentUserChoices(chats, "recent"))
+	base := choicesFromUsers(frequent, "")
+	heading := "Frequently contacted"
+	if len(base) == 0 {
+		base, heading = c.recentUserChoices(chats, ""), "Recent"
+	}
+	err := contactsErr
+	if err == nil {
+		err = frequentErr
+	}
+	return userSearchBase{heading, tgCandidates(base), tgCandidates(local)}, err
+}
+
+func tgCandidates(choices []userChoice) []userCandidate {
+	out := make([]userCandidate, len(choices))
+	for i, choice := range choices {
+		key := fmt.Sprintf("%c%d", choice.entry.key.kind, choice.entry.key.id)
+		out[i] = userCandidate{key: key, label: choice.label, match: choice.match, raw: choice}
+	}
+	return out
+}
+
+func (tb *telegramBackend) UserSearchRemote(ctx context.Context, query string) ([]userCandidate, error) {
+	choices, err := tb.c.remoteUserChoices(ctx, query)
+	return tgCandidates(choices), err
+}
+
+func (tb *telegramBackend) OpenUserCandidate(ctx context.Context, c userCandidate) (chatEntry, error) {
+	choice, ok := c.raw.(userChoice)
+	if !ok {
+		return chatEntry{}, fmt.Errorf("open chat: unexpected search result")
+	}
+	entry, err := tb.c.resolveUserChoice(ctx, choice)
 	if err != nil {
-		return chatEntry{}, false, err
+		return chatEntry{}, err
 	}
-	if !selected {
-		return chatEntry{}, false, nil
-	}
-	return chatToChatEntry(result), true, nil
+	return chatToChatEntry(entry), nil
 }
 
 func (tb *telegramBackend) HandleForward(ctx context.Context, t *terminal, recentChats []chatEntry, fromChat chatEntry, msgID string) {

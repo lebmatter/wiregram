@@ -1496,259 +1496,68 @@ func (mx *mxBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
 
 // User search.
 
-func (mx *mxBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
-	type mxUserChoice struct {
-		userID string
-		label  string
-		match  string
-	}
-
-	var base []mxUserChoice
+func (mx *mxBackend) UserSearchBase(ctx context.Context, recentChats []chatEntry) (userSearchBase, error) {
+	var base []userCandidate
 	for _, ch := range recentChats {
 		if !ch.IsDM {
 			continue
 		}
 		mx.mu.Lock()
 		room := mx.rooms[ch.ID.id]
-		mx.mu.Unlock()
-		if room == nil {
-			continue
+		var members map[string]string
+		if room != nil {
+			members = make(map[string]string, len(room.members))
+			for uid, name := range room.members {
+				members[uid] = name
+			}
 		}
-		for uid, name := range room.members {
+		mx.mu.Unlock()
+		for uid, name := range members {
 			if uid == mx.userID {
 				continue
 			}
 			if name == "" {
 				name = uid
 			}
-			base = append(base, mxUserChoice{
-				userID: uid,
-				label:  name,
-				match:  strings.ToLower(name + " " + uid),
-			})
+			base = append(base, userCandidate{key: uid, label: name,
+				match: strings.ToLower(name + " " + uid), raw: uid})
 		}
 	}
+	return userSearchBase{heading: "Recent DMs", base: base, local: base}, nil
+}
 
-	choices := base
-	heading := "Recent DMs"
-	selected := 0
-	var query []rune
-	searching := false
-	notice := ""
-	generation := 0
-	type searchResult struct {
-		gen     int
-		choices []mxUserChoice
-		err     error
+func (mx *mxBackend) UserSearchRemote(ctx context.Context, query string) ([]userCandidate, error) {
+	var resp struct {
+		Results []struct {
+			UserID      string `json:"user_id"`
+			DisplayName string `json:"display_name"`
+		} `json:"results"`
 	}
-	results := make(chan searchResult, 4)
-	timer := time.NewTimer(time.Hour)
-	timer.Stop()
-	defer timer.Stop()
-	var timerC <-chan time.Time
-	var searchCancel context.CancelFunc
-	defer func() {
-		if searchCancel != nil {
-			searchCancel()
+	if err := mx.apiJSON(ctx, "POST", "/user_directory/search",
+		map[string]any{"search_term": query, "limit": 20}, &resp); err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+	var out []userCandidate
+	for _, u := range resp.Results {
+		if u.UserID == mx.userID {
+			continue
 		}
-	}()
+		name := u.DisplayName
+		if name == "" {
+			name = u.UserID
+		}
+		out = append(out, userCandidate{key: u.UserID, label: name + "  " + u.UserID,
+			match: strings.ToLower(name + " " + u.UserID), raw: u.UserID})
+	}
+	return out, nil
+}
 
-	render := func() {
-		labels := make([]userChoice, len(choices))
-		for i, c := range choices {
-			labels[i] = userChoice{label: c.label}
-		}
-		renderUserSearch(t.out(), labels, selected, string(query), heading, notice, searching)
+func (mx *mxBackend) OpenUserCandidate(ctx context.Context, c userCandidate) (chatEntry, error) {
+	userID, ok := c.raw.(string)
+	if !ok {
+		return chatEntry{}, fmt.Errorf("open chat: unexpected search result")
 	}
-
-	filter := func(all []mxUserChoice, q string) []mxUserChoice {
-		q = strings.ToLower(strings.TrimSpace(q))
-		if q == "" {
-			return nil
-		}
-		var out []mxUserChoice
-		for _, c := range all {
-			if strings.Contains(c.match, q) {
-				out = append(out, c)
-			}
-		}
-		return out
-	}
-
-	resetSearch := func() {
-		generation++
-		if searchCancel != nil {
-			searchCancel()
-			searchCancel = nil
-		}
-		if !timer.Stop() && timerC != nil {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timerC = nil
-		text := strings.TrimSpace(string(query))
-		selected = 0
-		searching = false
-		notice = ""
-		if text == "" {
-			choices, heading = base, "Recent DMs"
-			return
-		}
-		choices = filter(base, text)
-		heading = "Results"
-		if len(text) >= 2 {
-			searching = true
-			timer.Reset(300 * time.Millisecond)
-			timerC = timer.C
-		}
-	}
-
-	render()
-	for {
-		select {
-		case <-ctx.Done():
-			return chatEntry{}, false, ctx.Err()
-		case <-timerC:
-			timerC = nil
-			searchCtx, cancel := context.WithCancel(ctx)
-			searchCancel = cancel
-			gen, text := generation, strings.TrimSpace(string(query))
-			go func() {
-				var resp struct {
-					Results []struct {
-						UserID      string `json:"user_id"`
-						DisplayName string `json:"display_name"`
-					} `json:"results"`
-				}
-				err := mx.apiJSON(searchCtx, "POST", "/user_directory/search",
-					map[string]any{"search_term": text, "limit": 20}, &resp)
-				var out []mxUserChoice
-				if err == nil {
-					seen := make(map[string]bool)
-					for _, u := range resp.Results {
-						if u.UserID == mx.userID || seen[u.UserID] {
-							continue
-						}
-						seen[u.UserID] = true
-						name := u.DisplayName
-						if name == "" {
-							name = u.UserID
-						}
-						out = append(out, mxUserChoice{
-							userID: u.UserID,
-							label:  name + "  " + u.UserID,
-							match:  strings.ToLower(name + " " + u.UserID),
-						})
-					}
-				}
-				select {
-				case results <- searchResult{gen, out, err}:
-				case <-searchCtx.Done():
-				}
-			}()
-		case result := <-results:
-			if result.gen != generation {
-				continue
-			}
-			searching = false
-			if searchCancel != nil {
-				searchCancel()
-			}
-			searchCancel = nil
-			if result.err != nil {
-				t.report(result.err)
-				notice = cleanError(result.err)
-				render()
-				continue
-			}
-			notice = ""
-			seen := make(map[string]bool)
-			var merged []mxUserChoice
-			text := strings.TrimSpace(string(query))
-			for _, c := range filter(base, text) {
-				if !seen[c.userID] {
-					seen[c.userID] = true
-					merged = append(merged, c)
-				}
-			}
-			for _, c := range result.choices {
-				if !seen[c.userID] {
-					seen[c.userID] = true
-					merged = append(merged, c)
-				}
-			}
-			choices = merged
-			selected = min(selected, max(0, len(choices)-1))
-			render()
-		case key, ok := <-t.keys:
-			if !ok {
-				return chatEntry{}, false, context.Canceled
-			}
-			if key == terminalLockKey {
-				continue
-			}
-			if key == terminalUnlockKey {
-				render()
-				t.flushNotices()
-				continue
-			}
-			switch key {
-			case "\x03", "\x04":
-				return chatEntry{}, false, nil
-			case "\x1b":
-				if len(query) == 0 {
-					return chatEntry{}, false, nil
-				}
-				query = nil
-				resetSearch()
-			case "\x1b[A", "\x1bOA":
-				if selected > 0 {
-					selected--
-				}
-			case "\x1b[B", "\x1bOB":
-				if selected+1 < len(choices) {
-					selected++
-				}
-			case "\r", "\n":
-				if selected < len(choices) {
-					user := choices[selected]
-					notice = "Opening…"
-					render()
-					entry, err := mx.openDM(ctx, user.userID)
-					if err != nil {
-						t.report(err)
-						notice = cleanError(err)
-						render()
-						continue
-					}
-					return entry, true, nil
-				}
-			case "\x7f", "\x08":
-				if len(query) > 0 {
-					query = query[:len(query)-1]
-					resetSearch()
-				}
-			case "\x15":
-				if len(query) > 0 {
-					query = nil
-					resetSearch()
-				}
-			default:
-				if strings.HasPrefix(key, "\x1b") {
-					render()
-					continue
-				}
-				previous := len(query)
-				query = appendQuery(query, key)
-				if len(query) != previous {
-					resetSearch()
-				}
-			}
-			render()
-		}
-	}
+	return mx.openDM(ctx, userID)
 }
 
 func (mx *mxBackend) openDM(ctx context.Context, userID string) (chatEntry, error) {

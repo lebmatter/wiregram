@@ -38,6 +38,8 @@ type tuiModel struct {
 	list          chatListModel
 	chat          chatViewModel
 	chatOpen      bool
+	search        userSearchModel
+	searchOpen    bool
 	focus         tuiFocus
 	fullHelp      bool
 	result        *tuiResult
@@ -92,6 +94,9 @@ func (m tuiModel) Init() tea.Cmd {
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
 
+// paneOpen reports whether the right-hand pane holds a chat or the user search.
+func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen }
+
 func (m tuiModel) bodyHeight() int {
 	return max(4, m.height-1-lipgloss.Height(m.footer()))
 }
@@ -99,7 +104,7 @@ func (m tuiModel) bodyHeight() int {
 // sized pushes the current layout down to the list and chat models.
 func (m tuiModel) sized() tuiModel {
 	bodyHeight := m.bodyHeight()
-	if !m.twoPane() && m.chatOpen {
+	if !m.twoPane() && m.paneOpen() {
 		m.focus = focusChat
 	}
 	if m.twoPane() {
@@ -108,6 +113,11 @@ func (m tuiModel) sized() tuiModel {
 	} else {
 		m.list.width, m.list.height = m.width-4, bodyHeight-2
 		m.chat.width, m.chat.height = m.width, bodyHeight
+	}
+	if m.searchOpen && m.twoPane() {
+		m.search = m.search.resized(m.width-sidebarWidth, bodyHeight)
+	} else if m.searchOpen {
+		m.search = m.search.resized(m.width, bodyHeight)
 	}
 	m.chat.embedded = m.twoPane()
 	m.chat.focused = m.focus == focusChat
@@ -121,7 +131,9 @@ func (m tuiModel) done(index int, refresh bool) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) closeChat() tuiModel {
+	m.searchOpen = false
 	if !m.chatOpen {
+		m.focus = focusList
 		return m
 	}
 	m.histories[m.chat.entry.ID] = *m.chat.histories
@@ -131,9 +143,8 @@ func (m tuiModel) closeChat() tuiModel {
 	return m
 }
 
-func (m tuiModel) openChat(index int) (tuiModel, tea.Cmd) {
+func (m tuiModel) openChat(entry chatEntry) (tuiModel, tea.Cmd) {
 	m = m.closeChat()
-	entry := m.entries[index]
 	h := m.histories[entry.ID]
 	if h == nil {
 		h = make([]string, 0)
@@ -205,6 +216,16 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.result = &tuiResult{err: msg.req}
 		return m, tea.Quit
 
+	case userSearchOpened:
+		if msg.err != nil {
+			break
+		}
+		return m.openChat(msg.entry)
+
+	case userSearchClosed:
+		m = m.closeChat()
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -213,7 +234,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m.updateList(msg)
 	}
 	var cmd tea.Cmd
-	if m.chatOpen {
+	switch {
+	case m.searchOpen:
+		m.search, cmd = m.search.Update(msg)
+	case m.chatOpen:
 		m.chat, cmd = m.chat.Update(msg)
 	}
 	return m, cmd
@@ -235,8 +259,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.Update(msg)
 		return m, cmd
 	}
+	paneFocused := m.paneOpen() && m.focus == focusChat
 	chatFocused := m.chatOpen && m.focus == focusChat
-	idle := !chatFocused || (m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
+	idle := !paneFocused || (chatFocused && m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
 
 	k := msg.String()
 	if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
@@ -249,8 +274,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	switch {
-	case k == "tab" && m.twoPane() && m.chatOpen && (!chatFocused || m.chat.subMode == chatSubNone):
-		if chatFocused {
+	case k == "tab" && m.twoPane() && m.paneOpen() && (!chatFocused || m.chat.subMode == chatSubNone):
+		if paneFocused {
 			m.focus = focusList
 		} else {
 			m.focus = focusChat
@@ -259,9 +284,13 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case k == "?" && idle:
 		m.fullHelp = !m.fullHelp
 		return m, nil
-	case k == "esc" && !chatFocused && m.chatOpen && m.list.confirm == nil:
+	case k == "esc" && !paneFocused && m.paneOpen() && m.list.confirm == nil:
 		m = m.closeChat()
 		return m, loadDialogs(m.ctx, m.b, m.archived)
+	}
+	if paneFocused && m.searchOpen {
+		m.search, cmd = m.search.Update(msg)
+		return m, cmd
 	}
 	if chatFocused {
 		m.chat, cmd = m.chat.Update(msg)
@@ -302,7 +331,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case chatListChoice:
 		if msg.index >= 0 && msg.index < len(m.entries) {
-			return m.openChat(msg.index)
+			return m.openChat(m.entries[msg.index])
 		}
 
 	case chatListRefresh:
@@ -316,7 +345,11 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case chatListSearch:
 		m = m.closeChat()
-		return m.done(len(m.entries)+1, false)
+		var cmd tea.Cmd
+		m.search, cmd = newUserSearch(m.ctx, m.b, m.entries)
+		m.searchOpen = true
+		m.focus = focusChat
+		return m, cmd
 
 	case chatListAccounts:
 		m = m.closeChat()
@@ -335,11 +368,20 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 func (m tuiModel) footer() string {
 	var keys []helpKey
 	notice := m.list.notice()
-	if m.chatOpen && m.focus == focusChat {
+	switch {
+	case m.searchOpen && m.focus == focusChat:
+		keys = userSearchHelp
+		if m.twoPane() {
+			keys = append(keys, helpKey{"tab", "chats"})
+		}
+	case m.chatOpen && m.focus == focusChat:
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
-	} else {
+	default:
 		keys = append(keys, chatListHelp...)
+		if m.searchOpen {
+			keys = append(keys, helpKey{"tab", "search"}, helpKey{"esc", "close search"})
+		}
 		if m.chatOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
 			if notice == "" {
@@ -368,7 +410,7 @@ func (m tuiModel) render() string {
 	listFocused := m.focus == focusList
 	var body string
 	switch {
-	case m.loadErr != nil && !m.chatOpen:
+	case m.loadErr != nil && !m.paneOpen():
 		msg := styleError.Render("Error: "+cleanError(m.loadErr)) + "\n" +
 			styleSubtle.Render("Press any key to retry.")
 		body = renderBox(m.list.title(), centerLines(m.width-4, bodyHeight-2, msg),
@@ -377,10 +419,15 @@ func (m tuiModel) render() string {
 		list := renderBox(m.list.title(), m.list.body(sidebarWidth-4, bodyHeight-2, listFocused),
 			sidebarWidth, bodyHeight, boxBorder(listFocused))
 		right := m.emptyPane(m.width-sidebarWidth, bodyHeight)
-		if m.chatOpen {
+		switch {
+		case m.searchOpen:
+			right = m.search.view(m.width-sidebarWidth, bodyHeight, !listFocused)
+		case m.chatOpen:
 			right = m.chat.View()
 		}
 		body = lipgloss.JoinHorizontal(lipgloss.Top, list, right)
+	case m.searchOpen:
+		body = m.search.view(m.width, bodyHeight, true)
 	case m.chatOpen:
 		body = m.chat.View()
 	default:

@@ -40,7 +40,8 @@ These are project constraints, not suggestions:
 - **No new dependencies** beyond the approved set: gotd/td,
   x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow,
   modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
-  and charm.land/bubbles/v2.
+  and charm.land/bubbles/v2 (its list component pulls in
+  github.com/sahilm/fuzzy, approved as a transitive dependency).
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -100,7 +101,7 @@ All source is flat in `package main`. The mode loop is:
 13. **`agentdb.go`** — SQLite database layer for agent configuration and message history (`wiregram.db`).
 14. **`agentruntime.go`** — background agent runtime: subscribes to backend events, dispatches to LLM providers, manages suggest/auto modes.
 15. **`tuiagent.go`** — BubbleTea UI for agent and provider management, thread viewing, and chat assignment.
-16. **`tui.go`**, **`tuilist.go`**, **`tuichat.go`**, **`tuithread.go`**, **`tuiupload.go`**, **`tuiaccount.go`**, **`tuisplash.go`**, **`tuirender.go`** — the BubbleTea screens: root layout, sidebar, chat pane, thread panel, upload picker, account screens, splash, shared styling.
+16. **`tui.go`**, **`tuilist.go`**, **`tuichat.go`**, **`tuithread.go`**, **`tuiupload.go`**, **`tuisearch.go`**, **`tuiaccount.go`**, **`tuisplash.go`**, **`tuirender.go`** — the BubbleTea screens: root layout, sidebar, chat pane, thread panel, upload picker, user search, account screens, splash, shared styling.
 
 ### Concurrency model
 

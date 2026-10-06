@@ -1002,243 +1002,51 @@ func firstError(errs ...error) error {
 
 func (mb *mmBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
 
-func (mb *mmBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
-	type mmUserChoice struct {
-		user  mmUser
-		label string
-		match string
+func (mb *mmBackend) userCandidate(u mmUser) userCandidate {
+	label := u.displayName()
+	if u.Username != "" && !strings.EqualFold(label, u.Username) {
+		label += "  @" + u.Username
 	}
+	match := strings.ToLower(u.Username + " " + u.First + " " + u.Last + " " + u.Nickname)
+	return userCandidate{key: u.ID, label: label, match: match, raw: u}
+}
 
-	toChoice := func(u mmUser) mmUserChoice {
-		label := u.displayName()
-		if u.Username != "" && !strings.EqualFold(label, u.Username) {
-			label += "  @" + u.Username
-		}
-		match := strings.ToLower(u.Username + " " + u.First + " " + u.Last + " " + u.Nickname)
-		return mmUserChoice{user: u, label: label, match: match}
-	}
-
-	var base []mmUserChoice
+func (mb *mmBackend) UserSearchBase(ctx context.Context, recentChats []chatEntry) (userSearchBase, error) {
+	var base []userCandidate
 	for _, ch := range recentChats {
 		raw, ok := ch.Raw.(mmChannel)
 		if !ok || raw.Type != "D" {
 			continue
 		}
-		parts := strings.Split(raw.Name, "__")
-		for _, uid := range parts {
+		for _, uid := range strings.Split(raw.Name, "__") {
 			if uid != mb.userID && uid != "" {
-				u := mb.resolveUser(ctx, uid)
-				base = append(base, toChoice(u))
+				base = append(base, mb.userCandidate(mb.resolveUser(ctx, uid)))
 			}
 		}
 	}
+	return userSearchBase{heading: "Recent DMs", base: base, local: base}, nil
+}
 
-	choices := base
-	heading := "Recent DMs"
-	selected := 0
-	var query []rune
-	searching := false
-	notice := ""
-	generation := 0
-	type searchResult struct {
-		gen     int
-		choices []mmUserChoice
-		err     error
+func (mb *mmBackend) UserSearchRemote(ctx context.Context, query string) ([]userCandidate, error) {
+	var users []mmUser
+	if err := mb.apiJSON(ctx, "POST", "/users/search", map[string]string{"term": query}, &users); err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
 	}
-	results := make(chan searchResult, 4)
-	timer := time.NewTimer(time.Hour)
-	timer.Stop()
-	defer timer.Stop()
-	var timerC <-chan time.Time
-	var searchCancel context.CancelFunc
-	defer func() {
-		if searchCancel != nil {
-			searchCancel()
+	var out []userCandidate
+	for _, u := range users {
+		if u.ID != mb.userID {
+			out = append(out, mb.userCandidate(u))
 		}
-	}()
+	}
+	return out, nil
+}
 
-	render := func() {
-		labels := make([]userChoice, len(choices))
-		for i, c := range choices {
-			labels[i] = userChoice{label: c.label}
-		}
-		renderUserSearch(t.out(), labels, selected, string(query), heading, notice, searching)
+func (mb *mmBackend) OpenUserCandidate(ctx context.Context, c userCandidate) (chatEntry, error) {
+	user, ok := c.raw.(mmUser)
+	if !ok {
+		return chatEntry{}, fmt.Errorf("open chat: unexpected search result")
 	}
-
-	filter := func(all []mmUserChoice, q string) []mmUserChoice {
-		q = strings.ToLower(strings.TrimSpace(q))
-		if q == "" {
-			return nil
-		}
-		var out []mmUserChoice
-		for _, c := range all {
-			if strings.Contains(c.match, q) {
-				out = append(out, c)
-			}
-		}
-		return out
-	}
-
-	resetSearch := func() {
-		generation++
-		if searchCancel != nil {
-			searchCancel()
-			searchCancel = nil
-		}
-		if !timer.Stop() && timerC != nil {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timerC = nil
-		text := strings.TrimSpace(string(query))
-		selected = 0
-		searching = false
-		notice = ""
-		if text == "" {
-			choices, heading = base, "Recent DMs"
-			return
-		}
-		choices = filter(base, text)
-		heading = "Results"
-		if len(text) >= 2 {
-			searching = true
-			timer.Reset(300 * time.Millisecond)
-			timerC = timer.C
-		}
-	}
-
-	render()
-	for {
-		select {
-		case <-ctx.Done():
-			return chatEntry{}, false, ctx.Err()
-		case <-timerC:
-			timerC = nil
-			searchCtx, cancel := context.WithCancel(ctx)
-			searchCancel = cancel
-			gen, text := generation, strings.TrimSpace(string(query))
-			go func() {
-				var users []mmUser
-				err := mb.apiJSON(searchCtx, "POST", "/users/search", map[string]string{"term": text}, &users)
-				var out []mmUserChoice
-				if err == nil {
-					seen := make(map[string]bool)
-					for _, u := range users {
-						if u.ID == mb.userID || seen[u.ID] {
-							continue
-						}
-						seen[u.ID] = true
-						out = append(out, toChoice(u))
-					}
-				}
-				select {
-				case results <- searchResult{gen, out, err}:
-				case <-searchCtx.Done():
-				}
-			}()
-		case result := <-results:
-			if result.gen != generation {
-				continue
-			}
-			searching = false
-			if searchCancel != nil {
-				searchCancel()
-			}
-			searchCancel = nil
-			if result.err != nil {
-				t.report(result.err)
-				notice = cleanError(result.err)
-				render()
-				continue
-			}
-			notice = ""
-			seen := make(map[string]bool)
-			var merged []mmUserChoice
-			text := strings.TrimSpace(string(query))
-			for _, c := range filter(base, text) {
-				if !seen[c.user.ID] {
-					seen[c.user.ID] = true
-					merged = append(merged, c)
-				}
-			}
-			for _, c := range result.choices {
-				if !seen[c.user.ID] {
-					seen[c.user.ID] = true
-					merged = append(merged, c)
-				}
-			}
-			choices = merged
-			selected = min(selected, max(0, len(choices)-1))
-			render()
-		case key, ok := <-t.keys:
-			if !ok {
-				return chatEntry{}, false, context.Canceled
-			}
-			if key == terminalLockKey {
-				continue
-			}
-			if key == terminalUnlockKey {
-				render()
-				t.flushNotices()
-				continue
-			}
-			switch key {
-			case "\x03", "\x04":
-				return chatEntry{}, false, nil
-			case "\x1b":
-				if len(query) == 0 {
-					return chatEntry{}, false, nil
-				}
-				query = nil
-				resetSearch()
-			case "\x1b[A", "\x1bOA":
-				if selected > 0 {
-					selected--
-				}
-			case "\x1b[B", "\x1bOB":
-				if selected+1 < len(choices) {
-					selected++
-				}
-			case "\r", "\n":
-				if selected < len(choices) {
-					user := choices[selected].user
-					notice = "Opening…"
-					render()
-					entry, err := mb.openDM(ctx, user)
-					if err != nil {
-						t.report(err)
-						notice = cleanError(err)
-						render()
-						continue
-					}
-					return entry, true, nil
-				}
-			case "\x7f", "\x08":
-				if len(query) > 0 {
-					query = query[:len(query)-1]
-					resetSearch()
-				}
-			case "\x15":
-				if len(query) > 0 {
-					query = nil
-					resetSearch()
-				}
-			default:
-				if strings.HasPrefix(key, "\x1b") {
-					render()
-					continue
-				}
-				previous := len(query)
-				query = appendQuery(query, key)
-				if len(query) != previous {
-					resetSearch()
-				}
-			}
-			render()
-		}
-	}
+	return mb.openDM(ctx, user)
 }
 
 func (mb *mmBackend) openDM(ctx context.Context, user mmUser) (chatEntry, error) {

@@ -1189,7 +1189,34 @@ func (wa *waBackend) AcknowledgeMedia(ctx context.Context, msg message) {}
 
 // User search.
 
-func (wa *waBackend) SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
+func (wa *waBackend) UserSearchBase(ctx context.Context, recentChats []chatEntry) (userSearchBase, error) {
+	var base []userCandidate
+	for _, ch := range recentChats {
+		jid, ok := ch.Raw.(types.JID)
+		if !ch.IsDM || !ok {
+			continue
+		}
+		base = append(base, userCandidate{key: jid.String(), label: ch.Title,
+			match: strings.ToLower(ch.Title + " " + jid.User), raw: ch})
+	}
+	return userSearchBase{heading: "Recent DMs", base: base, local: base}, nil
+}
+
+// UserSearchRemote returns nothing: WhatsApp has no user directory to search.
+func (wa *waBackend) UserSearchRemote(ctx context.Context, query string) ([]userCandidate, error) {
+	return nil, nil
+}
+
+func (wa *waBackend) OpenUserCandidate(ctx context.Context, c userCandidate) (chatEntry, error) {
+	entry, ok := c.raw.(chatEntry)
+	if !ok {
+		return chatEntry{}, fmt.Errorf("open chat: unexpected search result")
+	}
+	return entry, nil
+}
+
+// pickUser is the terminal picker still used by HandleForward.
+func (wa *waBackend) pickUser(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error) {
 	var base []struct {
 		jid   types.JID
 		label string
@@ -1308,7 +1335,7 @@ func filterWAChoices(all []struct {
 }
 
 func (wa *waBackend) HandleForward(ctx context.Context, t *terminal, recentChats []chatEntry, fromChat chatEntry, msgID string) {
-	target, ok, err := wa.SearchUsers(ctx, t, recentChats)
+	target, ok, err := wa.pickUser(ctx, t, recentChats)
 	if err != nil || !ok {
 		return
 	}

@@ -205,23 +205,10 @@ func runModes(ctx context.Context, mgr *accountManager, active *account, b backe
 			archived = !archived
 			continue
 		}
-		var entry chatEntry
-		if index == len(entries)+1 {
-			var selected bool
-			if err := withLegacyTerminal(ctx, func(t *terminal) {
-				entry, selected, err = b.SearchUsers(ctx, t, entries)
-			}); err != nil {
-				return err
-			}
-			if err != nil {
-				return err
-			}
-			if !selected {
-				continue
-			}
-		} else {
-			entry = entries[index]
+		if index >= len(entries) {
+			continue
 		}
+		entry := entries[index]
 		history := histories[entry.ID]
 		if history == nil {
 			history = make([]string, 0)

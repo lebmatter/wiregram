@@ -51,6 +51,22 @@ type message struct {
 	Raw        any
 }
 
+// userCandidate is one row in the user search.
+type userCandidate struct {
+	key   string // identity for de-duplicating local and remote results
+	label string
+	match string // lowercase text matched against the query
+	raw   any
+}
+
+// userSearchBase is what the search shows before and while typing: base when
+// the query is empty, local filtered by the query until remote results arrive.
+type userSearchBase struct {
+	heading string
+	base    []userCandidate
+	local   []userCandidate
+}
+
 type messageReaction struct {
 	Emoji  string
 	Count  int
@@ -193,8 +209,10 @@ type backend interface {
 	SaveMedia(ctx context.Context, msg message, destDir string) error
 	AcknowledgeMedia(ctx context.Context, msg message)
 
-	// User search (for forward target selection, etc.)
-	SearchUsers(ctx context.Context, t *terminal, recentChats []chatEntry) (chatEntry, bool, error)
+	// User search. The TUI owns filtering and debounce; backends supply data.
+	UserSearchBase(ctx context.Context, recentChats []chatEntry) (userSearchBase, error)
+	UserSearchRemote(ctx context.Context, query string) ([]userCandidate, error)
+	OpenUserCandidate(ctx context.Context, c userCandidate) (chatEntry, error)
 	HandleForward(ctx context.Context, t *terminal, recentChats []chatEntry, fromChat chatEntry, msgID string)
 
 	// Subscribers
