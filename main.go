@@ -33,7 +33,15 @@ Config and sessions are stored in ~/.config/wiregram/.
 Credentials are stored in the OS keyring by default (secret-tool on Linux,
 Keychain on macOS). Use --insecure to store them in plain JSON files instead.
 
+Layout: terminals 100+ columns wide show the chat list beside the open chat.
+The header lists every account; Alt+1..9 switches to that account.
+
 Keyboard shortcuts:
+
+  Anywhere
+    Alt+1..9          Switch to account N
+    Tab               Move between chat list and chat (wide terminals)
+    ?                 Show all shortcuts
 
   Chat list
     Up/k, Down/j     Select chat
@@ -43,15 +51,18 @@ Keyboard shortcuts:
     r                 Refresh chats
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)
+    Esc               Close the open chat (wide terminals)
     q, Ctrl+D         Quit
 
   Chat
     Up/Down           Select message
     Enter             Send text
     o                 Open selected media (when input is empty)
-    Ctrl+U            Upload file
+    Ctrl+U            Upload file (browse, or / to type a path)
     Ctrl+F            Search messages
     Alt+R             Reply (toggle)
+    Alt+G             Jump to the quoted message
+    Alt+T             Open the selected message's thread
     Alt+E             Edit outgoing message
     Alt+M             React with emoji
     Alt+F             Forward message
@@ -63,7 +74,18 @@ Keyboard shortcuts:
     Ctrl+Alt+D        Delete chat (both sides)
     Delete            Delete message (you only)
     Shift+Delete      Delete message (both sides)
-    Esc, Ctrl+C       Back to chat list
+    Esc               Back to chat list
+    Ctrl+C            Close chat
+
+  Thread
+    Enter             Reply in thread
+    Esc               Close thread
+
+  Upload
+    Arrows, Enter     Browse folders and pick a file
+    /, ~              Type a path instead
+    Enter             Send with the optional caption
+    Esc               Back, then cancel
 
   Emoji picker
     Type              Filter by name
@@ -139,7 +161,12 @@ func run() (result error) {
 	return accounts.run(ctx)
 }
 
-func runModes(ctx context.Context, b backend, histories map[chatID][]string) error {
+// accountSwitch asks the account loop to make another account active.
+type accountSwitch struct{ to *account }
+
+func (accountSwitch) Error() string { return "switch account" }
+
+func runModes(ctx context.Context, mgr *accountManager, active *account, b backend, histories map[chatID][]string) error {
 	archived := false
 	for {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
@@ -153,7 +180,7 @@ func runModes(ctx context.Context, b backend, histories map[chatID][]string) err
 			}
 			continue
 		}
-		index, refresh, err := tuiSelectChat(ctx, b, histories, entries, archived, archiveUnread)
+		index, refresh, err := tuiSelectChat(ctx, mgr, active, b, histories, entries, archived, archiveUnread)
 		if err != nil {
 			if fwd, ok := err.(forwardReq); ok {
 				if err := withLegacyTerminal(ctx, func(t *terminal) {

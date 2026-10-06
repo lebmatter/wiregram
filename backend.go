@@ -239,17 +239,21 @@ func genericMessageLine(msg message, ch chatEntry, byID map[string]*message) str
 	if reply := genericReplyLabel(msg, ch, byID); reply != "" {
 		text = reply + " — " + text
 	}
-	sender := genericMessageSender(msg)
-	nick := formatNick(sender)
-	nickPart := "<" + nick + ">"
-	if ch.IsGroup {
-		nickPart = nickColor(sender) + nickPart + "\033[0m"
-	}
-	line := genericMessageTimestamp(msg.Timestamp) + " " + nickPart + " " + text
+	line := genericMessagePrefix(msg, ch) + " " + text
 	if msg.Pinned {
 		line += " [pinned]"
 	}
 	return line
+}
+
+// genericMessagePrefix is the fixed-width "[HH:MM] <nick>" column.
+func genericMessagePrefix(msg message, ch chatEntry) string {
+	sender := genericMessageSender(msg)
+	nickPart := "<" + formatNick(sender) + ">"
+	if ch.IsGroup {
+		nickPart = nickColor(sender) + nickPart + "\033[0m"
+	}
+	return genericMessageTimestamp(msg.Timestamp) + " " + nickPart
 }
 
 func genericReplySummary(msg message, ch chatEntry) string {

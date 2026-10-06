@@ -15,9 +15,9 @@ type chatListModel struct {
 	selected      int
 	archived      bool
 	archiveUnread int
-	accountName   string
 	caps          capabilities
 	confirm       *chatDeleteConfirm
+	offset        int
 	width, height int
 }
 
@@ -43,7 +43,6 @@ func newChatListModel(ctx context.Context, b backend, entries []chatEntry, archi
 		entries:       entries,
 		archived:      archived,
 		archiveUnread: archiveUnread,
-		accountName:   b.AccountLabel(),
 		caps:          b.Capabilities(),
 		width:         w,
 		height:        h,
@@ -52,9 +51,7 @@ func newChatListModel(ctx context.Context, b backend, entries []chatEntry, archi
 
 func (m chatListModel) maxIndex() int { return len(m.entries) + 2 }
 
-func (m chatListModel) Init() tea.Cmd {
-	return listenBackend(m.b)
-}
+func (m chatListModel) Init() tea.Cmd { return nil }
 
 func listenBackend(b backend) tea.Cmd {
 	return func() tea.Msg {
@@ -63,18 +60,39 @@ func listenBackend(b backend) tea.Cmd {
 	}
 }
 
+func (m chatListModel) refreshUnread() chatListModel {
+	for i := range m.entries {
+		m.entries[i].Unread = m.b.CachedUnread(m.entries[i])
+	}
+	return m
+}
+
+// row maps the selection to a display row; a separator sits between the
+// chats and the archive/search/accounts actions.
+func (m chatListModel) row(index int) int {
+	if index < len(m.entries) {
+		return index
+	}
+	if len(m.entries) == 0 {
+		return index + 2 // "No chats here" placeholder row
+	}
+	return index + 1
+}
+
+func (m chatListModel) scrolled() chatListModel {
+	r := m.row(m.selected)
+	if r < m.offset {
+		m.offset = r
+	}
+	if r >= m.offset+m.height {
+		m.offset = r - m.height + 1
+	}
+	m.offset = max(0, m.offset)
+	return m
+}
+
 func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-
-	case backendChanged:
-		m.b.Drain()
-		for i := range m.entries {
-			m.entries[i].Unread = m.b.CachedUnread(m.entries[i])
-		}
-		return m, listenBackend(m.b)
-
 	case tea.KeyPressMsg:
 		if m.confirm != nil {
 			req := m.confirm
@@ -148,65 +166,59 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return chatListRefresh{} }
 	}
-	return m, nil
+	return m.scrolled(), nil
 }
 
-func (m chatListModel) View() tea.View {
-	var b strings.Builder
-	w := m.width
-
-	b.WriteString(styleTitle.Width(w).Render(m.accountName))
-	b.WriteByte('\n')
+func (m chatListModel) title() string {
 	if m.archived {
-		b.WriteString("Archived Chats\n")
+		return "Archived"
 	}
+	return "Chats"
+}
+
+// body renders the list rows for a width×height area.
+func (m chatListModel) body(width, height int, focused bool) []string {
+	var rows []string
 	for i, entry := range m.entries {
-		b.WriteString(chatListLine(entry, i, i == m.selected, w))
-		b.WriteByte('\n')
+		rows = append(rows, chatListLine(entry, i == m.selected, focused, width))
 	}
 	if len(m.entries) == 0 {
-		b.WriteString("No chats here. Press r to refresh or q to quit.\n")
+		rows = append(rows, styleSubtle.Render("  No chats here"))
 	}
+	rows = append(rows, styleDim.Render(strings.Repeat("─", width)))
 
-	archiveLabel := "Archived Chats"
+	archive := chatEntry{Title: "Archived chats", Unread: m.archiveUnread}
 	if m.archived {
-		archiveLabel = "Back to Chats"
-	} else if m.archiveUnread > 0 {
-		archiveLabel += styleUnread.Render(fmt.Sprintf(" - %d*", m.archiveUnread))
+		archive = chatEntry{Title: "Back to chats"}
 	}
-	marker := "  "
-	if m.selected == len(m.entries) {
-		marker = "> "
-	}
-	b.WriteString(fmt.Sprintf("%s    %s\n", marker, archiveLabel))
-
-	marker = "  "
-	if m.selected == len(m.entries)+1 {
-		marker = "> "
-	}
-	b.WriteString(fmt.Sprintf("%s    Search users…\n", marker))
-
-	marker = "  "
-	if m.selected == len(m.entries)+2 {
-		marker = "> "
-	}
-	b.WriteString(fmt.Sprintf("%s    Accounts…\n", marker))
-
-	if m.confirm != nil {
-		scope := "only for you"
-		if m.confirm.revoke {
-			scope = "for both sides"
+	actions := []chatEntry{archive, {Title: "Search users…"}, {Title: "Accounts…"}}
+	for i, a := range actions {
+		index := len(m.entries) + i
+		line := chatListLine(a, index == m.selected, focused, width)
+		if index != m.selected {
+			line = styleSubtle.Render(line)
 		}
-		b.WriteString(fmt.Sprintf("\nDelete chat with %s %s? y to confirm; any other key cancels.",
-			plain(m.confirm.entry.Title), scope))
+		rows = append(rows, line)
 	}
+	if m.offset < len(rows) {
+		rows = rows[m.offset:]
+	}
+	if len(rows) > height {
+		rows = rows[:height]
+	}
+	return rows
+}
 
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar(chatListHelp, w))
-
-	v := tea.NewView(b.String())
-	v.AltScreen = true
-	return v
+func (m chatListModel) notice() string {
+	if m.confirm == nil {
+		return ""
+	}
+	scope := "only for you"
+	if m.confirm.revoke {
+		scope = "for both sides"
+	}
+	return fmt.Sprintf("Delete chat with %s %s? y to confirm; any other key cancels.",
+		plain(m.confirm.entry.Title), scope)
 }
 
 var chatListHelp = []helpKey{

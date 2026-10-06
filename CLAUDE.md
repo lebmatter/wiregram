@@ -58,12 +58,23 @@ These are project constraints, not suggestions:
 
 ## Display conventions
 
-- The UI is a BubbleTea TUI styled with lipgloss. Nick coloring adapts
-  to terminal color depth via termenv. Kitty graphics sequences are
+- The UI is a BubbleTea TUI styled with lipgloss; shared colors, boxes,
+  header and footer live in `tuirender.go`. Kitty graphics sequences are
   used only by the media viewer (mpv via `tea.Exec`).
+- Startup shows the `wiregramLogo` splash (`tuisplash.go`) for about a second.
+- Inside an account: a one-line header (wordmark plus one chip per account:
+  status glyph, label, backend tag; Alt+N switches), the body, and a
+  `bubbles/help` footer with the notice on the right. Help hides keys the
+  backend's `capabilities` rule out.
+- At `twoPaneWidth` (100) columns and wider the chat list is a sidebar beside
+  the chat and Tab moves focus; narrower terminals show one pane at a time.
+- The root `tuiModel` owns the only `backend.Changed()` listener and drains
+  into the open chat, so the list and chat never race for update signals.
 - `>` marks the selected row in lists and the selected message in a chat.
 - Messages render as `[HH:MM] <sender> text` with a fixed-width nick column;
-  the user is always `you`.
+  the user is always `you`. A reply puts `┃ sender: excerpt` on the header
+  row with its text below; threads (`tuithread.go`) are built from loaded
+  reply chains only.
 - Private chats show the first name, else username, else `Deleted Account`.
   Groups show the title; channels show `Channel: TITLE`.
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with
@@ -89,6 +100,7 @@ All source is flat in `package main`. The mode loop is:
 13. **`agentdb.go`** — SQLite database layer for agent configuration and message history (`wiregram.db`).
 14. **`agentruntime.go`** — background agent runtime: subscribes to backend events, dispatches to LLM providers, manages suggest/auto modes.
 15. **`tuiagent.go`** — BubbleTea UI for agent and provider management, thread viewing, and chat assignment.
+16. **`tui.go`**, **`tuilist.go`**, **`tuichat.go`**, **`tuithread.go`**, **`tuiupload.go`**, **`tuiaccount.go`**, **`tuisplash.go`**, **`tuirender.go`** — the BubbleTea screens: root layout, sidebar, chat pane, thread panel, upload picker, account screens, splash, shared styling.
 
 ### Concurrency model
 

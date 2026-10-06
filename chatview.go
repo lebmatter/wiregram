@@ -18,7 +18,6 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/gotd/td/tg"
-	"golang.org/x/term"
 )
 
 // viewChat is the generic chat view that works with any backend.
@@ -201,7 +200,8 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 			return
 		}
 		if searchEditor != nil {
-			t.unlock(genericSearchResultLines(b, searchResults, searchSelected, entry, string(searchQuery)))
+			cols, rows := termSize()
+			t.unlock(genericSearchResultLines(b, searchResults, searchSelected, entry, string(searchQuery), cols-1, rows-2))
 			return
 		}
 		if selected >= 0 && selected < len(messages) {
@@ -209,11 +209,12 @@ func viewChat(ctx context.Context, b backend, t *terminal, entry chatEntry, hist
 		}
 		var lines []string
 		var readID string
+		cols, rows := termSize()
 		if privateMode && len(messages) > 0 {
 			last := len(messages) - 1
-			lines, readID = genericSelectedLines(b, messages[last:], entry, 0, changedMessages, replying, b.IsTyping())
+			lines, readID = genericSelectedLines(b, messages[last:], entry, 0, changedMessages, replying, b.IsTyping(), cols-1, rows-2)
 		} else {
-			lines, readID = genericSelectedLines(b, messages, entry, selected, changedMessages, replying, b.IsTyping())
+			lines, readID = genericSelectedLines(b, messages, entry, selected, changedMessages, replying, b.IsTyping(), cols-1, rows-2)
 		}
 		t.unlock(lines)
 		reads.observe(readID)
@@ -1177,13 +1178,9 @@ func (r *genericReadReporter) close(ctx context.Context) error {
 }
 
 // Generic search result lines.
-func genericSearchResultLines(b backend, results []message, selected int, entry chatEntry, query string) []string {
-	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || cols < 4 || rows < 4 {
-		cols, rows = 80, 24
-	}
-	width := min(cols-1, maxChatLineWidth)
-	available := max(1, rows-4)
+func genericSearchResultLines(b backend, results []message, selected int, entry chatEntry, query string, width, height int) []string {
+	width = min(width, maxChatLineWidth)
+	available := max(1, height-2)
 	var lines []string
 	heading := fmt.Sprintf("Search: %s (%d results)", plain(query), len(results))
 	lines = append(lines, clipLine(heading, width))
@@ -1197,7 +1194,7 @@ func genericSearchResultLines(b backend, results []message, selected int, entry 
 		for i := start; i < min(len(results), start+available); i++ {
 			marker := "  "
 			if i == selected {
-				marker = "> "
+				marker = styleAccent.Render("> ")
 			}
 			text := genericMessageLine(results[i], entry, nil)
 			lines = append(lines, clipLine(marker+text, width))
@@ -1207,38 +1204,53 @@ func genericSearchResultLines(b backend, results []message, selected int, entry 
 }
 
 // Generic selected lines rendering.
-func genericSelectedLines(b backend, messages []message, entry chatEntry, selected int, changed map[string]bool, replying *message, typing bool) ([]string, string) {
-	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || cols < 4 || rows < 4 {
-		cols, rows = 80, 24
-	}
-	lineWidth := min(cols-1, maxChatLineWidth)
-	reserved := 2
+func genericSelectedLines(b backend, messages []message, entry chatEntry, selected int, changed map[string]bool, replying *message, typing bool, width, height int) ([]string, string) {
+	lineWidth := min(width, maxChatLineWidth)
+	reserved := 0
 	if replying != nil {
 		reserved++
 	}
 	if typing {
 		reserved++
 	}
-	available := max(1, rows-reserved)
+	available := max(1, height-reserved)
 	byID := make(map[string]*message, len(messages))
+	replies := make(map[string]int)
 	for i := range messages {
 		byID[messages[i].ID] = &messages[i]
+		if messages[i].ReplyToID != "" {
+			replies[messages[i].ReplyToID]++
+		}
 	}
 	const msgPrefixWidth = 7 + 2 + nickWidth + 2
 	messageLines := func(i int) []string {
+		msg := messages[i]
 		marker := "  "
-		if changed[messages[i].ID] {
+		if changed[msg.ID] {
 			marker = "* "
 		}
 		if i == selected {
-			marker = "> " + b.ReadMarker(entry, messages[i])
-			if reactions := formatMessageReactions(messages[i].Reactions); reactions != "" {
+			marker = styleAccent.Render(">") + " " + b.ReadMarker(entry, msg)
+			if reactions := formatMessageReactions(msg.Reactions); reactions != "" {
 				marker += "[" + reactions + "] "
 			}
 		}
 		indent := displayWidth(marker) + msgPrefixWidth
-		return wrapLineIndent(marker+genericMessageLine(messages[i], entry, byID), lineWidth, indent)
+		body := genericMessageText(msg)
+		if msg.Pinned {
+			body += " [pinned]"
+		}
+		if n := replies[msg.ID]; n > 0 {
+			body += styleSubtle.Render(fmt.Sprintf(" · %d %s", n, plural(n, "reply", "replies")))
+		}
+		prefix := marker + genericMessagePrefix(msg, entry) + " "
+		if msg.ReplyToID == "" {
+			return wrapMessage(prefix, body, lineWidth, indent)
+		}
+		// Replies put the quoted original on the header row and the text below it.
+		quote := clipLine(prefix+renderQuote(byID[msg.ReplyToID], entry), lineWidth)
+		return append([]string{quote},
+			wrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines := []string{}
@@ -1458,6 +1470,19 @@ const maxChatLineWidth = 120
 
 func wrapLine(text string, width int) []string {
 	return wrapLineIndent(text, width, 0)
+}
+
+// wrapMessage wraps body under a fixed-width prefix. Wrapping the prefix too
+// would collapse the padding that keeps the nick column aligned.
+func wrapMessage(prefix, body string, width, indent int) []string {
+	pad := strings.Repeat(" ", indent)
+	lines := wrapLineIndent(pad+body, width, indent)
+	if indent < width-4 && strings.HasPrefix(lines[0], pad) {
+		lines[0] = prefix + lines[0][indent:]
+	} else {
+		lines[0] = clipLine(prefix+strings.TrimLeft(lines[0], " "), width)
+	}
+	return lines
 }
 
 func wrapLineIndent(text string, width int, indent int) []string {

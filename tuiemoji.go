@@ -122,7 +122,7 @@ func (m emojiPickerModel) View(width, height int) string {
 	for index := start; index < end; index++ {
 		marker := "  "
 		if index == m.selected {
-			marker = "> "
+			marker = styleAccent.Render("> ")
 		}
 		b.WriteString(clipLine(fmt.Sprintf("%s%s  %s", marker, m.choices[index].value, m.choices[index].name), width-1))
 		b.WriteByte('\n')
@@ -130,8 +130,7 @@ func (m emojiPickerModel) View(width, height int) string {
 	if len(m.choices) == 0 {
 		b.WriteString("  No matching emoji\n")
 	}
-	b.WriteString(renderHelpBar(emojiHelp, width))
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 var emojiHelp = []helpKey{

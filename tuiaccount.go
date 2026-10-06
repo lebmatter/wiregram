@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type accountChoice struct {
@@ -122,49 +124,62 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m accountListModel) View() tea.View {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render("Accounts"))
-	b.WriteByte('\n')
-
-	limit := max(1, m.height-5)
-	start := max(0, m.selected-limit+1)
-	end := min(len(m.accounts)+3, start+limit)
-
-	for i := start; i < end; i++ {
+	bodyHeight := max(4, m.height-2)
+	inner := m.width - 4
+	var rows []string
+	for i, a := range m.accounts {
+		s := a.snapshot()
 		marker := "  "
 		if i == m.selected {
-			marker = "> "
+			marker = styleAccent.Render("> ")
 		}
-		switch {
-		case i == len(m.accounts):
-			b.WriteString(fmt.Sprintf("%s    Agents…\n", marker))
-		case i == len(m.accounts)+1:
-			b.WriteString(fmt.Sprintf("%s    Add account…\n", marker))
-		case i == len(m.accounts)+2:
-			b.WriteString(fmt.Sprintf("%s    Quit\n", marker))
-		default:
-			a := m.accounts[i]
-			s := a.snapshot()
-			current := ""
-			if a == m.active {
-				current = " [current]"
-			}
-			b.WriteString(clipLine(fmt.Sprintf("%s%s — %s%s", marker, a.label(), s.status, current), m.width))
-			b.WriteByte('\n')
+		label := truncate(plain(a.label()), max(8, inner/2))
+		if a == m.active {
+			label = styleTitle.Render(label)
+		}
+		status := s.status
+		if a == m.active {
+			status += " · current"
+		}
+		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, accountGlyph(s), label,
+			styleDim.Render(backendTag(a.backendType)), styleSubtle.Render(status))
+		if i == m.selected {
+			row = styleSelectedRow.Render(row)
+		}
+		rows = append(rows, row)
+	}
+	rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
+	for i, label := range []string{"Agents…", "Add account…", "Quit"} {
+		index := len(m.accounts) + i
+		if index == m.selected {
+			rows = append(rows, styleSelectedRow.Render(styleAccent.Render("> ")+label))
+		} else {
+			rows = append(rows, styleSubtle.Render("  "+label))
 		}
 	}
+	selRow := m.selected
+	if m.selected >= len(m.accounts) {
+		selRow++
+	}
+	limit := bodyHeight - 2
+	if logo := strings.Split(renderLogo(inner), "\n"); len(rows)+len(logo)+2 <= limit {
+		var top []string
+		for _, line := range logo {
+			top = append(top, lipgloss.PlaceHorizontal(inner, lipgloss.Center, line))
+		}
+		rows = append(append(top, "", ""), rows...)
+	} else if start := max(0, selRow-limit+1); start > 0 {
+		rows = rows[start:]
+	}
 
+	notice := ""
 	if m.selected < len(m.accounts) {
-		if notice := m.accounts[m.selected].snapshot().notice; notice != "" {
-			b.WriteString(plain(notice))
-			b.WriteByte('\n')
-		}
+		notice = m.accounts[m.selected].snapshot().notice
 	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar(accountListHelp, m.width))
-
-	v := tea.NewView(b.String())
+	content := renderHeader(nil, m.width) + "\n" +
+		renderBox("Accounts", rows, m.width, bodyHeight, colorAccent) + "\n" +
+		renderFooter(accountListHelp, false, notice, m.width)
+	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
 }
@@ -173,7 +188,7 @@ var accountListHelp = []helpKey{
 	{"↑↓", "select"},
 	{"⏎", "switch"},
 	{"r", "reconnect"},
-	{"Esc", "back"},
+	{"esc", "back"},
 	{"q", "quit"},
 }
 
@@ -299,36 +314,29 @@ func (m addAccountModel) updatePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m addAccountModel) View() tea.View {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render("Add account"))
-	b.WriteByte('\n')
-	b.WriteByte('\n')
-
+	bodyHeight := max(4, m.height-2)
+	inner := m.width - 4
+	rows := []string{styleSubtle.Render("Which network is the new account on?"), ""}
 	for i, opt := range addAccountOptions {
-		marker := "  "
+		row := fmt.Sprintf("  %d  %s  %s", i+1, opt.label, styleDim.Render(backendTag(opt.key)))
 		if i == m.selected {
-			marker = "> "
+			row = styleSelectedRow.Render(styleAccent.Render("> ") + row[2:])
 		}
-		b.WriteString(fmt.Sprintf("%s%d  %s\n", marker, i+1, opt.label))
+		rows = append(rows, row)
 	}
-
 	if m.prompt != nil {
-		b.WriteByte('\n')
-		opt := addAccountOptions[m.selected]
-		label := "Server URL: "
-		if opt.key == "matrix" {
-			label = "Homeserver URL: "
+		title := "Server URL"
+		if addAccountOptions[m.selected].key == "matrix" {
+			title = "Homeserver URL"
 		}
-		b.WriteString(label)
-		b.WriteString(m.prompt.View())
-		b.WriteByte('\n')
+		rows = append(rows, "")
+		rows = append(rows, composerBox(title, nil, "› ", *m.prompt, min(inner, 60), colorAccent)...)
 	}
-
-	b.WriteByte('\n')
-	help := []helpKey{{"↑↓", "select"}, {"⏎", "confirm"}, {"Esc", "cancel"}}
-	b.WriteString(renderHelpBar(help, m.width))
-
-	v := tea.NewView(b.String())
+	help := []helpKey{{"↑↓", "select"}, {"⏎", "confirm"}, {"esc", "cancel"}}
+	content := renderHeader(nil, m.width) + "\n" +
+		renderBox("Add account", rows, m.width, bodyHeight, colorAccent) + "\n" +
+		renderFooter(help, false, "", m.width)
+	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
 }
@@ -484,28 +492,22 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m loginModel) View() tea.View {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render(fmt.Sprintf("Sign in — %s", m.label)))
-	b.WriteByte('\n')
-	b.WriteByte('\n')
-
-	if m.notice != "" {
-		b.WriteString(m.notice)
-		b.WriteByte('\n')
-	}
-
+	bodyHeight := max(4, m.height-2)
+	inner := m.width - 4
+	var rows []string
 	if m.current != nil {
-		b.WriteString(m.current.label)
-		b.WriteString(m.input.View())
-		b.WriteByte('\n')
+		label := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(m.current.label), ":"))
+		rows = append(rows, composerBox(label, nil, "› ", m.input, min(inner, 60), colorAccent)...)
 	} else {
-		b.WriteString("Waiting for server…\n")
+		rows = append(rows, styleSubtle.Render("Waiting for server…"))
 	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar([]helpKey{{"⏎", "submit"}, {"Esc", "cancel"}}, m.width))
-
-	v := tea.NewView(b.String())
+	if m.notice != "" {
+		rows = append(rows, "", styleError.Render(plain(m.notice)))
+	}
+	content := renderHeader(nil, m.width) + "\n" +
+		renderBox("Sign in — "+m.label, rows, m.width, bodyHeight, colorAccent) + "\n" +
+		renderFooter([]helpKey{{"⏎", "submit"}, {"esc", "cancel"}}, false, "", m.width)
+	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
 }
@@ -563,6 +565,7 @@ type connectingModel struct {
 	ctx    context.Context
 	mgr    *accountManager
 	a      *account
+	spin   spinner.Model
 	done   bool
 	width  int
 	height int
@@ -572,11 +575,12 @@ type connectingDone struct{}
 
 func newConnectingModel(ctx context.Context, mgr *accountManager, a *account) connectingModel {
 	w, h := termSize()
-	return connectingModel{ctx: ctx, mgr: mgr, a: a, width: w, height: h}
+	spin := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styleAccent))
+	return connectingModel{ctx: ctx, mgr: mgr, a: a, spin: spin, width: w, height: h}
 }
 
 func (m connectingModel) Init() tea.Cmd {
-	return tea.Batch(listenAccounts(m.mgr), listenLoginDone(m.a))
+	return tea.Batch(listenAccounts(m.mgr), listenLoginDone(m.a), m.spin.Tick)
 }
 
 func (m connectingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -596,6 +600,11 @@ func (m connectingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.done = true
 		return m, tea.Quit
 
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+
 	case tea.KeyPressMsg:
 		if msg.String() == "esc" || msg.String() == "ctrl+c" || msg.String() == "ctrl+d" {
 			return m, tea.Quit
@@ -605,9 +614,14 @@ func (m connectingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m connectingModel) View() tea.View {
-	label := m.a.label()
-	content := fmt.Sprintf("Connecting to %s…\n\nPress Esc to go back.", label)
-	v := tea.NewView(content)
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		renderLogo(m.width),
+		"",
+		m.spin.View()+"Connecting to "+plain(m.a.label())+"…",
+		"",
+		styleDim.Render("esc to go back"),
+	)
+	v := tea.NewView(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
 	v.AltScreen = true
 	return v
 }

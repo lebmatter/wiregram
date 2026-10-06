@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type chatSubMode int
@@ -21,8 +24,8 @@ const (
 	chatSubEmoji
 	chatSubSearch
 	chatSubEdit
-	chatSubUploadPath
-	chatSubUploadCaption
+	chatSubUpload
+	chatSubThread
 	chatSubConfirmChatDelete
 	chatSubConfirmMsgDelete
 )
@@ -62,8 +65,12 @@ type chatViewModel struct {
 	editing   *message
 	editInput textinput.Model
 
-	uploadPath  string
-	uploadInput textinput.Model
+	upload  uploadPanel
+	uploads []pendingUpload
+	spin    spinner.Model
+
+	threadRoot  string
+	threadInput textinput.Model
 
 	confirmRevoke bool
 
@@ -73,6 +80,11 @@ type chatViewModel struct {
 	locked       bool
 	autoLock     bool
 	lockDeadline time.Time
+
+	// embedded is set by the root model in two-pane mode: Esc then returns
+	// focus to the sidebar instead of closing the chat.
+	embedded bool
+	focused  bool
 
 	width, height int
 }
@@ -123,9 +135,11 @@ type chatReactionResult struct {
 
 type chatEditResult struct{ err error }
 type chatUploadResult struct {
-	msg message
-	err error
+	path string
+	msg  message
+	err  error
 }
+type chatFocusSidebar struct{}
 type chatDeleteChatResult struct{ err error }
 type chatDeleteMsgResult struct{ err error }
 type chatPinResult struct {
@@ -147,7 +161,8 @@ func newChatViewModel(ctx context.Context, b backend, entry chatEntry, histories
 	ctx, cancel := context.WithCancel(ctx)
 	w, h := termSize()
 	ti := textinput.New()
-	ti.SetValue("")
+	ti.Prompt = ""
+	ti.Placeholder = "Message " + plain(entry.Title) + "…"
 	ti.Focus()
 	return chatViewModel{
 		ctx:             ctx,
@@ -161,13 +176,15 @@ func newChatViewModel(ctx context.Context, b backend, entry chatEntry, histories
 		input:           ti,
 		sends:           make(chan chatOutgoing),
 		autoLock:        b.AutoLockEnabled(),
+		spin:            spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styleAccent)),
+		focused:         true,
 		width:           w,
 		height:          h,
 	}
 }
 
 func (m chatViewModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadHistory(), m.input.Focus()}
+	cmds := []tea.Cmd{m.loadHistory(), m.input.Focus(), m.spin.Tick}
 	if m.autoLock {
 		m.lockDeadline = time.Now().Add(10 * time.Second)
 		cmds = append(cmds, m.lockTickCmd())
@@ -215,17 +232,15 @@ func (m chatViewModel) loadOlderHistory() tea.Cmd {
 	}
 }
 
-func (m chatViewModel) listenBackendChat() tea.Cmd {
-	b := m.b
-	return func() tea.Msg {
-		<-b.Changed()
-		incoming, reactions, deletions := b.Drain()
-		return chatBackendUpdate{
-			incoming:  incoming,
-			reactions: reactions,
-			deletions: deletions,
-			typing:    b.IsTyping(),
-		}
+// drainBackend collects queued updates for the open chat. The root model owns
+// the single Changed() listener so the list and chat never race for signals.
+func (m chatViewModel) drainBackend() chatBackendUpdate {
+	incoming, reactions, deletions := m.b.Drain()
+	return chatBackendUpdate{
+		incoming:  incoming,
+		reactions: reactions,
+		deletions: deletions,
+		typing:    m.b.IsTyping(),
 	}
 }
 
@@ -234,13 +249,11 @@ func (m chatViewModel) sendMessage(outgoing chatOutgoing) tea.Cmd {
 	b := m.b
 	entry := m.entry
 	return func() tea.Msg {
-		var msg message
-		var err error
-		if outgoing.path == "" {
-			msg, err = b.Send(ctx, entry, outgoing.text, outgoing.replyTo)
-		} else {
-			msg, err = b.SendUpload(ctx, entry, outgoing.path, outgoing.text, outgoing.replyTo)
+		if outgoing.path != "" {
+			msg, err := b.SendUpload(ctx, entry, outgoing.path, outgoing.text, outgoing.replyTo)
+			return chatUploadResult{outgoing.path, msg, err}
 		}
+		msg, err := b.Send(ctx, entry, outgoing.text, outgoing.replyTo)
 		return chatSendResult{msg, err}
 	}
 }
@@ -393,11 +406,26 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.subMode = chatSubNone
 
 	case chatUploadResult:
+		for i, u := range m.uploads {
+			if u.path == msg.path {
+				m.uploads = append(m.uploads[:i:i], m.uploads[i+1:]...)
+				break
+			}
+		}
 		if msg.err != nil {
 			m.notice = msg.err.Error()
 		} else {
 			m = m.appendMessage(msg.msg)
 		}
+
+	case spinner.TickMsg:
+		// Let the spinner stop once nothing is loading or uploading.
+		if m.messages != nil && len(m.uploads) == 0 {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 
 	case chatDeleteChatResult:
 		if msg.err != nil {
@@ -510,10 +538,7 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 		m.seen[msg.ID] = true
 	}
 	m.reads = newGenericReadReporter(m.b, m.entry)
-	return m, tea.Batch(
-		m.listenBackendChat(),
-		m.startReadTimer(),
-	)
+	return m, m.startReadTimer()
 }
 
 func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel, tea.Cmd) {
@@ -561,12 +586,10 @@ func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel
 	if msg.typing {
 		m.typing = true
 	}
-	var cmds []tea.Cmd
-	cmds = append(cmds, m.listenBackendChat())
 	if msg.typing {
-		cmds = append(cmds, m.typingTimeoutCmd())
+		return m, m.typingTimeoutCmd()
 	}
-	return m, tea.Batch(cmds...)
+	return m, nil
 }
 
 func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
@@ -586,8 +609,10 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		return m.handleSearchKey(msg)
 	case chatSubEdit:
 		return m.handleEditKey(msg)
-	case chatSubUploadPath, chatSubUploadCaption:
+	case chatSubUpload:
 		return m.handleUploadKey(msg)
+	case chatSubThread:
+		return m.handleThreadKey(msg)
 	case chatSubConfirmChatDelete:
 		return m.handleConfirmChatDeleteKey(msg)
 	case chatSubConfirmMsgDelete:
@@ -599,6 +624,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if m.replying != nil {
 			m.replying = nil
 			return m, nil
+		}
+		if m.embedded {
+			return m, func() tea.Msg { return chatFocusSidebar{} }
 		}
 		return m, func() tea.Msg { return chatReturnToList{} }
 	case "ctrl+c", "ctrl+d":
@@ -647,11 +675,25 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if !m.caps.Upload {
 			return m, nil
 		}
-		m.subMode = chatSubUploadPath
-		m.uploadInput = textinput.New()
-		m.uploadInput.Focus()
-		m.uploadPath = ""
-		return m, m.uploadInput.Focus()
+		return m.startUpload()
+	case "alt+g", "alt+G":
+		sel, ok := m.selectedMsg()
+		if !ok || sel.ReplyToID == "" {
+			return m, nil
+		}
+		for i, msg := range m.messages {
+			if msg.ID == sel.ReplyToID {
+				m.selected = i
+				return m, nil
+			}
+		}
+		m.notice = "the quoted message is not loaded; scroll up to load older messages"
+	case "alt+t", "alt+T":
+		sel, ok := m.selectedMsg()
+		if !ok {
+			return m, nil
+		}
+		return m.openThread(sel)
 	case "alt+m", "alt+M":
 		sel, ok := m.selectedMsg()
 		reactionMode := m.caps.Reactions && ok
@@ -886,42 +928,6 @@ func (m chatViewModel) handleEditKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cm
 	}
 }
 
-func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+c", "ctrl+d":
-		m.subMode = chatSubNone
-		m.uploadPath = ""
-		return m, nil
-	case "enter":
-		if m.subMode == chatSubUploadPath {
-			path, err := uploadPath(m.uploadInput.Value())
-			if err != nil {
-				m.notice = err.Error()
-				return m, nil
-			}
-			m.uploadPath = path
-			m.subMode = chatSubUploadCaption
-			m.uploadInput = textinput.New()
-			m.uploadInput.Focus()
-			return m, m.uploadInput.Focus()
-		}
-		caption := m.uploadInput.Value()
-		path := m.uploadPath
-		replyTo := ""
-		if m.replying != nil {
-			replyTo = m.replying.ID
-			m.replying = nil
-		}
-		m.subMode = chatSubNone
-		m.uploadPath = ""
-		return m, m.sendMessage(chatOutgoing{text: caption, path: path, replyTo: replyTo})
-	default:
-		var cmd tea.Cmd
-		m.uploadInput, cmd = m.uploadInput.Update(msg)
-		return m, cmd
-	}
-}
-
 func (m chatViewModel) handleConfirmChatDeleteKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	m.subMode = chatSubNone
 	if msg.String() == "y" || msg.String() == "Y" {
@@ -1044,87 +1050,156 @@ func (m chatViewModel) openMediaCmd(sel message, player string) tea.Cmd {
 	}
 }
 
+// View renders the chat pane as a box exactly m.width×m.height cells.
 func (m chatViewModel) View() string {
-	if m.locked {
-		unread := m.b.CachedUnread(m.entry)
-		return fmt.Sprintf("[wiregram: locked — %d* — press any key]", unread)
+	if m.subMode == chatSubThread {
+		if m.width >= 90 {
+			chatWidth := m.width * 3 / 5
+			return lipgloss.JoinHorizontal(lipgloss.Top,
+				m.chatBox(chatWidth, m.height, false),
+				m.threadBox(m.width-chatWidth, m.height, m.focused))
+		}
+		return m.threadBox(m.width, m.height, m.focused)
 	}
+	return m.chatBox(m.width, m.height, m.focused)
+}
 
-	if m.messages == nil {
-		return "Loading messages…"
+func (m chatViewModel) chatBox(width, height int, focused bool) string {
+	title := plain(m.entry.Title)
+	if m.typing {
+		title += " · typing…"
 	}
-
-	if m.subMode == chatSubEmoji {
-		return m.emoji.View(m.width, m.height)
+	if m.privateMode {
+		title += " · private"
 	}
-
-	if m.subMode == chatSubSearch {
-		return m.viewSearch()
+	inner, bodyHeight := width-4, height-2
+	var body []string
+	switch {
+	case m.messages == nil:
+		body = centerLines(inner, bodyHeight, m.spin.View()+"loading messages…")
+	case m.subMode == chatSubEmoji:
+		body = strings.Split(m.emoji.View(inner, bodyHeight+2), "\n")
+	case m.subMode == chatSubSearch:
+		composer := composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote)
+		results := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
+			m.searchQuery, inner, bodyHeight-len(composer))
+		body = append(bottomLines(results, bodyHeight-len(composer)), composer...)
+	case m.subMode == chatSubUpload:
+		body = m.uploadBody(inner, bodyHeight)
+	default:
+		composer := m.composer(inner, focused)
+		body = append(m.messageLines(inner, bodyHeight-len(composer)), composer...)
 	}
+	return renderBox(title, body, width, height, boxBorder(focused))
+}
 
+// messageLines is the scrolled message log plus any uploads in flight.
+func (m chatViewModel) messageLines(width, height int) []string {
+	height -= len(m.uploads)
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, m.replying, m.typing)
+		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, false, width, height)
 	} else {
-		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.replying, m.typing)
+		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, nil, false, width, height)
 	}
-
-	var b strings.Builder
-	for _, line := range lines {
-		b.WriteString(line)
-		b.WriteByte('\n')
+	if len(m.messages) == 0 {
+		lines = centerLines(width, height, styleSubtle.Render("No messages yet. Say hi!"))
 	}
-
-	switch m.subMode {
-	case chatSubEdit:
-		b.WriteString("Edit (Enter: save, Esc: cancel)> ")
-		b.WriteString(m.editInput.View())
-	case chatSubUploadPath:
-		b.WriteString("File (Enter: continue, Esc: cancel)> ")
-		b.WriteString(m.uploadInput.View())
-	case chatSubUploadCaption:
-		b.WriteString("Caption (optional, Enter: send, Esc: cancel)> ")
-		b.WriteString(m.uploadInput.View())
-	default:
-		b.WriteString("you> ")
-		b.WriteString(m.input.View())
+	lines = bottomLines(lines, max(0, height))
+	for _, u := range m.uploads {
+		prefix := "  " + genericMessagePrefix(message{Outgoing: true, Timestamp: u.started}, m.entry) + " "
+		lines = append(lines, clipLine(prefix+m.spin.View()+
+			styleSubtle.Render(fmt.Sprintf("uploading %s (%s)…", filepath.Base(u.path), formatSize(u.size))), width))
 	}
-	b.WriteByte('\n')
-
-	if m.notice != "" {
-		b.WriteString(m.notice)
-		b.WriteByte('\n')
-	}
-
-	b.WriteString(renderHelpBar(m.currentHelp(), m.width))
-	return b.String()
+	return lines
 }
 
-func (m chatViewModel) viewSearch() string {
-	lines := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry, m.searchQuery)
-	var b strings.Builder
-	for _, line := range lines {
-		b.WriteString(line)
-		b.WriteByte('\n')
+// composer is the bordered input at the bottom of the chat, with the reply
+// bar above the text while replying.
+func (m chatViewModel) composer(width int, focused bool) []string {
+	border := boxBorder(focused)
+	if m.subMode == chatSubEdit {
+		return composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
 	}
-	b.WriteString("search> ")
-	b.WriteString(m.searchInput.View())
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar(chatSearchHelp, m.width))
-	return b.String()
+	return composerBox("", m.replyBar(), "› ", m.input, width, border)
 }
 
-func (m chatViewModel) currentHelp() []helpKey {
+func (m chatViewModel) replyBar() []string {
+	if m.replying == nil {
+		return nil
+	}
+	return []string{styleQuoteBar.Render("↪ ") + styleSubtle.Render("Replying to ") +
+		genericMessageSender(*m.replying) + styleSubtle.Render(": "+
+		shortExcerpt(genericMessageText(*m.replying))+"  (esc cancels)")}
+}
+
+func composerBox(title string, above []string, prompt string, input textinput.Model, width int, border color.Color) []string {
+	input.SetWidth(max(1, width-4-displayWidth(prompt)-1))
+	lines := append(above, styleAccent.Render(prompt)+input.View())
+	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
+}
+
+// centerLines places text in the middle of a width×height area.
+func centerLines(width, height int, text string) []string {
+	block := lipgloss.Place(width, max(1, height), lipgloss.Center, lipgloss.Center, text)
+	return strings.Split(block, "\n")
+}
+
+// lockView hides every chat, including the sidebar, until a key is pressed.
+func (m chatViewModel) lockView(width, height int) string {
+	unread := m.b.CachedUnread(m.entry)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center,
+		lipgloss.JoinVertical(lipgloss.Center,
+			renderLogo(width),
+			"",
+			styleSubtle.Render(fmt.Sprintf("locked · %d unread", unread)),
+			styleDim.Render("press any key"),
+		))
+}
+
+// helpKeys lists the shortcuts for the current mode, hiding any the backend
+// cannot do.
+func (m chatViewModel) helpKeys() []helpKey {
 	switch m.subMode {
 	case chatSubEdit:
 		return chatEditHelp
-	case chatSubUploadPath, chatSubUploadCaption:
-		return chatUploadHelp
+	case chatSubUpload:
+		return m.uploadHelp()
+	case chatSubThread:
+		return chatThreadHelp
+	case chatSubSearch:
+		return chatSearchHelp
+	case chatSubEmoji:
+		return emojiHelp
 	case chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return chatConfirmHelp
 	}
-	return chatViewHelp
+	keys := []helpKey{{"↑↓", "messages"}, {"⏎", "send"}}
+	if m.embedded {
+		keys = append(keys, helpKey{"tab", "chats"})
+	}
+	keys = append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"}, helpKey{"o", "media"})
+	if m.caps.Upload {
+		keys = append(keys, helpKey{"^U", "upload"})
+	}
+	if m.caps.Search {
+		keys = append(keys, helpKey{"^F", "search"})
+	}
+	keys = append(keys, helpKey{"M-m", "emoji"}, helpKey{"M-g", "go to quote"})
+	if m.caps.Edit {
+		keys = append(keys, helpKey{"M-e", "edit"})
+	}
+	if m.caps.Forward {
+		keys = append(keys, helpKey{"M-f", "forward"})
+	}
+	keys = append(keys, helpKey{"M-s", "save"})
+	if m.caps.Pin {
+		keys = append(keys, helpKey{"M-p", "pin"})
+	}
+	keys = append(keys, helpKey{"del", "delete"}, helpKey{"M-h", "private"},
+		helpKey{"M-1…9", "account"}, helpKey{"?", "more"}, helpKey{"esc", "back"})
+	return keys
 }
 
 func (m chatViewModel) cleanup() {
@@ -1145,18 +1220,6 @@ func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled)
 }
 
-var chatViewHelp = []helpKey{
-	{"↑↓", "messages"},
-	{"⏎", "send"},
-	{"o", "media"},
-	{"^F", "search"},
-	{"^U", "upload"},
-	{"M-m", "emoji"},
-	{"M-r", "reply"},
-	{"M-e", "edit"},
-	{"Esc", "back"},
-}
-
 var chatSearchHelp = []helpKey{
 	{"↑↓", "results"},
 	{"⏎", "jump"},
@@ -1168,9 +1231,9 @@ var chatEditHelp = []helpKey{
 	{"Esc", "cancel"},
 }
 
-var chatUploadHelp = []helpKey{
-	{"⏎", "continue"},
-	{"Esc", "cancel"},
+var chatThreadHelp = []helpKey{
+	{"⏎", "reply in thread"},
+	{"esc", "close thread"},
 }
 
 var chatConfirmHelp = []helpKey{

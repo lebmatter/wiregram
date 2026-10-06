@@ -735,6 +735,9 @@ func (m *accountManager) run(ctx context.Context) error {
 	for _, a := range m.accounts {
 		m.start(ctx, a, nil)
 	}
+	if len(m.accounts) > 0 {
+		tuiSplash(ctx, m)
+	}
 	if len(m.accounts) == 0 {
 		var err error
 		active, err = tuiPickAndAdd(ctx, m)
@@ -783,12 +786,17 @@ func (m *accountManager) run(ctx context.Context) error {
 			s = active.snapshot()
 		}
 		if s.backend != nil && s.status == "online" {
-			err := runModes(s.ctx, s.backend, active.histories)
+			err := runModes(s.ctx, m, active, s.backend, active.histories)
 			if err == nil {
 				return nil
 			}
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			var sw accountSwitch
+			if errors.As(err, &sw) {
+				active = sw.to
+				continue
 			}
 			if _, switching := err.(accountsRequested); !switching && !errors.Is(err, context.Canceled) {
 				fmt.Fprintf(os.Stderr, "%s\n", cleanError(err))

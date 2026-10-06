@@ -80,8 +80,15 @@ do not need a config section; add them through the account picker.
 
 ## Keyboard shortcuts
 
+Terminals 100 or more columns wide show the chat list beside the open chat. A
+header lists every account with its status and network (TG, WA, MX, MM).
+
 | Context | Shortcut | Action |
 | --- | --- | --- |
+| Anywhere | Alt+1 … Alt+9 | Switch to account N in the header |
+| Anywhere | Tab | Move between the chat list and the chat (wide terminals) |
+| Anywhere | `?` | Show every shortcut for the current screen |
+| Chat list | Esc | Close the open chat (wide terminals) |
 | Chat list | Up / `k` | Select previous chat |
 | Chat list | Down / `j` | Select next chat |
 | Chat list | Enter | Open selected chat |
@@ -101,6 +108,9 @@ do not need a config section; add them through the account picker.
 | Chat | Alt+Up / Alt+Down | Previous / next input-history entry |
 | Chat | Alt+E | Edit selected outgoing text message |
 | Chat | Alt+R | Reply to the selected message; press again to cancel |
+| Chat | Alt+G | Jump to the message a reply quotes |
+| Chat | Alt+T | Open the selected message's thread beside the chat |
+| Thread | Enter / Esc | Reply in the thread / close it |
 | Chat | Alt+M | React to the selected message |
 | Chat | Delete | Delete selected message only for you |
 | Chat | Shift+Delete | Delete selected message for both sides |
@@ -114,7 +124,8 @@ do not need a config section; add them through the account picker.
 | Chat | Alt+F | Forward selected message (opens search picker) |
 | Chat | Alt+S | Save selected attachment to ~/Downloads |
 | Chat | Esc while replying | Cancel the reply |
-| Chat | Esc / Ctrl+C / Ctrl+D | Return to chat list when not replying |
+| Chat | Esc | Return to the chat list (focus it on wide terminals) |
+| Chat | Ctrl+C / Ctrl+D | Close the chat |
 | Emoji picker | Type | Filter emoji by name |
 | Emoji picker | Up / Down | Select previous / next emoji |
 | Emoji picker | Tab | Switch between reaction and draft insertion |
@@ -188,13 +199,17 @@ the selected message; an asterisk marks reactions sent by the current account.
 Recently chosen emoji are kept for the session.
 An updated earlier message is marked with `*` until it is selected and displayed.
 While composing a reply, a short excerpt of its target appears above the input.
+Replies show the quoted message on their first line, and messages with replies
+show a reply count. A thread is built from loaded messages, so replies older
+than the loaded history appear once you scroll up.
 
 ## Media inside the terminal
 
-Press Ctrl+U in an open chat to upload a local file. Enter a path in the file
-prompt; Tab completes matching files and directories, including paths beginning
-with `~/`. After selecting a regular file, enter an optional caption and press
-Enter to send. Escape, Ctrl+C, or Ctrl+D cancels either prompt. Photos, videos,
+Press Ctrl+U in an open chat to upload a local file. Browse with the arrow keys
+(Right or Enter opens a folder, Left goes up) or press `/` or `~` to type a
+path. After picking a regular file, a card shows its name, type, and size;
+enter an optional caption and press Enter to send. Escape steps back, then
+cancels. The upload shows in the chat with a spinner until it finishes. Photos, videos,
 audio, and GIFs use their Telegram media types; other paths are sent as files.
 If a reply is active, the uploaded media is sent as that reply.
 
