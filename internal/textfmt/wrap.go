@@ -34,10 +34,6 @@ func FormatNick(name string) string {
 
 const MaxChatLineWidth = 120
 
-func wrapLine(text string, width int) []string {
-	return WrapLineIndent(text, width, 0)
-}
-
 // wrapMessage wraps body under a fixed-width prefix. Wrapping the prefix too
 // would collapse the padding that keeps the nick column aligned.
 func WrapMessage(prefix, body string, width, indent int) []string {

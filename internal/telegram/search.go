@@ -4,14 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
-	"unicode/utf8"
 
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
-
-	"wiregram/internal/terminal"
-	"wiregram/internal/textfmt"
 )
 
 type userChoice struct {
@@ -19,13 +14,6 @@ type userChoice struct {
 	label           string
 	match           string
 	resolveUsername string
-}
-
-type userSearchResult struct {
-	generation int
-	query      string
-	choices    []userChoice
-	err        error
 }
 
 func userChoiceFromUser(user *tg.User, source string) (userChoice, bool) {
@@ -92,20 +80,6 @@ func mergeChoices(groups ...[]userChoice) []userChoice {
 		}
 	}
 	return merged
-}
-
-func filterChoices(choices []userChoice, query string) []userChoice {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return nil
-	}
-	var matches []userChoice
-	for _, choice := range choices {
-		if strings.Contains(choice.match, query) {
-			matches = append(matches, choice)
-		}
-	}
-	return matches
 }
 
 func (c *Client) cachedSearchUsers() (contacts, frequent []*tg.User, contactsLoaded, frequentLoaded bool) {
@@ -248,191 +222,4 @@ func (c *Client) resolveUserChoice(ctx context.Context, choice userChoice) (chat
 		}
 	}
 	return chat{}, fmt.Errorf("Telegram did not return complete details for @%s", choice.resolveUsername)
-}
-
-func (c *Client) searchUsers(ctx context.Context, t *terminal.Terminal, recentChats []chat) (chat, bool, error) {
-	fmt.Fprintln(t.Out(), "\033[2J\033[HLoading user search…")
-	contacts, contactsErr := c.loadContacts(ctx)
-	frequent, frequentErr := c.loadFrequentUsers(ctx)
-	if ctx.Err() != nil {
-		return chat{}, false, ctx.Err()
-	}
-	recent := c.recentUserChoices(recentChats, "recent")
-	local := mergeChoices(choicesFromUsers(contacts, "contact"), recent)
-	base := choicesFromUsers(frequent, "")
-	baseHeading := "Frequently contacted"
-	if len(base) == 0 {
-		base = c.recentUserChoices(recentChats, "")
-		baseHeading = "Recent"
-	}
-	heading := baseHeading
-	choices := base
-	selected := 0
-	var query []rune
-	searching := false
-	notice := ""
-	generation := 0
-	results := make(chan userSearchResult, 4)
-	timer := time.NewTimer(time.Hour)
-	if !timer.Stop() {
-		<-timer.C
-	}
-	defer timer.Stop()
-	var timerC <-chan time.Time
-	var searchCancel context.CancelFunc
-	defer func() {
-		if searchCancel != nil {
-			searchCancel()
-		}
-	}()
-	render := func() {
-		labels := make([]string, len(choices))
-		for i, c := range choices {
-			labels[i] = c.label
-		}
-		terminal.RenderUserSearch(t.Out(), labels, selected, string(query), heading, notice, searching)
-	}
-	resetSearch := func() {
-		generation++
-		if searchCancel != nil {
-			searchCancel()
-			searchCancel = nil
-		}
-		if !timer.Stop() && timerC != nil {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timerC = nil
-		text := strings.TrimSpace(string(query))
-		selected = 0
-		searching = false
-		notice = ""
-		if text == "" {
-			choices, heading = base, baseHeading
-			return
-		}
-		choices = filterChoices(local, text)
-		heading = "Results"
-		if utf8.RuneCountInString(text) >= 2 {
-			searching = true
-			timer.Reset(300 * time.Millisecond)
-			timerC = timer.C
-		}
-	}
-	if contactsErr != nil {
-		t.Report(contactsErr)
-		notice = textfmt.CleanError(contactsErr)
-	}
-	if frequentErr != nil {
-		t.Report(frequentErr)
-		notice = textfmt.CleanError(frequentErr)
-	}
-	render()
-	for {
-		select {
-		case <-ctx.Done():
-			return chat{}, false, ctx.Err()
-		case <-timerC:
-			timerC = nil
-			searchCtx, cancel := context.WithCancel(ctx)
-			searchCancel = cancel
-			currentGeneration, text := generation, strings.TrimSpace(string(query))
-			go func() {
-				remote, err := c.remoteUserChoices(searchCtx, text)
-				response := userSearchResult{currentGeneration, text, remote, err}
-				select {
-				case results <- response:
-				case <-searchCtx.Done():
-				}
-			}()
-		case result := <-results:
-			if result.generation != generation || result.query != strings.TrimSpace(string(query)) {
-				continue
-			}
-			searching = false
-			if searchCancel != nil {
-				searchCancel()
-			}
-			searchCancel = nil
-			if result.err != nil {
-				fmt.Fprintln(t.Out())
-				t.Report(result.err)
-				notice = textfmt.CleanError(result.err)
-				render()
-				continue
-			}
-			notice = ""
-			choices = mergeChoices(filterChoices(local, result.query), result.choices)
-			selected = min(selected, max(0, len(choices)-1))
-			render()
-		case key, ok := <-t.Keys:
-			if !ok {
-				return chat{}, false, context.Canceled
-			}
-			if key == terminal.TerminalLockKey {
-				continue
-			}
-			if key == terminal.TerminalUnlockKey {
-				render()
-				t.FlushNotices()
-				continue
-			}
-			switch key {
-			case "\x03", "\x04":
-				return chat{}, false, nil
-			case "\x1b":
-				if len(query) == 0 {
-					return chat{}, false, nil
-				}
-				query = nil
-				resetSearch()
-			case "\x1b[A", "\x1bOA":
-				if selected > 0 {
-					selected--
-				}
-			case "\x1b[B", "\x1bOB":
-				if selected+1 < len(choices) {
-					selected++
-				}
-			case "\r", "\n":
-				if selected < len(choices) {
-					choice := choices[selected]
-					notice = "Opening…"
-					render()
-					entry, err := c.resolveUserChoice(ctx, choice)
-					if err != nil {
-						fmt.Fprintln(t.Out())
-						t.Report(err)
-						notice = textfmt.CleanError(err)
-						render()
-						continue
-					}
-					return entry, true, nil
-				}
-			case "\x7f", "\x08":
-				if len(query) > 0 {
-					query = query[:len(query)-1]
-					resetSearch()
-				}
-			case "\x15":
-				if len(query) > 0 {
-					query = nil
-					resetSearch()
-				}
-			default:
-				if strings.HasPrefix(key, "\x1b") {
-					render()
-					continue
-				}
-				previous := len(query)
-				query = textfmt.AppendQuery(query, key)
-				if len(query) != previous {
-					resetSearch()
-				}
-			}
-			render()
-		}
-	}
 }

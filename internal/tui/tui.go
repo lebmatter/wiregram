@@ -22,10 +22,8 @@ const (
 )
 
 type tuiResult struct {
-	index    int
-	refresh  bool
+	accounts bool
 	switchTo *account.Account
-	err      error
 }
 
 // tuiModel is one account's main screen: header, chat list, chat, footer.
@@ -74,7 +72,7 @@ func chipsTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tuiChipsTick{} })
 }
 
-func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archived bool, archiveUnread int) tuiModel {
+func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) tuiModel {
 	w, h := termSize()
 	m := tuiModel{
 		ctx:           ctx,
@@ -83,12 +81,11 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		b:             b,
 		histories:     histories,
 		entries:       entries,
-		archived:      archived,
 		archiveUnread: archiveUnread,
 		width:         w,
 		height:        h,
 	}
-	m.list = newChatListModel(ctx, b, entries, archived, archiveUnread)
+	m.list = newChatListModel(ctx, b, entries, false, archiveUnread)
 	return m.sized()
 }
 
@@ -100,6 +97,9 @@ func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
 
 // paneOpen reports whether the right-hand pane holds a chat or the user search.
 func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen }
+
+// forwarding reports whether the forward picker is up over the chat it came from.
+func (m tuiModel) forwarding() bool { return m.chatOpen && m.searchOpen }
 
 func (m tuiModel) bodyHeight() int {
 	return max(4, m.height-1-lipgloss.Height(m.footer()))
@@ -129,8 +129,8 @@ func (m tuiModel) sized() tuiModel {
 	return m
 }
 
-func (m tuiModel) done(index int, refresh bool) (tuiModel, tea.Cmd) {
-	m.result = &tuiResult{index: index, refresh: refresh}
+func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
+	m.result = &result
 	return m, tea.Quit
 }
 
@@ -216,9 +216,19 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case chatForwardReq:
-		m = m.closeChat()
-		m.result = &tuiResult{err: msg.req}
-		return m, tea.Quit
+		var cmd tea.Cmd
+		m.search, cmd = newForwardSearch(m.ctx, m.b, m.entries, msg.req)
+		m.searchOpen = true
+		m.focus = focusChat
+		return m, cmd
+
+	case userForwardDone:
+		if msg.err != nil || !m.forwarding() {
+			break
+		}
+		m.searchOpen = false
+		m.chat.notice = "Message forwarded to " + textfmt.Plain(msg.target.Title)
+		return m, nil
 
 	case userSearchOpened:
 		if msg.err != nil {
@@ -227,6 +237,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m.openChat(msg.entry)
 
 	case userSearchClosed:
+		if m.forwarding() {
+			m.searchOpen = false
+			return m, nil
+		}
 		m = m.closeChat()
 		return m, nil
 
@@ -237,14 +251,16 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	if m.isListMsg(msg) {
 		return m.updateList(msg)
 	}
-	var cmd tea.Cmd
-	switch {
-	case m.searchOpen:
-		m.search, cmd = m.search.Update(msg)
-	case m.chatOpen:
-		m.chat, cmd = m.chat.Update(msg)
+	// While forwarding, the chat underneath still has work in flight; each
+	// model ignores messages that are not its own.
+	var searchCmd, chatCmd tea.Cmd
+	if m.searchOpen {
+		m.search, searchCmd = m.search.Update(msg)
 	}
-	return m, cmd
+	if m.chatOpen {
+		m.chat, chatCmd = m.chat.Update(msg)
+	}
+	return m, tea.Batch(searchCmd, chatCmd)
 }
 
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
@@ -264,7 +280,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		return m, cmd
 	}
 	paneFocused := m.paneOpen() && m.focus == focusChat
-	chatFocused := m.chatOpen && m.focus == focusChat
+	chatFocused := m.chatOpen && !m.searchOpen && m.focus == focusChat
 	idle := !paneFocused || (chatFocused && m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
 
 	k := msg.String()
@@ -272,8 +288,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		i := int(k[4] - '1')
 		if m.mgr != nil && i < len(m.mgr.Accounts) && m.mgr.Accounts[i] != m.active {
 			m = m.closeChat()
-			m.result = &tuiResult{switchTo: m.mgr.Accounts[i]}
-			return m, tea.Quit
+			return m.done(tuiResult{switchTo: m.mgr.Accounts[i]})
 		}
 		return m, nil
 	}
@@ -293,6 +308,10 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 	}
 	if paneFocused && m.searchOpen {
+		if m.forwarding() {
+			// Typing in the picker counts as activity for the chat's lock.
+			m.chat = m.chat.resetLock()
+		}
 		m.search, cmd = m.search.Update(msg)
 		return m, cmd
 	}
@@ -357,11 +376,11 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case chatListAccounts:
 		m = m.closeChat()
-		return m.done(len(m.entries)+2, false)
+		return m.done(tuiResult{accounts: true})
 
 	case chatListQuit:
 		m = m.closeChat()
-		return m.done(-1, false)
+		return m.done(tuiResult{})
 	}
 
 	var cmd tea.Cmd
@@ -374,7 +393,7 @@ func (m tuiModel) footer() string {
 	notice := m.list.notice()
 	switch {
 	case m.searchOpen && m.focus == focusChat:
-		keys = userSearchHelp
+		keys = m.search.helpKeys()
 		if m.twoPane() {
 			keys = append(keys, helpKey{"tab", "chats"})
 		}
@@ -386,7 +405,7 @@ func (m tuiModel) footer() string {
 		if m.searchOpen {
 			keys = append(keys, helpKey{"tab", "search"}, helpKey{"esc", "close search"})
 		}
-		if m.chatOpen {
+		if m.chatOpen && !m.searchOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
 			if notice == "" {
 				notice = m.chat.notice
@@ -452,25 +471,22 @@ func (m tuiModel) emptyPane(width, height int) string {
 	return renderBox("", centerLines(width-4, height-2, hint), width, height, colorDim)
 }
 
-func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archived bool, archiveUnread int) (int, bool, error) {
-	m := newTuiModel(ctx, mgr, active, b, histories, entries, archived, archiveUnread)
-	p := tea.NewProgram(m, tea.WithContext(ctx))
-	result, err := p.Run()
+// tuiSelectChat runs one account's main screen until the user quits (nil),
+// asks for the account picker, or switches account.
+func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) error {
+	m := newTuiModel(ctx, mgr, active, b, histories, entries, archiveUnread)
+	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil {
-		return -1, false, fmt.Errorf("run TUI: %w", err)
+		return fmt.Errorf("run TUI: %w", err)
 	}
 	final := result.(tuiModel)
-	if final.result == nil {
-		return -1, false, nil
+	switch {
+	case final.result == nil:
+		return nil
+	case final.result.switchTo != nil:
+		return accountSwitch{to: final.result.switchTo}
+	case final.result.accounts:
+		return accountsRequested{}
 	}
-	if final.result.switchTo != nil {
-		return -1, false, accountSwitch{to: final.result.switchTo}
-	}
-	// runModes interprets the search/accounts rows relative to the entries it
-	// passed in, which may differ from the list after a reload.
-	index := final.result.index
-	if index >= len(final.entries) {
-		index = len(entries) + index - len(final.entries)
-	}
-	return index, final.result.refresh, final.result.err
+	return nil
 }

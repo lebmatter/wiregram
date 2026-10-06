@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/gotd/td/tg"
 )
@@ -96,59 +95,4 @@ func (c *Client) markRead(ctx context.Context, entry chat, id int) error {
 		}
 	}
 	return nil
-}
-
-// Only messages actually drawn by the chat view advance the read position.
-// Telegram's readHistory is cumulative: it also covers earlier messages.
-type readReporter struct {
-	client *Client
-	entry  chat
-	target int
-	timer  *time.Timer
-	done   <-chan error
-	cancel context.CancelFunc
-}
-
-func newReadReporter(c *Client, entry chat) *readReporter {
-	timer := time.NewTimer(time.Hour)
-	timer.Stop()
-	return &readReporter{client: c, entry: entry, target: c.readState(entry.key).inbox, timer: timer}
-}
-
-func (r *readReporter) observe(id int) {
-	if id > r.target {
-		r.target = id
-		r.timer.Reset(3 * time.Second)
-	}
-}
-
-func (r *readReporter) Start(ctx context.Context) {
-	if r.done != nil || r.target <= r.client.readState(r.entry.key).inbox {
-		return
-	}
-	ctx, r.cancel = context.WithCancel(ctx)
-	done := make(chan error, 1)
-	r.done = done
-	id := r.target
-	go func() { done <- r.client.markRead(ctx, r.entry, id) }()
-}
-
-func (r *readReporter) complete() {
-	r.cancel()
-	r.done, r.cancel = nil, nil
-	if r.target > r.client.readState(r.entry.key).inbox {
-		r.timer.Reset(3 * time.Second)
-	}
-}
-
-func (r *readReporter) Close(ctx context.Context) error {
-	r.timer.Stop()
-	if r.done != nil {
-		r.cancel()
-		<-r.done
-	}
-	// Flush already-viewed messages on leaving the chat, without hanging exit.
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	return r.client.markRead(ctx, r.entry, r.target)
 }

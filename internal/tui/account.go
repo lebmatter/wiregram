@@ -11,7 +11,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/account"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 )
 
@@ -228,11 +227,6 @@ type addAccountModel struct {
 	result   string
 	width    int
 	height   int
-}
-
-type addAccountResult struct {
-	backendType string
-	serverURL   string
 }
 
 var addAccountOptions = []struct {
@@ -477,12 +471,12 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "esc", "ctrl+c", "ctrl+d":
-			m.current.Answer <- terminal.LineResult{Err: context.Canceled}
+			m.current.Answer <- account.LoginAnswer{Err: context.Canceled}
 			m.current = nil
 			return m, tea.Quit
 		case "enter":
 			value := m.input.Value()
-			m.current.Answer <- terminal.LineResult{Text: value}
+			m.current.Answer <- account.LoginAnswer{Text: value}
 			m.notice = ""
 			m.current = nil
 			return m, nil
@@ -529,7 +523,7 @@ func tuiLogin(ctx context.Context, mgr *account.AccountManager, a *account.Accou
 				return "+" + strings.TrimPrefix(phone, "+"), nil
 			}
 		}
-		r := account.LoginPrompt{Label: label, Masked: masked, Answer: make(chan terminal.LineResult, 1)}
+		r := account.LoginPrompt{Label: label, Masked: masked, Answer: make(chan account.LoginAnswer, 1)}
 		select {
 		case requests <- r:
 		case <-loginCtx.Done():

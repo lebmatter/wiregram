@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,10 +14,8 @@ import (
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
-	"golang.org/x/term"
 
 	"wiregram/internal/backend"
-	"wiregram/internal/terminal"
 )
 
 type attachment struct {
@@ -77,53 +73,6 @@ func mediaAttachment(message *tg.Message) (attachment, error) {
 	default:
 		return attachment{}, fmt.Errorf("this message has no playable attachment")
 	}
-}
-
-func (c *Client) playMedia(ctx context.Context, t *terminal.Terminal, a attachment, player string) (result error) {
-	dir, err := os.MkdirTemp("", "wiregram-media-")
-	if err != nil {
-		return fmt.Errorf("create private media directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(dir); err != nil {
-			result = fmt.Errorf("remove temporary media: %w", err)
-		}
-	}()
-	path := filepath.Join(dir, "attachment")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("create temporary media file: %w", err)
-	}
-	err = c.downloadMedia(ctx, a, file)
-	closeErr := file.Close()
-	if err := errors.Join(err, closeErr); err != nil {
-		return fmt.Errorf("download media: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	args := []string{"--no-config", "--load-scripts=no", "--input-terminal=no", "--input-default-bindings=no", "--input-media-keys=no", "--osc=no", "--osd-level=0", "--really-quiet", "--audio-display=no", "--autoload-files=no", "--image-display-duration=inf"}
-	if a.audio {
-		args = append(args, "--vid=no", "--vo=null")
-	} else {
-		cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil || cols < 1 || rows < 4 {
-			cols, rows = 80, 24
-		}
-		args = append(args, "--profile=sw-fast", "--vo=kitty", "--vo-kitty-alt-screen=no", "--vo-kitty-use-shm=no", "--vo-kitty-config-clear=no", "--vo-kitty-top=3", "--vo-kitty-left=1", fmt.Sprintf("--vo-kitty-cols=%d", cols), fmt.Sprintf("--vo-kitty-rows=%d", rows-2), fmt.Sprintf("--vo-kitty-width=%d", cols*8), fmt.Sprintf("--vo-kitty-height=%d", (rows-2)*16))
-	}
-	args = append(args, "--", path)
-	cmd := exec.CommandContext(ctx, player, args...)
-	cmd.Stdout = terminal.MediaOutput{Terminal: t}
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = time.Second
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("media playback failed; check that mpv supports this format and the Kitty video output: %w", err)
-	}
-	return nil
 }
 
 type downloadable struct {

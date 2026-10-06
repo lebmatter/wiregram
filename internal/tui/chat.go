@@ -117,10 +117,9 @@ type chatBackendUpdate struct {
 }
 
 type chatReadTick struct{}
-type chatReadDone struct{ err error }
 type chatTypingTimeout struct{}
 type chatReturnToList struct{}
-type chatForwardReq struct{ req backend.ForwardReq }
+type chatForwardReq struct{ req forwardRequest }
 
 type mediaReady struct {
 	cmd     *exec.Cmd
@@ -742,7 +741,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		req := backend.ForwardReq{From: m.entry, Id: sel.ID}
+		req := forwardRequest{from: m.entry, msgID: sel.ID}
 		return m, func() tea.Msg { return chatForwardReq{req} }
 	case "alt+s", "alt+S":
 		sel, ok := m.selectedMsg()
@@ -1216,8 +1215,6 @@ func (m chatViewModel) cleanup() {
 		_ = m.reads.Close(ctx)
 	}
 }
-
-var _ error = backend.ForwardReq{}
 
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled)

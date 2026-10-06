@@ -21,7 +21,6 @@ import (
 	"wiregram/internal/matrix"
 	"wiregram/internal/mattermost"
 	"wiregram/internal/telegram"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 	"wiregram/internal/whatsapp"
 )
@@ -822,5 +821,11 @@ func (m *AccountManager) startWhatsApp(parent context.Context, a *Account, promp
 type LoginPrompt struct {
 	Label  string
 	Masked bool
-	Answer chan terminal.LineResult
+	Answer chan LoginAnswer
+}
+
+// LoginAnswer is what the user typed at a login prompt, or why they did not.
+type LoginAnswer struct {
+	Text string
+	Err  error
 }

@@ -14,7 +14,6 @@ import (
 
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
-	"wiregram/internal/terminal"
 )
 
 type TelegramBackend struct {
@@ -397,18 +396,6 @@ func (tb *TelegramBackend) MediaPlayable(msg backend.Message) bool {
 	return err == nil
 }
 
-func (tb *TelegramBackend) PlayMedia(ctx context.Context, t *terminal.Terminal, msg backend.Message, player string) error {
-	m, ok := msg.Raw.(*tg.Message)
-	if !ok {
-		return fmt.Errorf("this message has no playable attachment")
-	}
-	a, err := mediaAttachment(m)
-	if err != nil {
-		return err
-	}
-	return tb.C.playMedia(ctx, t, a, player)
-}
-
 func (tb *TelegramBackend) MediaExec(ctx context.Context, msg backend.Message, player string) (*exec.Cmd, func(), error) {
 	m, ok := msg.Raw.(*tg.Message)
 	if !ok {
@@ -435,7 +422,7 @@ func (tb *TelegramBackend) MediaExec(ctx context.Context, msg backend.Message, p
 		cleanup()
 		return nil, nil, fmt.Errorf("download media: %w", err)
 	}
-	return terminal.MpvCmd(ctx, player, a.audio, path), cleanup, nil
+	return backend.MpvCmd(ctx, player, a.audio, path), cleanup, nil
 }
 
 func (tb *TelegramBackend) MediaSaveable(msg backend.Message) (string, bool) {
@@ -512,12 +499,6 @@ func (tb *TelegramBackend) OpenUserCandidate(ctx context.Context, c backend.User
 		return backend.ChatEntry{}, err
 	}
 	return chatToChatEntry(entry), nil
-}
-
-func (tb *TelegramBackend) HandleForward(ctx context.Context, t *terminal.Terminal, recentChats []backend.ChatEntry, fromChat backend.ChatEntry, msgID string) {
-	chats := chatEntriesToChats(recentChats)
-	fwd := forwardRequest{from: entryToChat(fromChat).peer, id: msgIDToInt(msgID)}
-	tb.C.handleForward(ctx, t, chats, fwd)
 }
 
 func (tb *TelegramBackend) RecentEmoji() []string      { return tb.C.recentEmoji() }

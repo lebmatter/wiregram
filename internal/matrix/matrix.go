@@ -18,11 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/term"
-
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 )
 
@@ -1327,68 +1324,6 @@ func (mx *MxBackend) MediaPlayable(msg backend.Message) bool {
 	return msgtype == "m.image" || msgtype == "m.video" || msgtype == "m.audio"
 }
 
-func (mx *MxBackend) PlayMedia(ctx context.Context, t *terminal.Terminal, msg backend.Message, player string) (result error) {
-	ev, ok := msg.Raw.(mxTimelineEvent)
-	if !ok {
-		return fmt.Errorf("this message has no playable media")
-	}
-	mxcURL, _ := ev.Content["url"].(string)
-	if mxcURL == "" {
-		return fmt.Errorf("this message has no playable media")
-	}
-	body, _ := ev.Content["body"].(string)
-	if body == "" {
-		body = "media"
-	}
-	tmpDir, err := os.MkdirTemp("", "wiregram-mx-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer func() {
-		if e := os.RemoveAll(tmpDir); e != nil {
-			result = fmt.Errorf("remove temporary media: %w", e)
-		}
-	}()
-	dest := filepath.Join(tmpDir, filepath.Base(body))
-	if err := mx.downloadMXC(ctx, mxcURL, dest); err != nil {
-		return err
-	}
-	msgtype, _ := ev.Content["msgtype"].(string)
-	args := []string{"--no-config", "--load-scripts=no", "--input-terminal=no",
-		"--input-default-bindings=no", "--input-media-keys=no", "--osc=no",
-		"--osd-level=0", "--really-quiet", "--audio-display=no",
-		"--autoload-files=no", "--image-display-duration=inf"}
-	if msgtype == "m.audio" {
-		args = append(args, "--vid=no", "--vo=null")
-	} else {
-		cols, rows, termErr := term.GetSize(int(os.Stdout.Fd()))
-		if termErr != nil || cols < 1 || rows < 4 {
-			cols, rows = 80, 24
-		}
-		args = append(args, "--profile=sw-fast", "--vo=kitty",
-			"--vo-kitty-alt-screen=no", "--vo-kitty-use-shm=no",
-			"--vo-kitty-config-clear=no", "--vo-kitty-top=3", "--vo-kitty-left=1",
-			fmt.Sprintf("--vo-kitty-cols=%d", cols),
-			fmt.Sprintf("--vo-kitty-rows=%d", rows-2),
-			fmt.Sprintf("--vo-kitty-width=%d", cols*8),
-			fmt.Sprintf("--vo-kitty-height=%d", (rows-2)*16))
-	}
-	args = append(args, "--", dest)
-	t.MediaScreen(body)
-	defer t.ClearMedia()
-	cmd := exec.CommandContext(ctx, player, args...)
-	cmd.Stdout = terminal.MediaOutput{Terminal: t}
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = time.Second
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("media playback failed; check that mpv supports this format and the Kitty video output: %w", err)
-	}
-	return nil
-}
-
 func (mx *MxBackend) MediaExec(ctx context.Context, msg backend.Message, player string) (*exec.Cmd, func(), error) {
 	ev, ok := msg.Raw.(mxTimelineEvent)
 	if !ok {
@@ -1414,7 +1349,7 @@ func (mx *MxBackend) MediaExec(ctx context.Context, msg backend.Message, player 
 	}
 	msgtype, _ := ev.Content["msgtype"].(string)
 	audio := msgtype == "m.audio"
-	return terminal.MpvCmd(ctx, player, audio, dest), cleanup, nil
+	return backend.MpvCmd(ctx, player, audio, dest), cleanup, nil
 }
 
 func (mx *MxBackend) MediaSaveable(msg backend.Message) (string, bool) {
@@ -1606,9 +1541,6 @@ func (mx *MxBackend) openDM(ctx context.Context, userID string) (backend.ChatEnt
 		Title: mx.displayName(userID),
 		IsDM:  true,
 	}, nil
-}
-
-func (mx *MxBackend) HandleForward(ctx context.Context, t *terminal.Terminal, recentChats []backend.ChatEntry, fromChat backend.ChatEntry, msgID string) {
 }
 
 // Emoji.

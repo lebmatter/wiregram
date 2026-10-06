@@ -10,7 +10,6 @@ import (
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
 	"wiregram/internal/backend"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 )
 
@@ -128,9 +127,8 @@ type accountSwitch struct{ to *account.Account }
 func (accountSwitch) Error() string { return "switch account" }
 
 func runModes(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string) error {
-	archived := false
 	for {
-		entries, archiveUnread, err := b.Dialogs(ctx, archived)
+		entries, archiveUnread, err := b.Dialogs(ctx, false)
 		if err != nil {
 			if !backend.NetworkError(err) {
 				return err
@@ -141,58 +139,6 @@ func runModes(ctx context.Context, mgr *account.AccountManager, active *account.
 			}
 			continue
 		}
-		index, refresh, err := tuiSelectChat(ctx, mgr, active, b, histories, entries, archived, archiveUnread)
-		if err != nil {
-			if fwd, ok := err.(backend.ForwardReq); ok {
-				if err := terminal.WithLegacyTerminal(ctx, func(t *terminal.Terminal) {
-					b.HandleForward(ctx, t, entries, fwd.From, fwd.Id)
-				}); err != nil {
-					return err
-				}
-				continue
-			}
-			return err
-		}
-		if refresh {
-			continue
-		}
-		if index < 0 {
-			return nil
-		}
-		if index == len(entries)+2 {
-			return accountsRequested{}
-		}
-		if index == len(entries) {
-			archived = !archived
-			continue
-		}
-		if index >= len(entries) {
-			continue
-		}
-		entry := entries[index]
-		history := histories[entry.ID]
-		if history == nil {
-			history = make([]string, 0)
-		}
-		if err := terminal.WithLegacyTerminal(ctx, func(t *terminal.Terminal) {
-			err = viewChat(ctx, b, t, entry, &history)
-		}); err != nil {
-			return err
-		}
-		histories[entry.ID] = history
-		if err != nil {
-			if fwd, ok := err.(backend.ForwardReq); ok {
-				if err := terminal.WithLegacyTerminal(ctx, func(t *terminal.Terminal) {
-					b.HandleForward(ctx, t, entries, fwd.From, fwd.Id)
-				}); err != nil {
-					return err
-				}
-				continue
-			}
-			if errors.Is(err, context.Canceled) {
-				return err
-			}
-			fmt.Fprintf(os.Stderr, "%s\n", textfmt.CleanError(err))
-		}
+		return tuiSelectChat(ctx, mgr, active, b, histories, entries, archiveUnread)
 	}
 }

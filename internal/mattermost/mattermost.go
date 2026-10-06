@@ -22,7 +22,6 @@ import (
 
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 )
 
@@ -926,10 +925,6 @@ func (mb *MmBackend) InboxPosition(ch backend.ChatEntry) string {
 
 func (mb *MmBackend) MediaPlayable(msg backend.Message) bool { return false }
 
-func (mb *MmBackend) PlayMedia(ctx context.Context, t *terminal.Terminal, msg backend.Message, player string) error {
-	return fmt.Errorf("media playback is not supported on Mattermost")
-}
-
 func (mb *MmBackend) MediaExec(ctx context.Context, msg backend.Message, player string) (*exec.Cmd, func(), error) {
 	return nil, nil, fmt.Errorf("media playback is not supported on Mattermost")
 }
@@ -1048,9 +1043,6 @@ func (mb *MmBackend) openDM(ctx context.Context, user mmUser) (backend.ChatEntry
 		IsDM:  true,
 		Raw:   ch,
 	}, nil
-}
-
-func (mb *MmBackend) HandleForward(ctx context.Context, t *terminal.Terminal, recentChats []backend.ChatEntry, fromChat backend.ChatEntry, msgID string) {
 }
 
 func (mb *MmBackend) RecentEmoji() []string { return mb.recentEmoji }

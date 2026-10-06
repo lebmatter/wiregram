@@ -3,7 +3,6 @@ package whatsapp
 import (
 	"context"
 	"fmt"
-	"io"
 	"mime"
 	"os"
 	"os/exec"
@@ -21,13 +20,11 @@ import (
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"golang.org/x/term"
 	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 )
 
@@ -1007,84 +1004,6 @@ func (wa *WaBackend) MediaPlayable(msg backend.Message) bool {
 		m.GetAudioMessage() != nil || m.GetStickerMessage() != nil
 }
 
-func (wa *WaBackend) PlayMedia(ctx context.Context, t *terminal.Terminal, msg backend.Message, player string) (result error) {
-	evt, ok := msg.Raw.(*events.Message)
-	if !ok {
-		return fmt.Errorf("this message has no playable media")
-	}
-	var dl whatsmeow.DownloadableMessage
-	var filename string
-	var isAudio bool
-	m := evt.Message
-	switch {
-	case m.GetImageMessage() != nil:
-		dl = m.GetImageMessage()
-		filename = "image.jpg"
-	case m.GetVideoMessage() != nil:
-		dl = m.GetVideoMessage()
-		filename = "video.mp4"
-	case m.GetAudioMessage() != nil:
-		dl = m.GetAudioMessage()
-		filename = "audio.ogg"
-		isAudio = true
-	case m.GetStickerMessage() != nil:
-		dl = m.GetStickerMessage()
-		filename = "sticker.webp"
-	default:
-		return fmt.Errorf("this message has no playable media")
-	}
-	data, err := wa.Client.Download(ctx, dl)
-	if err != nil {
-		return fmt.Errorf("download media: %w", err)
-	}
-	tmpDir, err := os.MkdirTemp("", "wiregram-wa-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
-	}
-	defer func() {
-		if e := os.RemoveAll(tmpDir); e != nil {
-			result = fmt.Errorf("remove temporary media: %w", e)
-		}
-	}()
-	dest := filepath.Join(tmpDir, filename)
-	if err := os.WriteFile(dest, data, 0600); err != nil {
-		return fmt.Errorf("write media file: %w", err)
-	}
-	args := []string{"--no-config", "--load-scripts=no", "--input-terminal=no",
-		"--input-default-bindings=no", "--input-media-keys=no", "--osc=no",
-		"--osd-level=0", "--really-quiet", "--audio-display=no",
-		"--autoload-files=no", "--image-display-duration=inf"}
-	if isAudio {
-		args = append(args, "--vid=no", "--vo=null")
-	} else {
-		cols, rows, termErr := term.GetSize(int(os.Stdout.Fd()))
-		if termErr != nil || cols < 1 || rows < 4 {
-			cols, rows = 80, 24
-		}
-		args = append(args, "--profile=sw-fast", "--vo=kitty",
-			"--vo-kitty-alt-screen=no", "--vo-kitty-use-shm=no",
-			"--vo-kitty-config-clear=no", "--vo-kitty-top=3", "--vo-kitty-left=1",
-			fmt.Sprintf("--vo-kitty-cols=%d", cols),
-			fmt.Sprintf("--vo-kitty-rows=%d", rows-2),
-			fmt.Sprintf("--vo-kitty-width=%d", cols*8),
-			fmt.Sprintf("--vo-kitty-height=%d", (rows-2)*16))
-	}
-	args = append(args, "--", dest)
-	t.MediaScreen(filename)
-	defer t.ClearMedia()
-	cmd := exec.CommandContext(ctx, player, args...)
-	cmd.Stdout = terminal.MediaOutput{Terminal: t}
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = time.Second
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("media playback failed; check that mpv supports this format and the Kitty video output: %w", err)
-	}
-	return nil
-}
-
 func (wa *WaBackend) MediaExec(ctx context.Context, msg backend.Message, player string) (*exec.Cmd, func(), error) {
 	evt, ok := msg.Raw.(*events.Message)
 	if !ok {
@@ -1120,7 +1039,7 @@ func (wa *WaBackend) MediaExec(ctx context.Context, msg backend.Message, player 
 		cleanup()
 		return nil, nil, fmt.Errorf("write media file: %w", err)
 	}
-	return terminal.MpvCmd(ctx, player, isAudio, dest), cleanup, nil
+	return backend.MpvCmd(ctx, player, isAudio, dest), cleanup, nil
 }
 
 func (wa *WaBackend) MediaSaveable(msg backend.Message) (string, bool) {
@@ -1217,135 +1136,6 @@ func (wa *WaBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandid
 		return backend.ChatEntry{}, fmt.Errorf("open chat: unexpected search result")
 	}
 	return entry, nil
-}
-
-// pickUser is the terminal picker still used by HandleForward.
-func (wa *WaBackend) pickUser(ctx context.Context, t *terminal.Terminal, recentChats []backend.ChatEntry) (backend.ChatEntry, bool, error) {
-	var base []struct {
-		jid   types.JID
-		label string
-		match string
-	}
-	for _, ch := range recentChats {
-		if !ch.IsDM {
-			continue
-		}
-		jid, ok := ch.Raw.(types.JID)
-		if !ok {
-			continue
-		}
-		label := ch.Title
-		base = append(base, struct {
-			jid   types.JID
-			label string
-			match string
-		}{jid: jid, label: label, match: strings.ToLower(label + " " + jid.User)})
-	}
-
-	choices := base
-	selected := 0
-	var query []rune
-	heading := "Recent DMs"
-
-	render := func() {
-		labels := make([]string, len(choices))
-		for i, c := range choices {
-			labels[i] = c.label
-		}
-		terminal.RenderUserSearch(t.Out(), labels, selected, string(query), heading, "", false)
-	}
-	render()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return backend.ChatEntry{}, false, ctx.Err()
-		case key, ok := <-t.Keys:
-			if !ok {
-				return backend.ChatEntry{}, false, context.Canceled
-			}
-			switch key {
-			case "\x1b", "\x03", "\x04":
-				return backend.ChatEntry{}, false, nil
-			case "\r", "\n":
-				if selected < len(choices) {
-					c := choices[selected]
-					return backend.ChatEntry{
-						ID:    backend.ChatID{Backend: "whatsapp", Id: c.jid.String()},
-						Title: c.label,
-						IsDM:  true,
-						Raw:   c.jid,
-					}, true, nil
-				}
-			case "k", "\x1b[A", "\x1bOA":
-				if selected > 0 {
-					selected--
-				}
-			case "j", "\x1b[B", "\x1bOB":
-				if selected < len(choices)-1 {
-					selected++
-				}
-			case "\x7f", "\b":
-				if len(query) > 0 {
-					query = query[:len(query)-1]
-				}
-				choices = filterWAChoices(base, string(query))
-				if len(choices) == 0 && len(query) == 0 {
-					choices = base
-				}
-				selected = 0
-			default:
-				if len(key) == 1 && key[0] >= 32 {
-					query = append(query, rune(key[0]))
-					choices = filterWAChoices(base, string(query))
-					selected = 0
-				}
-			}
-			render()
-		}
-	}
-}
-
-type waUserChoice struct {
-	jid   types.JID
-	label string
-	match string
-}
-
-func filterWAChoices(all []struct {
-	jid   types.JID
-	label string
-	match string
-}, q string) []struct {
-	jid   types.JID
-	label string
-	match string
-} {
-	q = strings.ToLower(strings.TrimSpace(q))
-	if q == "" {
-		return all
-	}
-	var out []struct {
-		jid   types.JID
-		label string
-		match string
-	}
-	for _, c := range all {
-		if strings.Contains(c.match, q) {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func (wa *WaBackend) HandleForward(ctx context.Context, t *terminal.Terminal, recentChats []backend.ChatEntry, fromChat backend.ChatEntry, msgID string) {
-	target, ok, err := wa.pickUser(ctx, t, recentChats)
-	if err != nil || !ok {
-		return
-	}
-	if err := wa.Forward(ctx, fromChat, target, msgID); err != nil {
-		t.Report(err)
-	}
 }
 
 // Emoji.

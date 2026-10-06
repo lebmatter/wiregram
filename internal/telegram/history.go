@@ -11,7 +11,6 @@ import (
 	"github.com/gotd/td/tg"
 
 	"wiregram/internal/backend"
-	"wiregram/internal/textfmt"
 )
 
 func (c *Client) history(ctx context.Context, entry chat) ([]*tg.Message, error) {
@@ -53,16 +52,6 @@ func (c *Client) fetchHistory(ctx context.Context, entry chat, offsetID int) ([]
 	}
 	sort.Slice(resultMessages, func(i, j int) bool { return resultMessages[i].ID < resultMessages[j].ID })
 	return resultMessages, nil
-}
-
-func messageText(m *tg.Message) string {
-	text := formatMedia(m.Media)
-	if text != "" && m.Message != "" {
-		text += " — " + m.Message
-	} else if text == "" {
-		text = m.Message
-	}
-	return textfmt.Plain(text)
 }
 
 func (c *Client) send(ctx context.Context, entry chat, text string, replyTo int) (*tg.Message, error) {

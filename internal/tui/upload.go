@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -284,4 +285,23 @@ func (m chatViewModel) uploadHelp() []helpKey {
 	}
 	return []helpKey{{"↑↓", "browse"}, {"→", "open folder"}, {"←", "up"}, {"⏎", "select"},
 		{"/", "type a path"}, {"esc", "cancel"}}
+}
+
+func uploadPath(value string) (string, error) {
+	path := backend.ExpandHome(strings.TrimSpace(value))
+	if path == "" {
+		return "", fmt.Errorf("enter a file path or press Esc to cancel")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve upload path: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("open upload file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("upload path must be a regular file")
+	}
+	return path, nil
 }

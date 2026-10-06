@@ -1,4 +1,4 @@
-package terminal
+package backend
 
 import (
 	"context"
@@ -8,36 +8,7 @@ import (
 	"time"
 
 	"golang.org/x/term"
-
-	"wiregram/internal/textfmt"
 )
-
-// The player never reads the terminal. Only the chat loop handles keyboard input.
-type MediaOutput struct{ Terminal *Terminal }
-
-func (w MediaOutput) Write(data []byte) (int, error) {
-	w.Terminal.Mu.Lock()
-	defer w.Terminal.Mu.Unlock()
-	if w.Terminal.locked || !w.Terminal.viewing {
-		return len(data), nil
-	}
-	return os.Stdout.Write(data)
-}
-
-func (t *Terminal) MediaScreen(label string) {
-	t.Mu.Lock()
-	defer t.Mu.Unlock()
-	t.viewing = true
-	fmt.Fprintf(os.Stdout, "\033[2J\033[H%s\r\nEsc: return to chat. Inactivity stops media after 10 seconds.\r\n", textfmt.Plain(label))
-}
-
-func (t *Terminal) ClearMedia() {
-	t.Mu.Lock()
-	defer t.Mu.Unlock()
-	t.viewing = false
-	// Terminate any interrupted graphics packet, then delete image data as well as placements.
-	fmt.Fprint(os.Stdout, "\033\\\033_Ga=d,d=A,q=2;\033\\\033[?25h")
-}
 
 func mpvArgs(audio bool, path string) []string {
 	args := []string{"--no-config", "--load-scripts=no", "--input-terminal=no",
@@ -63,6 +34,7 @@ func mpvArgs(audio bool, path string) []string {
 	return args
 }
 
+// MpvCmd builds the mpv command that shows path through the Kitty video output.
 func MpvCmd(ctx context.Context, player string, audio bool, path string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, player, mpvArgs(audio, path)...)
 	cmd.WaitDelay = time.Second

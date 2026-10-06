@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"wiregram/internal/config"
-	"wiregram/internal/terminal"
 	"wiregram/internal/textfmt"
 )
 
@@ -35,13 +34,6 @@ type ChatEntry struct {
 	IsSelf  bool
 	Raw     any
 }
-
-type ForwardReq struct {
-	From ChatEntry
-	Id   string
-}
-
-func (ForwardReq) Error() string { return "forward message" }
 
 type Message struct {
 	ID         string
@@ -213,7 +205,6 @@ type Backend interface {
 
 	// Media
 	MediaPlayable(msg Message) bool
-	PlayMedia(ctx context.Context, t *terminal.Terminal, msg Message, player string) error
 	MediaExec(ctx context.Context, msg Message, player string) (cmd *exec.Cmd, cleanup func(), err error)
 	MediaSaveable(msg Message) (filename string, ok bool)
 	SaveMedia(ctx context.Context, msg Message, destDir string) error
@@ -223,7 +214,6 @@ type Backend interface {
 	UserSearchBase(ctx context.Context, recentChats []ChatEntry) (UserSearchBase, error)
 	UserSearchRemote(ctx context.Context, query string) ([]UserCandidate, error)
 	OpenUserCandidate(ctx context.Context, c UserCandidate) (ChatEntry, error)
-	HandleForward(ctx context.Context, t *terminal.Terminal, recentChats []ChatEntry, fromChat ChatEntry, msgID string)
 
 	// Subscribers
 	AddSubscriber(id string, filter func(ChatID) bool, bufSize int) <-chan BackendEvent

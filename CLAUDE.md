@@ -7,7 +7,7 @@ AGENTS.md, whose durable rules were folded in here.)
 
 ## Project
 
-Wiregram is a minimal Telegram CLI client in Go. No TUI framework, no mouse, no cgo. It uses gotd/td for MTProto, chzyer/readline for line editing, and x/term for raw mode. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
+Wiregram is a minimal multi-backend chat client for the terminal, in Go. No mouse, no cgo. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 
@@ -52,8 +52,8 @@ These are project constraints, not suggestions:
   Never a bare string error.
 - **No `log.Fatal` or `os.Exit`** outside `main()`.
 - **No `init()` functions. No global mutable state.** Pass dependencies explicitly.
-- **Every user-facing error is one plain English line** to stderr, via
-  `terminal.report`. Keep going where possible; exit 1 only when fatal.
+- **Every user-facing error is one plain English line**: a notice in the
+  TUI, or stderr outside it. Keep going where possible; exit 1 only when fatal.
 - `gofmt` formatted, soft 100-column lines, comments only where the *why* is
   non-obvious.
 
@@ -89,10 +89,9 @@ cmd/wiregram/        main(): flags, keyring choice, config load, hands off to tu
 internal/
   textfmt/           pure text helpers: plain(), wrapping, cell widths, nick colours
   config/            config.json loading, keyring / insecure credential stores
-  terminal/          legacy raw-mode terminal: readline editor, inactivity lock,
-                     mpv/Kitty media screen (still used by HandleForward/PlayMedia)
   backend/           the Backend interface and shared types (ChatEntry, Message,
-                     events, capabilities, emoji catalog, upload classification)
+                     events, capabilities, emoji catalog, upload classification,
+                     the mpv command)
   telegram/          gotd/td client and backend (dialogs, history, media, search…)
   matrix/            Matrix backend
   mattermost/        Mattermost backend
@@ -100,8 +99,7 @@ internal/
   agent/             SQLite store for agents, providers and message history
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime
-  tui/               BubbleTea screens, the account/mode loop (run.go) and the
-                     legacy readline chat view (chatview.go)
+  tui/               BubbleTea screens and the account/mode loop (run.go)
 docs/                design notes and plans
 assets/              logo and other static files
 ```
@@ -113,10 +111,11 @@ lowest package that needs them rather than importing sideways.
 
 ### Concurrency model
 
-- One goroutine reads stdin bytes → assembles keys (escape sequence parsing with 40ms timeout) → feeds through the inactivity lock manager → delivers to the active mode.
+- BubbleTea owns stdin. All UI state lives in the models and is touched only
+  by `Update`; background work returns as `tea.Msg` values from commands.
 - Each account's gotd/td client runs its own update handler goroutine. Updates for the active chat are queued in `client.pending` and signaled via the `client.changed` channel.
-- `terminal.mu` guards lock/view state and notice buffering. The `editor` wrapper pipes keys into readline's stdin to bridge raw-mode input with readline's line-editing.
-- The chat view is a single select loop; all UI state lives in `view()` locals and is only touched by that goroutine. Background work returns through buffered channels.
+- The inactivity lock lives in the chat model (`lockTick`); media plays through
+  `tea.ExecProcess`.
 - Read receipts are batched with a timer to avoid flooding Telegram.
 
 ### Config and session paths

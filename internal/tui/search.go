@@ -15,9 +15,10 @@ import (
 	"wiregram/internal/textfmt"
 )
 
-// userSearchModel finds a person to chat with: a search box over a bubbles
-// list. The list's fuzzy filter narrows known people as you type, and
-// directory results are merged in as items when they arrive.
+// userSearchModel finds a person to chat with, or to forward a message to:
+// a search box over a bubbles list. The list's fuzzy filter narrows known
+// people as you type, and directory results are merged in as items when
+// they arrive.
 type userSearchModel struct {
 	ctx     context.Context
 	b       backend.Backend
@@ -28,6 +29,13 @@ type userSearchModel struct {
 	query   string
 	gen     int
 	opening bool
+	forward *forwardRequest
+}
+
+// forwardRequest is a message waiting for a recipient.
+type forwardRequest struct {
+	from  backend.ChatEntry
+	msgID string
 }
 
 // userItem adapts a candidate to list.DefaultItem: the name is the title and
@@ -60,7 +68,18 @@ type userSearchOpened struct {
 	entry backend.ChatEntry
 	err   error
 }
+type userForwardDone struct {
+	target backend.ChatEntry
+	err    error
+}
 type userSearchClosed struct{}
+
+// newForwardSearch picks the recipient for req instead of opening a chat.
+func newForwardSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry, req forwardRequest) (userSearchModel, tea.Cmd) {
+	m, cmd := newUserSearch(ctx, b, recent)
+	m.forward = &req
+	return m, cmd
+}
 
 func newUserSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry) (userSearchModel, tea.Cmd) {
 	d := list.NewDefaultDelegate()
@@ -184,12 +203,10 @@ func (m userSearchModel) Update(msg tea.Msg) (userSearchModel, tea.Cmd) {
 		return m.setItems()
 
 	case userSearchOpened:
-		m.opening = false
-		m.list.StopSpinner()
-		if msg.err != nil {
-			return m, m.list.NewStatusMessage(styleError.Render(textfmt.CleanError(msg.err)))
-		}
-		return m, nil
+		return m.finished(msg.err)
+
+	case userForwardDone:
+		return m.finished(msg.err)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -198,6 +215,16 @@ func (m userSearchModel) Update(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+// finished ends an open or forward; on failure the picker stays up with the error.
+func (m userSearchModel) finished(err error) (userSearchModel, tea.Cmd) {
+	m.opening = false
+	m.list.StopSpinner()
+	if err != nil {
+		return m, m.list.NewStatusMessage(styleError.Render(textfmt.CleanError(err)))
+	}
+	return m, nil
 }
 
 func (m userSearchModel) handleKey(msg tea.KeyPressMsg) (userSearchModel, tea.Cmd) {
@@ -229,10 +256,16 @@ func (m userSearchModel) handleKey(msg tea.KeyPressMsg) (userSearchModel, tea.Cm
 			return m, nil
 		}
 		m.opening = true
-		ctx, b := m.ctx, m.b
+		ctx, b, fwd := m.ctx, m.b, m.forward
 		return m, tea.Batch(m.list.StartSpinner(), func() tea.Msg {
 			entry, err := b.OpenUserCandidate(ctx, item.c)
-			return userSearchOpened{entry, err}
+			if fwd == nil {
+				return userSearchOpened{entry, err}
+			}
+			if err == nil {
+				err = b.Forward(ctx, fwd.from, entry, fwd.msgID)
+			}
+			return userForwardDone{entry, err}
 		})
 	}
 	// Everything else edits the search box.
@@ -251,7 +284,18 @@ func (m userSearchModel) view(width, height int, focused bool) string {
 	body := composerBox("", nil, "@ ", m.input, width-4, boxBorder(focused))
 	body = append(body, "")
 	body = append(body, strings.Split(m.list.View(), "\n")...)
-	return renderBox("Search users", body, width, height, boxBorder(focused))
+	title := "Search users"
+	if m.forward != nil {
+		title = "Forward to"
+	}
+	return renderBox(title, body, width, height, boxBorder(focused))
+}
+
+func (m userSearchModel) helpKeys() []helpKey {
+	if m.forward != nil {
+		return forwardSearchHelp
+	}
+	return userSearchHelp
 }
 
 var userSearchHelp = []helpKey{
@@ -260,4 +304,12 @@ var userSearchHelp = []helpKey{
 	{"pgup/pgdn", "page"},
 	{"⏎", "open chat"},
 	{"esc", "clear / back"},
+}
+
+var forwardSearchHelp = []helpKey{
+	{"type", "filter"},
+	{"↑↓", "select"},
+	{"pgup/pgdn", "page"},
+	{"⏎", "forward"},
+	{"esc", "clear / cancel"},
 }
