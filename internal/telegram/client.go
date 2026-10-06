@@ -192,7 +192,9 @@ func (c *Client) accept(value tg.MessageClass, newMessage bool) {
 		kind = "edit"
 	}
 	msg := tgToMessage(c, m)
-	c.subs.Broadcast(backend.BackendEvent{Kind: kind, Chat: peerKeyToID(key), Message: &msg})
+	c.subs.Broadcast(backend.BackendEvent{
+		Kind: kind, Chat: peerKeyToID(key), DM: key.kind == 'u', Message: &msg,
+	})
 }
 
 func (c *Client) acceptTyping(userID int64) {

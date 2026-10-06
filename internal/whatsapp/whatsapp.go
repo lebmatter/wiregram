@@ -300,7 +300,9 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 	}
 	wa.mu.Unlock()
 
-	wa.subs.Broadcast(backend.BackendEvent{Kind: "message", Chat: chat, Message: &msg})
+	wa.subs.Broadcast(backend.BackendEvent{
+		Kind: "message", Chat: chat, DM: chatJID.Server == types.DefaultUserServer, Message: &msg,
+	})
 }
 
 func getEditTargetID(evt *events.Message) string {

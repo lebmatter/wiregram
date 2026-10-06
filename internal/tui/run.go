@@ -53,7 +53,9 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			active, err = tuiChooseAccount(ctx, m, nil)
 			if err != nil {
 				if _, ok := err.(agentsRequested); ok && m.Agents != nil {
-					tuiAgentUI(ctx, m)
+					if active, err = tuiAgentMode(ctx, m); err != nil {
+						return err
+					}
 					continue
 				}
 				return err
@@ -95,6 +97,17 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
+				// Agent mode returns to this account unless it picked another.
+				to, err := tuiAgentMode(ctx, m)
+				if err != nil {
+					return err
+				}
+				if to != nil {
+					active = to
+				}
+				continue
+			}
 			var sw accountSwitch
 			if errors.As(err, &sw) {
 				active = sw.to
@@ -108,8 +121,9 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		active, err = tuiChooseAccount(ctx, m, active)
 		if err != nil {
 			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
-				tuiAgentUI(ctx, m)
-				active = nil
+				if active, err = tuiAgentMode(ctx, m); err != nil {
+					return err
+				}
 				continue
 			}
 			return err

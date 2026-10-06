@@ -40,6 +40,8 @@ var (
 	colorQuote  = lipgloss.Color("75")
 	colorSelBg  = lipgloss.Color("237")
 	colorBadge  = lipgloss.Color("16")
+	// colorAgent replaces colorAccent throughout agent mode.
+	colorAgent = lipgloss.Color("141")
 )
 
 var (
@@ -54,6 +56,7 @@ var (
 	styleQuoteBar    = lipgloss.NewStyle().Foreground(colorQuote)
 	styleBadge       = lipgloss.NewStyle().Bold(true).Background(colorAccent).Foreground(colorBadge)
 	styleSelectedRow = lipgloss.NewStyle().Bold(true).Background(colorSelBg)
+	styleAgent       = lipgloss.NewStyle().Foreground(colorAgent)
 )
 
 type helpKey struct {
@@ -61,13 +64,14 @@ type helpKey struct {
 	desc string
 }
 
-func newHelpModel(width int) help.Model {
+func newHelpModel(width int, accent color.Color) help.Model {
+	keyStyle := lipgloss.NewStyle().Foreground(accent)
 	h := help.New()
 	h.ShortSeparator = "  "
-	h.Styles.ShortKey = styleAccent
+	h.Styles.ShortKey = keyStyle
 	h.Styles.ShortDesc = styleSubtle
 	h.Styles.ShortSeparator = styleDim
-	h.Styles.FullKey = styleAccent
+	h.Styles.FullKey = keyStyle
 	h.Styles.FullDesc = styleSubtle
 	h.Styles.FullSeparator = styleDim
 	h.Styles.Ellipsis = styleDim
@@ -83,13 +87,17 @@ func helpBindings(keys []helpKey) []key.Binding {
 	return bindings
 }
 
-func renderHelpBar(keys []helpKey, width int) string {
-	return newHelpModel(width).ShortHelpView(helpBindings(keys))
+func renderHelpBar(keys []helpKey, width int, accent color.Color) string {
+	return newHelpModel(width, accent).ShortHelpView(helpBindings(keys))
 }
 
 // renderFooter draws the key help with the notice on the right. A long notice
 // (such as a delete confirmation) takes the whole line so it is never cut.
 func renderFooter(keys []helpKey, full bool, notice string, width int) string {
+	return renderThemedFooter(keys, full, notice, width, colorAccent)
+}
+
+func renderThemedFooter(keys []helpKey, full bool, notice string, width int, accent color.Color) string {
 	notice = textfmt.Plain(notice)
 	if full {
 		bindings := helpBindings(keys)
@@ -99,7 +107,7 @@ func renderFooter(keys []helpKey, full bool, notice string, width int) string {
 			groups = append(groups, bindings[:n])
 			bindings = bindings[n:]
 		}
-		out := newHelpModel(width).FullHelpView(groups)
+		out := newHelpModel(width, accent).FullHelpView(groups)
 		if notice != "" {
 			out += "\n" + styleNotice.Render(truncate(notice, width))
 		}
@@ -110,9 +118,9 @@ func renderFooter(keys []helpKey, full bool, notice string, width int) string {
 		return styleNotice.Render(truncate(notice, width))
 	}
 	if notice == "" {
-		return renderHelpBar(keys, width)
+		return renderHelpBar(keys, width, accent)
 	}
-	left := renderHelpBar(keys, width-noticeWidth-2)
+	left := renderHelpBar(keys, width-noticeWidth-2, accent)
 	gap := max(1, width-textfmt.DisplayWidth(left)-noticeWidth)
 	return left + strings.Repeat(" ", gap) + styleNotice.Render(notice)
 }
@@ -169,11 +177,15 @@ func accountChips(mgr *account.AccountManager, active *account.Account) []accoun
 // renderHeader is the one-line bar shown on every screen inside an account.
 // Chips are numbered to match the Alt+N account shortcuts.
 func renderHeader(chips []accountChip, width int) string {
-	parts := []string{styleBrand.Render(" wiregram ")}
+	return renderThemedHeader(chips, width, colorAccent, " wiregram ")
+}
+
+func renderThemedHeader(chips []accountChip, width int, accent color.Color, wordmark string) string {
+	parts := []string{lipgloss.NewStyle().Bold(true).Foreground(accent).Render(wordmark)}
 	for i, c := range chips {
 		label := truncate(c.label, 20)
 		if c.active {
-			label = styleTitle.Foreground(colorAccent).Render(label)
+			label = styleTitle.Foreground(accent).Render(label)
 		} else {
 			label = styleSubtle.Render(label)
 		}
@@ -213,6 +225,17 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 	}
 	b.WriteString("\n" + bs.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 	return b.String()
+}
+
+// accountShort is the account's tag in agent mode, such as TG1: its backend
+// and its Alt+N number.
+func accountShort(mgr *account.AccountManager, key string) string {
+	for i, a := range mgr.Accounts {
+		if mgr.AccountKey(a) == key {
+			return fmt.Sprintf("%s%d", backendTag(a.BackendType), i+1)
+		}
+	}
+	return "??"
 }
 
 func boxBorder(focused bool) color.Color {

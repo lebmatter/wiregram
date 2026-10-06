@@ -16,6 +16,7 @@ import (
 	"github.com/gotd/td/tg"
 	"go.mau.fi/whatsmeow/types"
 
+	"wiregram/internal/agent"
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
 	"wiregram/internal/matrix"
@@ -78,22 +79,51 @@ func (a *Account) Label() string {
 }
 
 type AccountManager struct {
-	cfg        config.Config
-	Dir        string
-	creds      config.CredStore
-	Accounts   []*Account // Owned exclusively by the UI after discovery.
-	Agents     *agentRuntime
-	Changed    chan struct{}
-	connecting chan struct{}
-	mu         sync.Mutex
-	owners     map[int64]*Account
+	cfg      config.Config
+	Dir      string
+	creds    config.CredStore
+	Accounts []*Account // Owned exclusively by the UI after discovery.
+	Agents   *agentRuntime
+	Changed  chan struct{}
+	// agentChanged mirrors Changed for the agent runtime, so the runtime and
+	// the UI never take each other's signal.
+	agentChanged chan struct{}
+	connecting   chan struct{}
+	mu           sync.Mutex
+	owners       map[int64]*Account
 }
 
 func (m *AccountManager) notify() {
-	select {
-	case m.Changed <- struct{}{}:
-	default:
+	for _, ch := range []chan struct{}{m.Changed, m.agentChanged} {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
+}
+
+// addAccount appends under the lock: the UI owns Accounts, but the agent
+// runtime reads it through List from its own goroutines.
+func (m *AccountManager) addAccount(a *Account) {
+	m.mu.Lock()
+	m.Accounts = append(m.Accounts, a)
+	m.mu.Unlock()
+}
+
+// List returns a copy of the accounts that is safe to use off the UI goroutine.
+func (m *AccountManager) List() []*Account {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]*Account(nil), m.Accounts...)
+}
+
+// AccountKey is the account's stable agent-binding key: its directory name,
+// or "primary" for the session stored in the config directory itself.
+func (m *AccountManager) AccountKey(a *Account) string {
+	if filepath.Clean(a.Dir) == filepath.Clean(m.Dir) {
+		return agent.PrimaryAccountKey
+	}
+	return filepath.Base(a.Dir)
 }
 
 func (a *Account) set(m *AccountManager, update func(*AccountState)) {
@@ -104,7 +134,7 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 }
 
 func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*AccountManager, error) {
-	m := &AccountManager{cfg: cfg, Dir: dir, creds: creds, Changed: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
+	m := &AccountManager{cfg: cfg, Dir: dir, creds: creds, Changed: make(chan struct{}, 1), agentChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
 	add := func(path string, requireIdentity bool) error {
 		a := &Account{Dir: path, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 		a.state.Status = "offline"
@@ -126,7 +156,7 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 			}
 			m.owners[a.state.Identity.ID] = a
 		}
-		m.Accounts = append(m.Accounts, a)
+		m.addAccount(a)
 		return nil
 	}
 	// The original session stays in place; existing users need no migration or login.
@@ -167,7 +197,7 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 				Histories:   make(map[backend.ChatID][]string),
 			}
 			a.state.Status = "offline"
-			m.Accounts = append(m.Accounts, a)
+			m.addAccount(a)
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "matrix-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
 			data, err := os.ReadFile(filepath.Join(path, "account.json"))
@@ -198,7 +228,7 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 			}
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.AccessToken == ""
-			m.Accounts = append(m.Accounts, a)
+			m.addAccount(a)
 			mxSeen[identity.Homeserver+"\x00"+identity.UserID] = true
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "mattermost-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
@@ -229,7 +259,7 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 			}
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.Token == ""
-			m.Accounts = append(m.Accounts, a)
+			m.addAccount(a)
 			mmSeen[identity.ServerURL] = true
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
 			if err := add(filepath.Join(dir, "accounts", entry.Name()), true); err != nil {
@@ -254,7 +284,7 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 		}
 		a.state.Status = "offline"
 		a.state.NeedsLogin = mb.Token == ""
-		m.Accounts = append(m.Accounts, a)
+		m.addAccount(a)
 	}
 	for _, mxs := range cfg.Matrix {
 		if mxSeen[mxs.Homeserver+"\x00"] {
@@ -271,7 +301,7 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 		}
 		a.state.Status = "offline"
 		a.state.NeedsLogin = mb.AccessToken == ""
-		m.Accounts = append(m.Accounts, a)
+		m.addAccount(a)
 	}
 	return m, nil
 }
@@ -287,7 +317,7 @@ func (m *AccountManager) AddTelegram() (*Account, error) {
 	}
 	a := &Account{Dir: dir, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
-	m.Accounts = append(m.Accounts, a)
+	m.addAccount(a)
 	return a, nil
 }
 
@@ -308,7 +338,7 @@ func (m *AccountManager) AddMattermost(serverURL string) (*Account, error) {
 		Histories:   make(map[backend.ChatID][]string),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
-	m.Accounts = append(m.Accounts, a)
+	m.addAccount(a)
 	return a, nil
 }
 
@@ -330,7 +360,7 @@ func (m *AccountManager) AddMatrix(homeserver string) (*Account, error) {
 		Histories:   make(map[backend.ChatID][]string),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
-	m.Accounts = append(m.Accounts, a)
+	m.addAccount(a)
 	return a, nil
 }
 
@@ -351,7 +381,7 @@ func (m *AccountManager) AddWhatsApp() (*Account, error) {
 		Histories:   make(map[backend.ChatID][]string),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
-	m.Accounts = append(m.Accounts, a)
+	m.addAccount(a)
 	return a, nil
 }
 
@@ -371,12 +401,14 @@ func (m *AccountManager) Discard(a *Account) {
 	if a.BackendType == "whatsapp" && a.waBackend != nil && a.waBackend.Client != nil {
 		a.waBackend.Client.Disconnect()
 	}
+	m.mu.Lock()
 	for i, x := range m.Accounts {
 		if x == a {
 			m.Accounts = append(m.Accounts[:i], m.Accounts[i+1:]...)
 			break
 		}
 	}
+	m.mu.Unlock()
 	if a.Dir != "" {
 		os.RemoveAll(a.Dir)
 	}

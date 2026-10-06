@@ -1174,7 +1174,8 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 	switch event.Event {
 	case "posted":
 		var wrapper struct {
-			Post string `json:"post"`
+			Post        string `json:"post"`
+			ChannelType string `json:"channel_type"`
 		}
 		if err := json.Unmarshal(event.Data, &wrapper); err != nil {
 			return
@@ -1194,7 +1195,10 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		}
 		mb.notify()
 		msg := mb.postToMessage(context.Background(), post)
-		mb.subs.Broadcast(backend.BackendEvent{Kind: "message", Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID}, Message: &msg})
+		mb.subs.Broadcast(backend.BackendEvent{
+			Kind: "message", Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
+			DM: wrapper.ChannelType == "D", Message: &msg,
+		})
 
 	case "post_edited":
 		var wrapper struct {

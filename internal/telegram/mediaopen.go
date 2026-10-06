@@ -119,8 +119,11 @@ func mediaDownloadable(message *tg.Message) (downloadable, error) {
 		}
 		name := "document"
 		for _, attr := range d.Attributes {
+			// The sender picks this name, so keep only its last element.
 			if f, ok := attr.(*tg.DocumentAttributeFilename); ok {
-				name = f.FileName
+				if base := filepath.Base(f.FileName); base != "." && base != ".." && base != "/" {
+					name = base
+				}
 			}
 		}
 		return downloadable{

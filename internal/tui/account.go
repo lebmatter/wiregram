@@ -152,7 +152,7 @@ func (m accountListModel) View() tea.View {
 		rows = append(rows, row)
 	}
 	rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
-	for i, label := range []string{"Agents…", "Add account…", "Quit"} {
+	for i, label := range []string{"Chat Agents…", "Add account…", "Quit"} {
 		index := len(m.accounts) + i
 		if index == m.selected {
 			rows = append(rows, styleSelectedRow.Render(styleAccent.Render("> ")+label))

@@ -437,7 +437,7 @@ func (tb *TelegramBackend) MediaSaveable(msg backend.Message) (string, bool) {
 	return dl.filename, true
 }
 
-func (tb *TelegramBackend) SaveMedia(ctx context.Context, msg backend.Message, destPath string) error {
+func (tb *TelegramBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir string) error {
 	m, ok := msg.Raw.(*tg.Message)
 	if !ok {
 		return fmt.Errorf("this message has no downloadable attachment")
@@ -446,7 +446,7 @@ func (tb *TelegramBackend) SaveMedia(ctx context.Context, msg backend.Message, d
 	if err != nil {
 		return err
 	}
-	return tb.C.saveMedia(ctx, dl, destPath)
+	return tb.C.saveMedia(ctx, dl, filepath.Join(destDir, dl.filename))
 }
 
 func (tb *TelegramBackend) AcknowledgeMedia(ctx context.Context, msg backend.Message) {

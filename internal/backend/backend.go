@@ -84,6 +84,7 @@ type GenericReactionUpdate struct {
 type BackendEvent struct {
 	Kind     string                 // "message", "edit", "delete", "reaction"
 	Chat     ChatID                 // which chat the event belongs to
+	DM       bool                   // one-to-one private chat; set on "message" events
 	Message  *Message               // for "message" and "edit"
 	DeleteID string                 // message ID for "delete"
 	Reaction *GenericReactionUpdate // for "reaction"
@@ -105,6 +106,10 @@ func (ss *SubscriberSet) Add(id string, filter func(ChatID) bool, bufSize int) <
 	ss.mu.Lock()
 	if ss.subs == nil {
 		ss.subs = make(map[string]*backendSubscriber)
+	}
+	// Replacing a subscriber closes its old channel so its reader can exit.
+	if old, ok := ss.subs[id]; ok {
+		close(old.ch)
 	}
 	ss.subs[id] = &backendSubscriber{filter: filter, ch: ch}
 	ss.mu.Unlock()

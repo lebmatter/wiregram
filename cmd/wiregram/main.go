@@ -39,6 +39,7 @@ Keyboard shortcuts:
 
   Anywhere
     Alt+1..9          Switch to account N
+    Alt+A             Chat Agents (from the chat list)
     Tab               Move between chat list and chat (wide terminals)
     ?                 Show all shortcuts
 
@@ -68,7 +69,6 @@ Keyboard shortcuts:
     Alt+S             Save attachment to ~/Downloads
     Alt+P             Pin/unpin message
     Alt+H             Toggle private mode (hide history)
-    Alt+A             Toggle AI assistant
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
     Delete            Delete message (you only)
@@ -92,6 +92,24 @@ Keyboard shortcuts:
     Tab               Toggle reaction / draft insert
     Enter             Confirm
     Esc               Cancel
+
+  Chat Agents (violet)
+    Up/k, Down/j      Select
+    Enter             Show conversations / open one
+    n                 New agent (connects a provider first if needed)
+    e                 Edit agent
+    c                 Connect accounts (each answers to one agent)
+    Space             Pause or resume agent
+    d                 Delete agent
+    p                 AI providers (n new, e edit, d delete)
+    y / n             Send / discard a suggested reply
+    Esc               Back
+
+  Chat Agent wizard
+    Enter             Answer or pick
+    Space             Toggle an account
+    Esc               Previous question
+    Ctrl+C            Cancel
 
   Media viewer
     Esc, Ctrl+C       Stop and return to chat

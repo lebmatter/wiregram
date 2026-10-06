@@ -3,1286 +3,1012 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"image/color"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
-	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
+	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
 )
 
-// Agent UI modes.
-type agentUIMode int
+// Agent mode manages Chat Agents: AI bots bound to whole accounts that answer
+// incoming DMs only. It shares the account header but uses colorAgent.
+
+type agentScreen int
 
 const (
-	agentModeList agentUIMode = iota
-	agentModeEditor
-	agentModeThreads
-	agentModeThread
-	agentModeProviders
-	agentModeProviderEditor
-	agentModeChatPicker
+	scrAgents agentScreen = iota
+	scrConvs
+	scrConv
+	scrProviders
+	scrWizard
 )
 
-// Root model for the agent UI.
-type agentUIModel struct {
-	ctx    context.Context
-	mgr    *account.AccountManager
-	mode   agentUIMode
-	width  int
-	height int
-	quit   bool
-	notice string
+type wizardPurpose int
 
-	list           agentListModel
-	editor         agentEditorModel
-	threads        agentThreadsModel
-	thread         agentThreadModel
-	providers      providerListModel
-	providerEditor providerEditorModel
-	chatPicker     chatPickerModel
+const (
+	wizNewAgent wizardPurpose = iota
+	wizEditAgent
+	wizNewProvider
+	wizEditProvider
+	wizConnect
+)
+
+const agentSidebarWidth = 40
+
+type agentModeModel struct {
+	ctx  context.Context
+	mgr  *account.AccountManager
+	quit bool
+	// switchTo is the account to open on exit; nil returns to where we came from.
+	switchTo *account.Account
+
+	screen agentScreen
+	back   agentScreen // where the wizard returns to
+
+	agents    []agent.AgentRecord
+	providers []agent.AgentProvider
+	bindings  map[string]int64
+	threads   []agent.AgentThread
+	sel       int
+	tsel      int
+	psel      int
+
+	conv      account.ConvKey
+	convTitle string
+	convLog   []agent.AgentLoggedMessage
+
+	wiz       wizardModel
+	purpose   wizardPurpose
+	target    int64 // agent or provider being edited or connected
+	thenAgent bool  // start the agent wizard once a provider is saved
+
+	confirm     func() error
+	confirmText string
+	notice      string
+	fullHelp    bool
+	width       int
+	height      int
 }
 
-func tuiAgentUI(ctx context.Context, mgr *account.AccountManager) {
+type agentRuntimeChanged struct{}
+type agentApproveDone struct{ err error }
+
+func listenAgents(ctx context.Context, mgr *account.AccountManager) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-mgr.Agents.Changed():
+			return agentRuntimeChanged{}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+// tuiAgentMode runs agent mode. It returns the account to switch to, or nil
+// to go back to wherever it was opened from.
+func tuiAgentMode(ctx context.Context, mgr *account.AccountManager) (*account.Account, error) {
 	w, h := termSize()
-	m := agentUIModel{
-		ctx:    ctx,
-		mgr:    mgr,
-		width:  w,
-		height: h,
+	m := agentModeModel{ctx: ctx, mgr: mgr, width: w, height: h}
+	m = m.reload()
+	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
+	if err != nil {
+		return nil, fmt.Errorf("run agent mode: %w", err)
 	}
-	m.list = newAgentListModel(mgr)
-	m.list.width, m.list.height = w, h
-	p := tea.NewProgram(m, tea.WithContext(ctx))
-	p.Run()
+	return result.(agentModeModel).switchTo, nil
 }
 
-func (m agentUIModel) Init() tea.Cmd {
-	return m.list.Init()
+func (m agentModeModel) db() *agent.AgentDB { return m.mgr.Agents.Db }
+
+func (m agentModeModel) Init() tea.Cmd {
+	return tea.Batch(listenAgents(m.ctx, m.mgr), chipsTick())
 }
 
-func (m agentUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
+// reload rereads everything shown from the database.
+func (m agentModeModel) reload() agentModeModel {
+	var err error
+	if m.agents, err = m.db().ListAgents(); err != nil {
+		m.notice = textfmt.CleanError(err)
 	}
-
-	switch m.mode {
-	case agentModeList:
-		return m.updateList(msg)
-	case agentModeEditor:
-		return m.updateEditor(msg)
-	case agentModeThreads:
-		return m.updateThreads(msg)
-	case agentModeThread:
-		return m.updateThread(msg)
-	case agentModeProviders:
-		return m.updateProviders(msg)
-	case agentModeProviderEditor:
-		return m.updateProviderEditor(msg)
-	case agentModeChatPicker:
-		return m.updateChatPicker(msg)
+	if m.providers, err = m.db().ListProviders(); err != nil {
+		m.notice = textfmt.CleanError(err)
 	}
-	return m, nil
-}
-
-func (m agentUIModel) View() tea.View {
-	var content string
-	switch m.mode {
-	case agentModeEditor:
-		content = m.editor.View()
-	case agentModeThreads:
-		content = m.threads.View()
-	case agentModeThread:
-		content = m.thread.View()
-	case agentModeProviders:
-		content = m.providers.View()
-	case agentModeProviderEditor:
-		content = m.providerEditor.View()
-	case agentModeChatPicker:
-		content = m.chatPicker.View()
-	default:
-		content = m.list.View()
+	if m.bindings, err = m.db().AccountAgents(); err != nil {
+		m.notice = textfmt.CleanError(err)
 	}
-	v := tea.NewView(content)
-	v.AltScreen = true
-	return v
-}
-
-// Message types for mode transitions.
-type agentListOpenThreads struct{ agent agent.AgentRecord }
-type agentListNewAgent struct{}
-type agentListEditAgent struct{ agent agent.AgentRecord }
-type agentListDeleteAgent struct{ id int64 }
-type agentListOpenProviders struct{}
-type agentListBack struct{}
-type agentEditorSaved struct{}
-type agentEditorCancelled struct{}
-type agentEditorPickChats struct{}
-type agentThreadsBack struct{}
-type agentThreadsOpenThread struct {
-	agent  agent.AgentRecord
-	thread agent.AgentThread
-}
-type agentThreadBack struct{}
-type providerListBack struct{}
-type providerListNew struct{}
-type providerListEdit struct{ provider agent.AgentProvider }
-type providerListDelete struct{ id int64 }
-type providerEditorSaved struct{}
-type providerEditorCancelled struct{}
-type chatPickerDone struct{ selected []agent.AgentChatAssignment }
-type chatPickerCancelled struct{}
-
-// Update dispatchers.
-
-func (m agentUIModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case agentListBack:
-		m.quit = true
-		return m, tea.Quit
-	case agentListOpenProviders:
-		m.providers = newProviderListModel(m.mgr)
-		m.providers.width, m.providers.height = m.width, m.height
-		m.mode = agentModeProviders
-		return m, nil
-	case agentListNewAgent:
-		m.editor = newAgentEditorModel(m.mgr, nil)
-		m.editor.width, m.editor.height = m.width, m.height
-		m.mode = agentModeEditor
-		return m, m.editor.Init()
-	case agentListEditAgent:
-		msg := msg.(agentListEditAgent)
-		m.editor = newAgentEditorModel(m.mgr, &msg.agent)
-		m.editor.width, m.editor.height = m.width, m.height
-		m.mode = agentModeEditor
-		return m, m.editor.Init()
-	case agentListOpenThreads:
-		msg := msg.(agentListOpenThreads)
-		m.threads = newAgentThreadsModel(m.mgr, msg.agent)
-		m.threads.width, m.threads.height = m.width, m.height
-		m.mode = agentModeThreads
-		return m, nil
-	case agentListDeleteAgent:
-		msg := msg.(agentListDeleteAgent)
-		m.mgr.Agents.Db.DeleteAgent(msg.id)
-		m.mgr.Agents.Reload()
-		m.list = newAgentListModel(m.mgr)
-		m.list.width, m.list.height = m.width, m.height
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
-}
-
-func (m agentUIModel) updateEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case agentEditorSaved:
-		m.mgr.Agents.Reload()
-		m.list = newAgentListModel(m.mgr)
-		m.list.width, m.list.height = m.width, m.height
-		m.mode = agentModeList
-		return m, nil
-	case agentEditorCancelled:
-		m.mode = agentModeList
-		return m, nil
-	case agentEditorPickChats:
-		m.chatPicker = newChatPickerModel(m.ctx, m.mgr, m.editor.chatAssignments)
-		m.chatPicker.width, m.chatPicker.height = m.width, m.height
-		m.mode = agentModeChatPicker
-		return m, m.chatPicker.Init()
-	}
-
-	var cmd tea.Cmd
-	m.editor, cmd = m.editor.Update(msg)
-	return m, cmd
-}
-
-func (m agentUIModel) updateThreads(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case agentThreadsBack:
-		m.list = newAgentListModel(m.mgr)
-		m.list.width, m.list.height = m.width, m.height
-		m.mode = agentModeList
-		return m, nil
-	case agentThreadsOpenThread:
-		m.thread = newAgentThreadModel(m.mgr, msg.agent, msg.thread)
-		m.thread.width, m.thread.height = m.width, m.height
-		m.mode = agentModeThread
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.threads, cmd = m.threads.Update(msg)
-	return m, cmd
-}
-
-func (m agentUIModel) updateThread(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case agentThreadBack:
-		m.threads = newAgentThreadsModel(m.mgr, m.thread.agent)
-		m.threads.width, m.threads.height = m.width, m.height
-		m.mode = agentModeThreads
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.thread, cmd = m.thread.Update(msg)
-	return m, cmd
-}
-
-func (m agentUIModel) updateProviders(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case providerListBack:
-		m.list = newAgentListModel(m.mgr)
-		m.list.width, m.list.height = m.width, m.height
-		m.mode = agentModeList
-		return m, nil
-	case providerListNew:
-		m.providerEditor = newProviderEditorModel(m.mgr, nil)
-		m.providerEditor.width, m.providerEditor.height = m.width, m.height
-		m.mode = agentModeProviderEditor
-		return m, m.providerEditor.Init()
-	case providerListEdit:
-		msg := msg.(providerListEdit)
-		m.providerEditor = newProviderEditorModel(m.mgr, &msg.provider)
-		m.providerEditor.width, m.providerEditor.height = m.width, m.height
-		m.mode = agentModeProviderEditor
-		return m, m.providerEditor.Init()
-	case providerListDelete:
-		msg := msg.(providerListDelete)
-		m.mgr.Agents.Db.DeleteProvider(msg.id)
-		m.providers = newProviderListModel(m.mgr)
-		m.providers.width, m.providers.height = m.width, m.height
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.providers, cmd = m.providers.Update(msg)
-	return m, cmd
-}
-
-func (m agentUIModel) updateProviderEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case providerEditorSaved:
-		m.providers = newProviderListModel(m.mgr)
-		m.providers.width, m.providers.height = m.width, m.height
-		m.mode = agentModeProviders
-		return m, nil
-	case providerEditorCancelled:
-		m.mode = agentModeProviders
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.providerEditor, cmd = m.providerEditor.Update(msg)
-	return m, cmd
-}
-
-func (m agentUIModel) updateChatPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case chatPickerDone:
-		m.editor.chatAssignments = msg.selected
-		m.editor.updateChatsLabel()
-		m.mode = agentModeEditor
-		return m, nil
-	case chatPickerCancelled:
-		m.mode = agentModeEditor
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.chatPicker, cmd = m.chatPicker.Update(msg)
-	return m, cmd
-}
-
-// --- Agent List Screen ---
-
-type agentListModel struct {
-	mgr      *account.AccountManager
-	agents   []agent.AgentRecord
-	selected int
-	confirm  *int64
-	width    int
-	height   int
-}
-
-func newAgentListModel(mgr *account.AccountManager) agentListModel {
-	agents, _ := mgr.Agents.Db.ListAgents()
-	return agentListModel{mgr: mgr, agents: agents}
-}
-
-func (m agentListModel) Init() tea.Cmd { return nil }
-
-func (m agentListModel) maxIndex() int { return len(m.agents) + 1 }
-
-func (m agentListModel) Update(msg tea.Msg) (agentListModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		if m.confirm != nil {
-			switch msg.String() {
-			case "y", "Y":
-				id := *m.confirm
-				m.confirm = nil
-				return m, func() tea.Msg { return agentListDeleteAgent{id: id} }
-			default:
-				m.confirm = nil
-			}
-			return m, nil
-		}
-
-		switch msg.String() {
-		case "q", "esc":
-			return m, func() tea.Msg { return agentListBack{} }
-		case "k", "up":
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "j", "down":
-			if m.selected < m.maxIndex() {
-				m.selected++
-			}
-		case "enter":
-			if m.selected < len(m.agents) {
-				return m, func() tea.Msg { return agentListOpenThreads{agent: m.agents[m.selected]} }
-			}
-			if m.selected == len(m.agents) {
-				return m, func() tea.Msg { return agentListOpenProviders{} }
-			}
-			if m.selected == len(m.agents)+1 {
-				return m, func() tea.Msg { return agentListBack{} }
-			}
-		case "n":
-			return m, func() tea.Msg { return agentListNewAgent{} }
-		case "e":
-			if m.selected < len(m.agents) {
-				a := m.agents[m.selected]
-				return m, func() tea.Msg { return agentListEditAgent{agent: a} }
-			}
-		case "d":
-			if m.selected < len(m.agents) {
-				id := m.agents[m.selected].ID
-				m.confirm = &id
-			}
-		case "s":
-			return m, func() tea.Msg { return agentListOpenProviders{} }
+	m.sel = clampIndex(m.sel, len(m.agents))
+	m.psel = clampIndex(m.psel, len(m.providers))
+	m.threads = nil
+	if a, ok := m.selected(); ok {
+		if m.threads, err = m.db().AgentThreads(a.ID); err != nil {
+			m.notice = textfmt.CleanError(err)
 		}
 	}
-	return m, nil
-}
-
-func (m agentListModel) View() string {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render("Agents"))
-	b.WriteByte('\n')
-
-	if m.confirm != nil {
-		b.WriteString("Delete this agent? y/n\n")
-		return b.String()
-	}
-
-	limit := max(1, m.height-5)
-	start := max(0, m.selected-limit+1)
-	end := min(len(m.agents)+2, start+limit)
-
-	for i := start; i < end; i++ {
-		marker := "  "
-		if i == m.selected {
-			marker = "> "
-		}
-		switch {
-		case i < len(m.agents):
-			a := m.agents[i]
-			mode := "suggest"
-			if a.AutoReply == 1 {
-				mode = "auto"
-			}
-			status := "off"
-			if a.Enabled {
-				status = "running"
-			}
-			chats, _ := m.mgr.Agents.Db.AgentChats(a.ID)
-			b.WriteString(textfmt.ClipLine(fmt.Sprintf("%s%d  %s — %s — %d chats — %s",
-				marker, i+1, a.Name, mode, len(chats), status), m.width))
-			b.WriteByte('\n')
-		case i == len(m.agents):
-			b.WriteString(fmt.Sprintf("%s    Providers…\n", marker))
-		case i == len(m.agents)+1:
-			b.WriteString(fmt.Sprintf("%s    Back\n", marker))
+	m.tsel = clampIndex(m.tsel, len(m.threads))
+	if m.screen == scrConv {
+		m.convLog, err = m.db().ChatHistory(m.conv.AgentID, m.conv.Chat.Backend,
+			m.conv.AccountKey, m.conv.Chat.Id, 200)
+		if err != nil {
+			m.notice = textfmt.CleanError(err)
 		}
 	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar(agentListHelp, m.width))
-	return b.String()
-}
-
-var agentListHelp = []helpKey{
-	{"↑↓", "select"},
-	{"⏎", "threads"},
-	{"n", "new"},
-	{"e", "edit"},
-	{"d", "delete"},
-	{"s", "providers"},
-	{"q", "back"},
-}
-
-// --- Agent Editor Screen ---
-
-type agentEditorField int
-
-const (
-	agentFieldName agentEditorField = iota
-	agentFieldPrompt
-	agentFieldMode
-	agentFieldRetention
-	agentFieldKnowledge
-	agentFieldChats
-	agentFieldCount
-)
-
-type agentEditorModel struct {
-	mgr             *account.AccountManager
-	editing         *agent.AgentRecord
-	field           agentEditorField
-	inputs          [5]textinput.Model // name, prompt, retention, knowledge, provider
-	modeValue       int                // 0=suggest, 1=auto
-	providers       []agent.AgentProvider
-	providerIndex   int
-	chatAssignments []agent.AgentChatAssignment
-	width           int
-	height          int
-}
-
-func newAgentEditorModel(mgr *account.AccountManager, existing *agent.AgentRecord) agentEditorModel {
-	m := agentEditorModel{mgr: mgr, editing: existing}
-	m.providers, _ = mgr.Agents.Db.ListProviders()
-
-	m.inputs[0] = textinput.New()
-	m.inputs[0].Placeholder = "agent name"
-	m.inputs[1] = textinput.New()
-	m.inputs[1].Placeholder = "system prompt"
-	m.inputs[2] = textinput.New()
-	m.inputs[2].Placeholder = "30"
-	m.inputs[3] = textinput.New()
-	m.inputs[3].Placeholder = "path1.txt, path2.txt"
-	m.inputs[4] = textinput.New()
-	m.inputs[4].Placeholder = "select provider"
-
-	if existing != nil {
-		m.inputs[0].SetValue(existing.Name)
-		m.inputs[1].SetValue(existing.Prompt)
-		m.inputs[2].SetValue(strconv.Itoa(existing.RetentionDays))
-		m.modeValue = existing.AutoReply
-
-		knowledge, _ := mgr.Agents.Db.AgentKnowledge(existing.ID)
-		m.inputs[3].SetValue(strings.Join(knowledge, ", "))
-
-		m.chatAssignments, _ = mgr.Agents.Db.AgentChats(existing.ID)
-
-		for i, p := range m.providers {
-			if p.ID == existing.ProviderID {
-				m.providerIndex = i
-				break
-			}
-		}
-	}
-
-	m.inputs[0].Focus()
 	return m
 }
 
-func (m agentEditorModel) Init() tea.Cmd {
-	return textinput.Blink
+func clampIndex(i, n int) int { return max(0, min(i, n-1)) }
+
+func (m agentModeModel) selected() (agent.AgentRecord, bool) {
+	if m.sel < len(m.agents) {
+		return m.agents[m.sel], true
+	}
+	return agent.AgentRecord{}, false
 }
 
-func (m agentEditorModel) Update(msg tea.Msg) (agentEditorModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "esc":
-			return m, func() tea.Msg { return agentEditorCancelled{} }
-		case "tab":
-			m.inputs[m.field].Blur()
-			m.field = (m.field + 1) % agentFieldCount
-			if m.field < 5 && m.field != agentFieldMode && m.field != agentFieldChats {
-				m.inputs[m.fieldInputIndex()].Focus()
-			}
-			return m, nil
-		case "shift+tab":
-			m.inputs[m.field].Blur()
-			m.field = (m.field - 1 + agentFieldCount) % agentFieldCount
-			if m.field < 5 && m.field != agentFieldMode && m.field != agentFieldChats {
-				m.inputs[m.fieldInputIndex()].Focus()
-			}
-			return m, nil
-		case "enter":
-			if m.field == agentFieldChats {
-				return m, func() tea.Msg { return agentEditorPickChats{} }
-			}
-			return m, func() tea.Msg { return m.save() }
-		case "left", "right":
-			if m.field == agentFieldMode {
-				m.modeValue = 1 - m.modeValue
-				return m, nil
-			}
-			if m.field == agentFieldName {
-				// Provider cycling with arrow keys when on name is confusing; skip
-			}
-		case " ":
-			if m.field == agentFieldMode {
-				m.modeValue = 1 - m.modeValue
-				return m, nil
-			}
+func (m agentModeModel) agentName(id int64) string {
+	for _, a := range m.agents {
+		if a.ID == id {
+			return a.Name
 		}
 	}
+	return "another agent"
+}
 
-	idx := m.fieldInputIndex()
-	if idx >= 0 {
+// accountTags lists the agent's accounts in header order, e.g. [TG1][WA2].
+func (m agentModeModel) accountTags(id int64) string {
+	var tags strings.Builder
+	for i, a := range m.mgr.Accounts {
+		if m.bindings[m.mgr.AccountKey(a)] == id {
+			fmt.Fprintf(&tags, "[%s%d]", backendTag(a.BackendType), i+1)
+		}
+	}
+	return tags.String()
+}
+
+func (m agentModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case tuiChipsTick:
+		return m, chipsTick()
+	case agentRuntimeChanged:
+		return m.reload(), listenAgents(m.ctx, m.mgr)
+	case agentApproveDone:
+		if msg.err != nil {
+			m.notice = textfmt.CleanError(msg.err)
+		} else {
+			m.notice = "Reply sent"
+		}
+		return m.reload(), nil
+	case wizardFinished:
+		return m.finishWizard(msg.answers)
+	case wizardCancelled:
+		m.screen, m.thenAgent = m.back, false
+		return m, nil
+	case tea.KeyPressMsg:
+		return m.handleKey(msg)
+	}
+	if m.screen == scrWizard {
 		var cmd tea.Cmd
-		m.inputs[idx], cmd = m.inputs[idx].Update(msg)
+		m.wiz, cmd = m.wiz.Update(msg)
 		return m, cmd
 	}
 	return m, nil
 }
 
-func (m agentEditorModel) fieldInputIndex() int {
-	switch m.field {
-	case agentFieldName:
-		return 0
-	case agentFieldPrompt:
-		return 1
-	case agentFieldRetention:
-		return 2
-	case agentFieldKnowledge:
-		return 3
-	default:
-		return -1
-	}
-}
-
-func (m *agentEditorModel) updateChatsLabel() {}
-
-func (m agentEditorModel) save() tea.Msg {
-	name := strings.TrimSpace(m.inputs[0].Value())
-	if name == "" {
-		return agentEditorCancelled{}
-	}
-	if len(m.providers) == 0 {
-		return agentEditorCancelled{}
-	}
-
-	retention, _ := strconv.Atoi(m.inputs[2].Value())
-	if retention <= 0 {
-		retention = 30
-	}
-
-	rec := agent.AgentRecord{
-		Name:          name,
-		Prompt:        m.inputs[1].Value(),
-		AutoReply:     m.modeValue,
-		ProviderID:    m.providers[m.providerIndex].ID,
-		RetentionDays: retention,
-		Enabled:       true,
-	}
-
-	db := m.mgr.Agents.Db
-	if m.editing != nil {
-		rec.ID = m.editing.ID
-		rec.Enabled = m.editing.Enabled
-		db.UpdateAgent(rec)
-	} else {
-		id, err := db.CreateAgent(rec)
-		if err != nil {
-			return agentEditorCancelled{}
-		}
-		rec.ID = id
-	}
-
-	// Knowledge paths.
-	raw := strings.TrimSpace(m.inputs[3].Value())
-	var paths []string
-	if raw != "" {
-		for _, p := range strings.Split(raw, ",") {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				paths = append(paths, p)
-			}
-		}
-	}
-	db.SetAgentKnowledge(rec.ID, paths)
-
-	// Chat assignments.
-	db.SetAgentChats(rec.ID, m.chatAssignments)
-
-	return agentEditorSaved{}
-}
-
-func (m agentEditorModel) View() string {
-	var b strings.Builder
-	title := "New Agent"
-	if m.editing != nil {
-		title = "Edit Agent: " + m.editing.Name
-	}
-	b.WriteString(styleTitle.Width(m.width).Render(title))
-	b.WriteString("\n\n")
-
-	fields := []struct {
-		label string
-		value string
-	}{
-		{"Name", m.inputs[0].View()},
-		{"Prompt", m.inputs[1].View()},
-		{"Mode", m.modeLabel()},
-		{"Retention", m.inputs[2].View() + " days"},
-		{"Knowledge", m.inputs[3].View()},
-		{"Chats", m.chatsLabel()},
-	}
-
-	for i, f := range fields {
-		cursor := "  "
-		if agentEditorField(i) == m.field {
-			cursor = "> "
-		}
-		b.WriteString(fmt.Sprintf("%s%-10s %s\n", cursor, f.label+":", f.value))
-	}
-
-	if len(m.providers) > 0 {
-		p := m.providers[m.providerIndex]
-		b.WriteString(fmt.Sprintf("\n  Provider:  %s (%s)\n", p.Name, p.Model))
-		if len(m.providers) > 1 {
-			b.WriteString(styleSubtle.Render("  (use ←/→ on Provider field to cycle)"))
-			b.WriteByte('\n')
-		}
-	} else {
-		b.WriteString(styleSubtle.Render("\n  No providers configured. Add one in Provider settings first."))
-		b.WriteByte('\n')
-	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar(agentEditorHelp, m.width))
-	return b.String()
-}
-
-func (m agentEditorModel) modeLabel() string {
-	if m.modeValue == 1 {
-		return "[auto]"
-	}
-	return "[suggest]"
-}
-
-func (m agentEditorModel) chatsLabel() string {
-	n := len(m.chatAssignments)
-	if n == 0 {
-		return styleSubtle.Render("(none — press Enter to select)")
-	}
-	return fmt.Sprintf("%d selected — press Enter to change", n)
-}
-
-var agentEditorHelp = []helpKey{
-	{"Tab", "next"},
-	{"S-Tab", "prev"},
-	{"⏎", "save"},
-	{"Esc", "cancel"},
-}
-
-// --- Agent Threads Screen ---
-
-type agentThreadsModel struct {
-	mgr      *account.AccountManager
-	agent    agent.AgentRecord
-	threads  []agent.AgentThread
-	selected int
-	width    int
-	height   int
-}
-
-func newAgentThreadsModel(mgr *account.AccountManager, agent agent.AgentRecord) agentThreadsModel {
-	threads, _ := mgr.Agents.Db.AgentThreads(agent.ID)
-	return agentThreadsModel{mgr: mgr, agent: agent, threads: threads}
-}
-
-func (m agentThreadsModel) Init() tea.Cmd { return nil }
-
-func (m agentThreadsModel) Update(msg tea.Msg) (agentThreadsModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "q", "esc":
-			return m, func() tea.Msg { return agentThreadsBack{} }
-		case "k", "up":
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "j", "down":
-			if m.selected < len(m.threads)-1 {
-				m.selected++
-			}
-		case "enter":
-			if m.selected < len(m.threads) {
-				t := m.threads[m.selected]
-				a := m.agent
-				return m, func() tea.Msg { return agentThreadsOpenThread{agent: a, thread: t} }
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m agentThreadsModel) View() string {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render(m.agent.Name + " — Threads"))
-	b.WriteByte('\n')
-
-	if len(m.threads) == 0 {
-		b.WriteString(styleSubtle.Render("  No threads yet."))
-		b.WriteString("\n\n")
-		b.WriteString(renderHelpBar([]helpKey{{"q", "back"}}, m.width))
-		return b.String()
-	}
-
-	limit := max(1, m.height-5)
-	start := max(0, m.selected-limit+1)
-	end := min(len(m.threads), start+limit)
-
-	for i := start; i < end; i++ {
-		marker := "  "
-		if i == m.selected {
-			marker = "> "
-		}
-		t := m.threads[i]
-
-		// Check for pending suggestion.
-		pendingLabel := ""
-		m.mgr.Agents.Mu.Lock()
-		key := account.AgentChatKey{AgentID: m.agent.ID, BackendType: t.BackendType, AccountID: t.AccountID, ChatID: t.ChatID}
-		if _, ok := m.mgr.Agents.Pending[key]; ok {
-			pendingLabel = " [pending]"
-		}
-		m.mgr.Agents.Mu.Unlock()
-
-		backendTag := backendShortTag(t.BackendType)
-		timeStr := t.LastAt.Format("15:04")
-		b.WriteString(textfmt.ClipLine(fmt.Sprintf("%s%s %s  last: %s%s",
-			marker, backendTag, t.ChatID, timeStr, pendingLabel), m.width))
-		b.WriteByte('\n')
-	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar([]helpKey{{"↑↓", "select"}, {"⏎", "open"}, {"q", "back"}}, m.width))
-	return b.String()
-}
-
-// --- Agent Thread Detail Screen ---
-
-type agentThreadModel struct {
-	mgr      *account.AccountManager
-	agent    agent.AgentRecord
-	thread   agent.AgentThread
-	messages []agent.AgentLoggedMessage
-	selected int
-	width    int
-	height   int
-}
-
-func newAgentThreadModel(mgr *account.AccountManager, agent agent.AgentRecord, thread agent.AgentThread) agentThreadModel {
-	msgs, _ := mgr.Agents.Db.ChatHistory(agent.ID, thread.BackendType, thread.AccountID, thread.ChatID, 100)
-	return agentThreadModel{
-		mgr:      mgr,
-		agent:    agent,
-		thread:   thread,
-		messages: msgs,
-		selected: max(0, len(msgs)-1),
-	}
-}
-
-func (m agentThreadModel) Init() tea.Cmd { return nil }
-
-func (m agentThreadModel) Update(msg tea.Msg) (agentThreadModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		key := account.AgentChatKey{
-			AgentID:     m.agent.ID,
-			BackendType: m.thread.BackendType,
-			AccountID:   m.thread.AccountID,
-			ChatID:      m.thread.ChatID,
-		}
-
-		// Handle pending suggestion y/n.
-		m.mgr.Agents.Mu.Lock()
-		_, hasPending := m.mgr.Agents.Pending[key]
-		m.mgr.Agents.Mu.Unlock()
-
-		if hasPending {
-			switch msg.String() {
-			case "y":
-				m.mgr.Agents.ApproveSuggestion(key)
-				m.messages, _ = m.mgr.Agents.Db.ChatHistory(m.agent.ID, m.thread.BackendType, m.thread.AccountID, m.thread.ChatID, 100)
-				m.selected = max(0, len(m.messages)-1)
-				return m, nil
-			case "n":
-				m.mgr.Agents.DiscardSuggestion(key)
-				return m, nil
-			}
-		}
-
-		switch msg.String() {
-		case "q", "esc":
-			return m, func() tea.Msg { return agentThreadBack{} }
-		case "k", "up":
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "j", "down":
-			if m.selected < len(m.messages)-1 {
-				m.selected++
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m agentThreadModel) View() string {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render(m.agent.Name + " — " + m.thread.ChatID))
-	b.WriteByte('\n')
-
-	if len(m.messages) == 0 {
-		b.WriteString(styleSubtle.Render("  No messages."))
-		b.WriteByte('\n')
-	} else {
-		limit := max(1, m.height-8)
-		start := max(0, m.selected-limit+1)
-		end := min(len(m.messages), start+limit)
-
-		for i := start; i < end; i++ {
-			msg := m.messages[i]
-			marker := "  "
-			if i == m.selected {
-				marker = "> "
-			}
-			sender := msg.Sender
-			if msg.IsAgentReply {
-				sender = "agent"
-			} else if msg.Outgoing {
-				sender = "you"
-			}
-			ts := msg.Timestamp.Local().Format("15:04")
-			b.WriteString(textfmt.ClipLine(fmt.Sprintf("%s[%s] <%s> %s", marker, ts, sender, msg.Text), m.width))
-			b.WriteByte('\n')
-		}
-	}
-
-	// Pending suggestion.
-	key := account.AgentChatKey{
-		AgentID:     m.agent.ID,
-		BackendType: m.thread.BackendType,
-		AccountID:   m.thread.AccountID,
-		ChatID:      m.thread.ChatID,
-	}
-	m.mgr.Agents.Mu.Lock()
-	suggestion, hasPending := m.mgr.Agents.Pending[key]
-	m.mgr.Agents.Mu.Unlock()
-
-	if hasPending {
-		b.WriteByte('\n')
-		b.WriteString(styleUnread.Render("[AI suggest — y send · n discard]"))
-		b.WriteByte('\n')
-		b.WriteString("  " + suggestion.Text)
-		b.WriteByte('\n')
-	}
-
-	b.WriteByte('\n')
-	help := []helpKey{{"↑↓", "scroll"}, {"q", "back"}}
-	if hasPending {
-		help = append([]helpKey{{"y", "approve"}, {"n", "discard"}}, help...)
-	}
-	b.WriteString(renderHelpBar(help, m.width))
-	return b.String()
-}
-
-// --- Provider List Screen ---
-
-type providerListModel struct {
-	mgr       *account.AccountManager
-	providers []agent.AgentProvider
-	selected  int
-	confirm   *int64
-	width     int
-	height    int
-}
-
-func newProviderListModel(mgr *account.AccountManager) providerListModel {
-	providers, _ := mgr.Agents.Db.ListProviders()
-	return providerListModel{mgr: mgr, providers: providers}
-}
-
-func (m providerListModel) Init() tea.Cmd { return nil }
-
-func (m providerListModel) Update(msg tea.Msg) (providerListModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		if m.confirm != nil {
-			switch msg.String() {
-			case "y", "Y":
-				id := *m.confirm
-				m.confirm = nil
-				return m, func() tea.Msg { return providerListDelete{id: id} }
-			default:
-				m.confirm = nil
-			}
-			return m, nil
-		}
-
-		switch msg.String() {
-		case "q", "esc":
-			return m, func() tea.Msg { return providerListBack{} }
-		case "k", "up":
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "j", "down":
-			if m.selected < len(m.providers) {
-				m.selected++
-			}
-		case "enter":
-			if m.selected < len(m.providers) {
-				p := m.providers[m.selected]
-				return m, func() tea.Msg { return providerListEdit{provider: p} }
-			}
-		case "n":
-			return m, func() tea.Msg { return providerListNew{} }
-		case "e":
-			if m.selected < len(m.providers) {
-				p := m.providers[m.selected]
-				return m, func() tea.Msg { return providerListEdit{provider: p} }
-			}
-		case "d":
-			if m.selected < len(m.providers) {
-				id := m.providers[m.selected].ID
-				m.confirm = &id
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m providerListModel) View() string {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render("Providers"))
-	b.WriteByte('\n')
-
+func (m agentModeModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	k := msg.String()
 	if m.confirm != nil {
-		b.WriteString("Delete this provider? y/n\n")
-		return b.String()
-	}
-
-	if len(m.providers) == 0 {
-		b.WriteString(styleSubtle.Render("  No providers. Press n to add one."))
-		b.WriteByte('\n')
-	}
-
-	limit := max(1, m.height-5)
-	start := max(0, m.selected-limit+1)
-	end := min(len(m.providers)+1, start+limit)
-
-	for i := start; i < end; i++ {
-		marker := "  "
-		if i == m.selected {
-			marker = "> "
-		}
-		if i < len(m.providers) {
-			p := m.providers[i]
-			envLabel := p.APIKeyEnv
-			if envLabel == "" {
-				envLabel = "(no key)"
+		run := m.confirm
+		m.confirm, m.confirmText = nil, ""
+		if k == "y" || k == "Y" {
+			if err := run(); err != nil {
+				m.notice = textfmt.CleanError(err)
 			}
-			b.WriteString(textfmt.ClipLine(fmt.Sprintf("%s%d  %s — %s — %s",
-				marker, i+1, p.Name, p.BaseURL, envLabel), m.width))
-			b.WriteByte('\n')
-		} else {
-			b.WriteString(fmt.Sprintf("%s    Back\n", marker))
+			m.mgr.Agents.Reload()
+			return m.reload(), nil
 		}
-	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar([]helpKey{{"↑↓", "select"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"q", "back"}}, m.width))
-	return b.String()
-}
-
-// --- Provider Editor Screen ---
-
-type providerEditorModel struct {
-	mgr     *account.AccountManager
-	editing *agent.AgentProvider
-	inputs  [4]textinput.Model // name, base_url, api_key_env, model
-	field   int
-	width   int
-	height  int
-}
-
-func newProviderEditorModel(mgr *account.AccountManager, existing *agent.AgentProvider) providerEditorModel {
-	m := providerEditorModel{mgr: mgr, editing: existing}
-
-	m.inputs[0] = textinput.New()
-	m.inputs[0].Placeholder = "OpenRouter"
-	m.inputs[1] = textinput.New()
-	m.inputs[1].Placeholder = "https://openrouter.ai/api/v1"
-	m.inputs[2] = textinput.New()
-	m.inputs[2].Placeholder = "OPENROUTER_API_KEY"
-	m.inputs[3] = textinput.New()
-	m.inputs[3].Placeholder = "model-id"
-
-	if existing != nil {
-		m.inputs[0].SetValue(existing.Name)
-		m.inputs[1].SetValue(existing.BaseURL)
-		m.inputs[2].SetValue(existing.APIKeyEnv)
-		m.inputs[3].SetValue(existing.Model)
-	}
-
-	m.inputs[0].Focus()
-	return m
-}
-
-func (m providerEditorModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m providerEditorModel) Update(msg tea.Msg) (providerEditorModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "esc":
-			return m, func() tea.Msg { return providerEditorCancelled{} }
-		case "tab":
-			m.inputs[m.field].Blur()
-			m.field = (m.field + 1) % 4
-			m.inputs[m.field].Focus()
-			return m, nil
-		case "shift+tab":
-			m.inputs[m.field].Blur()
-			m.field = (m.field + 3) % 4
-			m.inputs[m.field].Focus()
-			return m, nil
-		case "enter":
-			return m, func() tea.Msg { return m.save() }
-		}
-	}
-
-	var cmd tea.Cmd
-	m.inputs[m.field], cmd = m.inputs[m.field].Update(msg)
-	return m, cmd
-}
-
-func (m providerEditorModel) save() tea.Msg {
-	name := strings.TrimSpace(m.inputs[0].Value())
-	baseURL := strings.TrimSpace(m.inputs[1].Value())
-	model := strings.TrimSpace(m.inputs[3].Value())
-	if name == "" || baseURL == "" || model == "" {
-		return providerEditorCancelled{}
-	}
-
-	p := agent.AgentProvider{
-		Name:      name,
-		BaseURL:   strings.TrimRight(baseURL, "/"),
-		APIKeyEnv: strings.TrimSpace(m.inputs[2].Value()),
-		Model:     model,
-	}
-
-	db := m.mgr.Agents.Db
-	if m.editing != nil {
-		p.ID = m.editing.ID
-		db.UpdateProvider(p)
-	} else {
-		db.CreateProvider(p)
-	}
-	return providerEditorSaved{}
-}
-
-func (m providerEditorModel) View() string {
-	var b strings.Builder
-	title := "New Provider"
-	if m.editing != nil {
-		title = "Edit Provider: " + m.editing.Name
-	}
-	b.WriteString(styleTitle.Width(m.width).Render(title))
-	b.WriteString("\n\n")
-
-	labels := []string{"Name", "Base URL", "API Key Env", "Model"}
-	for i, label := range labels {
-		cursor := "  "
-		if i == m.field {
-			cursor = "> "
-		}
-		b.WriteString(fmt.Sprintf("%s%-12s %s\n", cursor, label+":", m.inputs[i].View()))
-	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar([]helpKey{{"Tab", "next"}, {"S-Tab", "prev"}, {"⏎", "save"}, {"Esc", "cancel"}}, m.width))
-	return b.String()
-}
-
-// --- Chat Picker Screen ---
-
-type chatPickerEntry struct {
-	assignment agent.AgentChatAssignment
-	title      string
-	selected   bool
-}
-
-type chatPickerModel struct {
-	ctx     context.Context
-	mgr     *account.AccountManager
-	entries []chatPickerEntry
-	cursor  int
-	loaded  bool
-	width   int
-	height  int
-}
-
-type chatPickerLoaded struct {
-	entries []chatPickerEntry
-}
-
-func newChatPickerModel(ctx context.Context, mgr *account.AccountManager, current []agent.AgentChatAssignment) chatPickerModel {
-	return chatPickerModel{ctx: ctx, mgr: mgr}
-}
-
-func (m chatPickerModel) Init() tea.Cmd {
-	return m.loadChats()
-}
-
-func (m chatPickerModel) loadChats() tea.Cmd {
-	return func() tea.Msg {
-		var entries []chatPickerEntry
-		for _, acct := range m.mgr.Accounts {
-			s := acct.Snapshot()
-			if s.Backend == nil {
-				continue
-			}
-			dialogs, _, err := s.Backend.Dialogs(m.ctx, false)
-			if err != nil {
-				continue
-			}
-			acctID := filepath.Base(acct.Dir)
-			tag := backendShortTag(acct.BackendType)
-			for _, d := range dialogs {
-				if !d.IsDM {
-					continue
-				}
-				entries = append(entries, chatPickerEntry{
-					assignment: agent.AgentChatAssignment{
-						BackendType: acct.BackendType,
-						AccountID:   acctID,
-						ChatID:      d.ID.Id,
-					},
-					title: tag + " " + d.Title,
-				})
-			}
-		}
-		return chatPickerLoaded{entries: entries}
-	}
-}
-
-func (m chatPickerModel) Update(msg tea.Msg) (chatPickerModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case chatPickerLoaded:
-		m.entries = msg.entries
-		m.loaded = true
 		return m, nil
-
-	case tea.KeyPressMsg:
-		if !m.loaded {
-			return m, nil
+	}
+	if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
+		if i := int(k[4] - '1'); i < len(m.mgr.Accounts) {
+			m.switchTo = m.mgr.Accounts[i]
+			return m, tea.Quit
 		}
-		switch msg.String() {
-		case "esc":
-			return m, func() tea.Msg { return chatPickerCancelled{} }
-		case "enter":
-			var selected []agent.AgentChatAssignment
-			for _, e := range m.entries {
-				if e.selected {
-					selected = append(selected, e.assignment)
-				}
+		return m, nil
+	}
+	if m.screen == scrWizard {
+		var cmd tea.Cmd
+		m.wiz, cmd = m.wiz.Update(msg)
+		return m, cmd
+	}
+	m.notice = ""
+	if k == "?" {
+		m.fullHelp = !m.fullHelp
+		return m, nil
+	}
+	switch m.screen {
+	case scrAgents:
+		return m.agentsKey(k)
+	case scrConvs:
+		return m.convsKey(k)
+	case scrConv:
+		return m.convKey(k)
+	case scrProviders:
+		return m.providersKey(k)
+	}
+	return m, nil
+}
+
+func (m agentModeModel) agentsKey(k string) (tea.Model, tea.Cmd) {
+	a, ok := m.selected()
+	switch k {
+	case "esc", "q", "ctrl+c", "alt+a":
+		return m, tea.Quit
+	case "up", "k":
+		m.sel = max(0, m.sel-1)
+		m.tsel = 0
+		return m.reload(), nil
+	case "down", "j":
+		m.sel = clampIndex(m.sel+1, len(m.agents))
+		m.tsel = 0
+		return m.reload(), nil
+	case "enter", "tab":
+		if ok {
+			m.screen = scrConvs
+		}
+	case "n":
+		if len(m.providers) == 0 {
+			m.thenAgent = true
+			m.notice = "Connect an AI provider first"
+			return m.startWizard(wizNewProvider, 0)
+		}
+		return m.startWizard(wizNewAgent, 0)
+	case "e":
+		if ok {
+			return m.startWizard(wizEditAgent, a.ID)
+		}
+	case "c":
+		if ok {
+			return m.startWizard(wizConnect, a.ID)
+		}
+	case "space":
+		if ok {
+			a.Enabled = !a.Enabled
+			if err := m.db().UpdateAgent(a); err != nil {
+				m.notice = textfmt.CleanError(err)
 			}
-			return m, func() tea.Msg { return chatPickerDone{selected: selected} }
-		case "k", "up":
-			if m.cursor > 0 {
-				m.cursor--
+			m.mgr.Agents.Reload()
+			return m.reload(), nil
+		}
+	case "d":
+		if ok {
+			id := a.ID
+			m.confirmText = "Delete agent " + a.Name + " and its history? y/n"
+			m.confirm = func() error { return m.db().DeleteAgent(id) }
+		}
+	case "p":
+		m.screen = scrProviders
+	}
+	return m, nil
+}
+
+func (m agentModeModel) convsKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case "esc", "tab", "q":
+		m.screen = scrAgents
+	case "up", "k":
+		m.tsel = max(0, m.tsel-1)
+	case "down", "j":
+		m.tsel = clampIndex(m.tsel+1, len(m.threads))
+	case "enter":
+		if m.tsel < len(m.threads) {
+			t := m.threads[m.tsel]
+			m.conv = account.ConvKey{
+				AgentID:    m.agents[m.sel].ID,
+				AccountKey: t.AccountID,
+				Chat:       backend.ChatID{Backend: t.BackendType, Id: t.ChatID},
 			}
-		case "j", "down":
-			if m.cursor < len(m.entries)-1 {
-				m.cursor++
-			}
-		case " ":
-			if m.cursor < len(m.entries) {
-				m.entries[m.cursor].selected = !m.entries[m.cursor].selected
-			}
+			m.convTitle = "[" + accountShort(m.mgr, t.AccountID) + "] " + threadTitle(t)
+			m.screen = scrConv
+			return m.reload(), nil
 		}
 	}
 	return m, nil
 }
 
-func (m chatPickerModel) View() string {
-	var b strings.Builder
-	b.WriteString(styleTitle.Width(m.width).Render("Select Chats"))
-	b.WriteByte('\n')
-
-	if !m.loaded {
-		b.WriteString(styleSubtle.Render("  Loading chats…"))
-		b.WriteByte('\n')
-		return b.String()
-	}
-
-	if len(m.entries) == 0 {
-		b.WriteString(styleSubtle.Render("  No private chats found."))
-		b.WriteString("\n\n")
-		b.WriteString(renderHelpBar([]helpKey{{"Esc", "back"}}, m.width))
-		return b.String()
-	}
-
-	limit := max(1, m.height-5)
-	start := max(0, m.cursor-limit+1)
-	end := min(len(m.entries), start+limit)
-
-	for i := start; i < end; i++ {
-		e := m.entries[i]
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
+func (m agentModeModel) convKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case "esc", "q":
+		m.screen = scrConvs
+		return m.reload(), nil
+	case "y":
+		if _, ok := m.mgr.Agents.Pending(m.conv); ok {
+			rt, key := m.mgr.Agents, m.conv
+			m.notice = "Sending…"
+			return m, func() tea.Msg { return agentApproveDone{rt.Approve(key)} }
 		}
-		check := "[ ]"
-		if e.selected {
-			check = "[x]"
+	case "n":
+		if _, ok := m.mgr.Agents.Pending(m.conv); ok {
+			m.mgr.Agents.Discard(m.conv)
+			m.notice = "Suggestion discarded"
 		}
-		b.WriteString(textfmt.ClipLine(fmt.Sprintf("%s%s %s", cursor, check, e.title), m.width))
-		b.WriteByte('\n')
 	}
-
-	b.WriteByte('\n')
-	b.WriteString(renderHelpBar([]helpKey{{"↑↓", "select"}, {"Space", "toggle"}, {"⏎", "confirm"}, {"Esc", "cancel"}}, m.width))
-	return b.String()
+	return m, nil
 }
 
-// Helpers.
-
-func backendShortTag(backendType string) string {
-	switch backendType {
-	case "telegram":
-		return "[TG]"
-	case "mattermost":
-		return "[MM]"
-	case "matrix":
-		return "[MX]"
-	case "whatsapp":
-		return "[WA]"
-	default:
-		return "[??]"
+func (m agentModeModel) providersKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case "esc", "q", "p":
+		m.screen = scrAgents
+	case "up", "k":
+		m.psel = max(0, m.psel-1)
+	case "down", "j":
+		m.psel = clampIndex(m.psel+1, len(m.providers))
+	case "n":
+		return m.startWizard(wizNewProvider, 0)
+	case "e":
+		if m.psel < len(m.providers) {
+			return m.startWizard(wizEditProvider, m.providers[m.psel].ID)
+		}
+	case "d":
+		if m.psel < len(m.providers) {
+			p := m.providers[m.psel]
+			for _, a := range m.agents {
+				if a.ProviderID == p.ID {
+					m.notice = "Agent " + a.Name + " uses this provider; change it first"
+					return m, nil
+				}
+			}
+			m.confirmText = "Delete provider " + p.Name + "? y/n"
+			m.confirm = func() error { return m.db().DeleteProvider(p.ID) }
+		}
 	}
+	return m, nil
+}
+
+func threadTitle(t agent.AgentThread) string {
+	if t.ChatTitle != "" {
+		return textfmt.Plain(t.ChatTitle)
+	}
+	return t.ChatID
+}
+
+// --- Wizards -----------------------------------------------------------------
+
+type providerPreset struct{ value, name, url, env, model string }
+
+var providerPresets = []providerPreset{
+	{"openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openai/gpt-4o-mini"},
+	{"openai", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o-mini"},
+	{"ollama", "Ollama (this machine)", "http://localhost:11434/v1", "", "llama3.2"},
+}
+
+func presetFor(a wizardAnswers) providerPreset {
+	for _, p := range providerPresets {
+		if p.value == a["preset"] {
+			return p
+		}
+	}
+	return providerPreset{value: "custom"}
+}
+
+func (m agentModeModel) startWizard(purpose wizardPurpose, target int64) (tea.Model, tea.Cmd) {
+	if m.screen != scrWizard {
+		m.back = m.screen
+	}
+	m.purpose, m.target = purpose, target
+	switch purpose {
+	case wizNewProvider:
+		m.wiz = newWizard("Connect an AI provider", m.providerSteps(false), nil)
+	case wizEditProvider:
+		initial := wizardAnswers{"preset": "custom"}
+		for _, p := range m.providers {
+			if p.ID == target {
+				initial["name"], initial["url"] = p.Name, p.BaseURL
+				initial["env"], initial["model"] = p.APIKeyEnv, p.Model
+			}
+		}
+		m.wiz = newWizard("Edit provider", m.providerSteps(true), initial)
+	case wizNewAgent:
+		m.wiz = newWizard("New Chat Agent", m.agentSteps(0), nil)
+	case wizEditAgent:
+		m.wiz = newWizard("Edit Chat Agent", m.agentSteps(target), m.agentAnswers(target))
+	case wizConnect:
+		initial := wizardAnswers{"accounts": m.boundKeys(target)}
+		m.wiz = newWizard("Connect accounts", []wizardStep{m.accountsStep(target)}, initial)
+	}
+	m.screen = scrWizard
+	return m, m.wiz.Init()
+}
+
+func (m agentModeModel) providerSteps(editing bool) []wizardStep {
+	return []wizardStep{
+		{
+			key:  "preset",
+			kind: wizChoice,
+			ask:  say("Which AI provider should your agents use?"),
+			options: func(wizardAnswers) []wizardOption {
+				var opts []wizardOption
+				for _, p := range providerPresets {
+					opts = append(opts, wizardOption{label: p.name, value: p.value})
+				}
+				return append(opts, wizardOption{label: "Other OpenAI-compatible API", value: "custom"})
+			},
+			skip: func(wizardAnswers) bool { return editing },
+			show: func(v string, a wizardAnswers) string {
+				if p := presetFor(a); p.name != "" {
+					return p.name
+				}
+				return "Other OpenAI-compatible API"
+			},
+		},
+		{
+			key:  "name",
+			kind: wizText,
+			ask:  say("What should I call this provider?"),
+			def:  func(a wizardAnswers) string { return presetFor(a).name },
+		},
+		{
+			key:         "url",
+			kind:        wizText,
+			ask:         say("What is its API base URL? It must use HTTPS unless it runs on this machine."),
+			placeholder: "https://api.example.com/v1",
+			skip:        func(a wizardAnswers) bool { return a["preset"] != "custom" },
+			validate: func(v string, _ wizardAnswers) error {
+				return agent.ValidateProviderURL(v)
+			},
+		},
+		{
+			key:  "env",
+			kind: wizText,
+			ask: say("Which environment variable holds the API key? The key itself is never " +
+				"stored. Leave it empty if the provider needs no key."),
+			def:      func(a wizardAnswers) string { return presetFor(a).env },
+			optional: true,
+			validate: func(v string, _ wizardAnswers) error {
+				for i, r := range v {
+					if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {
+						return fmt.Errorf("Use letters, digits and _ only, like OPENROUTER_API_KEY.")
+					}
+				}
+				return nil
+			},
+		},
+		{
+			key:  "model",
+			kind: wizText,
+			ask:  say("Which model should agents use by default?"),
+			def:  func(a wizardAnswers) string { return presetFor(a).model },
+		},
+		{
+			key:  "confirm",
+			kind: wizChoice,
+			ask: func(a wizardAnswers) string {
+				summary := fmt.Sprintf("%s\n%s\nmodel %s", a["name"], providerURL(a), a["model"])
+				if env := a["env"]; env != "" {
+					summary += "\nkey from $" + env
+					if os.Getenv(env) == "" {
+						summary += " — not set in this shell yet"
+					}
+				}
+				return summary + "\n\nSave this provider?"
+			},
+			options: confirmOptions("Save"),
+		},
+	}
+}
+
+func providerURL(a wizardAnswers) string {
+	if a["preset"] == "custom" {
+		return strings.TrimRight(a["url"], "/")
+	}
+	return presetFor(a).url
+}
+
+func confirmOptions(save string) func(wizardAnswers) []wizardOption {
+	return func(wizardAnswers) []wizardOption {
+		return []wizardOption{
+			{label: save, value: "save"},
+			{label: "Start over", value: "restart"},
+			{label: "Cancel", value: "cancel"},
+		}
+	}
+}
+
+func (m agentModeModel) agentSteps(editing int64) []wizardStep {
+	choice := func(key, ask string, opts ...wizardOption) wizardStep {
+		return wizardStep{
+			key: key, kind: wizChoice, ask: say(ask),
+			options: func(wizardAnswers) []wizardOption { return opts },
+			show: func(v string, _ wizardAnswers) string {
+				for _, o := range opts {
+					if o.value == v {
+						return o.label
+					}
+				}
+				return v
+			},
+		}
+	}
+	providerModel := func(a wizardAnswers) string {
+		for _, p := range m.providers {
+			if strconv.FormatInt(p.ID, 10) == a["provider"] {
+				return p.Model
+			}
+		}
+		return ""
+	}
+	saveLabel := "Create agent"
+	if editing != 0 {
+		saveLabel = "Save"
+	}
+	return []wizardStep{
+		{key: "name", kind: wizText, ask: say("Let's set up a Chat Agent. What is its name?"),
+			placeholder: "Support Bot"},
+		{
+			key:  "provider",
+			kind: wizChoice,
+			ask:  say("Which provider should it use?"),
+			options: func(wizardAnswers) []wizardOption {
+				var opts []wizardOption
+				for _, p := range m.providers {
+					opts = append(opts, wizardOption{label: p.Name, value: strconv.FormatInt(p.ID, 10)})
+				}
+				return opts
+			},
+			show: func(v string, _ wizardAnswers) string {
+				for _, p := range m.providers {
+					if strconv.FormatInt(p.ID, 10) == v {
+						return p.Name
+					}
+				}
+				return v
+			},
+		},
+		{key: "model", kind: wizText, ask: say("Which model? Keep the provider's default or type another."),
+			def: providerModel},
+		{key: "prompt", kind: wizText, optional: true,
+			ask:         say("How should it reply? Give it instructions, or leave empty for a brief, helpful default."),
+			placeholder: "You answer questions about my bakery's hours and menu."},
+		{
+			key:      "knowledge",
+			kind:     wizText,
+			optional: true,
+			ask: say("Any knowledge files it should read? Comma-separated paths; relative " +
+				"paths are inside the wiregram config folder."),
+			placeholder: "~/notes/faq.md",
+			validate: func(v string, _ wizardAnswers) error {
+				for _, name := range splitList(v) {
+					if _, err := os.Stat(agent.KnowledgePath(m.mgr.Dir, name)); err != nil {
+						return fmt.Errorf("Can't read %s.", name)
+					}
+				}
+				return nil
+			},
+		},
+		choice("media", "What can it understand?",
+			wizardOption{label: "Text only", value: "text"},
+			wizardOption{label: "Text + vision (incoming photos go to the model)", value: "vision"}),
+		choice("mode", "How should it reply?",
+			wizardOption{label: "Suggest replies for me to approve", value: "suggest"},
+			wizardOption{label: "Reply automatically", value: "auto"}),
+		choice("retention", "How long should it keep conversation history?",
+			wizardOption{label: "7 days", value: "7"},
+			wizardOption{label: "30 days", value: "30"},
+			wizardOption{label: "90 days", value: "90"}),
+		m.accountsStep(editing),
+		{
+			key:  "confirm",
+			kind: wizChoice,
+			ask: func(a wizardAnswers) string {
+				tags := m.keyTags(a["accounts"])
+				if tags == "" {
+					tags = "no accounts yet"
+				}
+				return fmt.Sprintf("%s · %s\n%s · %s · %s days\n%s\n\nIt only ever answers "+
+					"incoming private messages; it never starts a chat or joins groups.",
+					a["name"], a["model"], mediaLabel(a["media"]), a["mode"], a["retention"], tags)
+			},
+			options: confirmOptions(saveLabel),
+		},
+	}
+}
+
+func mediaLabel(v string) string {
+	if v == "vision" {
+		return "text + vision"
+	}
+	return "text only"
+}
+
+func (m agentModeModel) accountsStep(agentID int64) wizardStep {
+	return wizardStep{
+		key:      "accounts",
+		kind:     wizMulti,
+		optional: true,
+		ask: say("Which accounts should it answer DMs on? Each account can have " +
+			"one agent. You can change this later with c."),
+		options: func(wizardAnswers) []wizardOption {
+			var opts []wizardOption
+			for i, a := range m.mgr.Accounts {
+				key := m.mgr.AccountKey(a)
+				o := wizardOption{
+					label: fmt.Sprintf("[%s%d] %s", backendTag(a.BackendType), i+1, textfmt.Plain(a.Label())),
+					value: key,
+				}
+				if owner, ok := m.bindings[key]; ok && owner != agentID {
+					o.blocked = "taken by " + m.agentName(owner)
+				}
+				opts = append(opts, o)
+			}
+			return opts
+		},
+		show: func(v string, _ wizardAnswers) string { return m.keyTags(v) },
+	}
+}
+
+func (m agentModeModel) keyTags(csv string) string {
+	var tags []string
+	for _, key := range splitList(csv) {
+		tags = append(tags, "["+accountShort(m.mgr, key)+"]")
+	}
+	return strings.Join(tags, "")
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func (m agentModeModel) boundKeys(agentID int64) string {
+	var keys []string
+	for _, a := range m.mgr.Accounts {
+		if key := m.mgr.AccountKey(a); m.bindings[key] == agentID {
+			keys = append(keys, key)
+		}
+	}
+	return strings.Join(keys, ",")
+}
+
+func (m agentModeModel) agentAnswers(id int64) wizardAnswers {
+	for _, a := range m.agents {
+		if a.ID != id {
+			continue
+		}
+		knowledge, _ := m.db().AgentKnowledge(id)
+		media, mode := "text", "suggest"
+		if a.Vision {
+			media = "vision"
+		}
+		if a.Auto {
+			mode = "auto"
+		}
+		retention := strconv.Itoa(a.RetentionDays)
+		if retention != "7" && retention != "90" {
+			retention = "30"
+		}
+		return wizardAnswers{
+			"name": a.Name, "provider": strconv.FormatInt(a.ProviderID, 10), "model": a.Model,
+			"prompt": a.Prompt, "knowledge": strings.Join(knowledge, ", "), "media": media,
+			"mode": mode, "retention": retention, "accounts": m.boundKeys(id),
+		}
+	}
+	return nil
+}
+
+func (m agentModeModel) finishWizard(a wizardAnswers) (tea.Model, tea.Cmd) {
+	switch a["confirm"] {
+	case "restart":
+		m.wiz = m.wiz.restart()
+		return m, m.wiz.Init()
+	case "cancel":
+		m.screen, m.thenAgent = m.back, false
+		return m, nil
+	}
+	var err error
+	switch m.purpose {
+	case wizNewProvider, wizEditProvider:
+		p := agent.AgentProvider{ID: m.target, Name: a["name"], BaseURL: providerURL(a),
+			APIKeyEnv: a["env"], Model: a["model"]}
+		if m.purpose == wizEditProvider {
+			err = m.db().UpdateProvider(p)
+		} else {
+			_, err = m.db().CreateProvider(p)
+		}
+		if err == nil {
+			m.notice = "Provider " + p.Name + " saved"
+		}
+	case wizNewAgent, wizEditAgent:
+		err = m.saveAgent(a)
+	case wizConnect:
+		err = m.db().SetAgentAccounts(m.target, splitList(a["accounts"]))
+		if err == nil {
+			m.notice = "Accounts updated"
+		}
+	}
+	m.mgr.Agents.Reload()
+	m = m.reload()
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+	}
+	m.screen = m.back
+	if m.thenAgent && err == nil && m.purpose == wizNewProvider {
+		m.thenAgent = false
+		return m.startWizard(wizNewAgent, 0)
+	}
+	m.thenAgent = false
+	return m, nil
+}
+
+func (m *agentModeModel) saveAgent(a wizardAnswers) error {
+	providerID, err := strconv.ParseInt(a["provider"], 10, 64)
+	if err != nil {
+		return fmt.Errorf("pick a provider: %w", err)
+	}
+	retention, err := strconv.Atoi(a["retention"])
+	if err != nil {
+		return fmt.Errorf("pick a retention period: %w", err)
+	}
+	rec := agent.AgentRecord{
+		ID: m.target, Name: a["name"], Prompt: a["prompt"], Auto: a["mode"] == "auto",
+		Vision: a["media"] == "vision", ProviderID: providerID, Model: a["model"],
+		RetentionDays: retention, Enabled: true,
+	}
+	if m.purpose == wizEditAgent {
+		for _, old := range m.agents {
+			if old.ID == rec.ID {
+				rec.Enabled = old.Enabled
+			}
+		}
+		err = m.db().UpdateAgent(rec)
+	} else {
+		rec.ID, err = m.db().CreateAgent(rec)
+	}
+	if err != nil {
+		return err
+	}
+	if err := m.db().SetAgentKnowledge(rec.ID, splitList(a["knowledge"])); err != nil {
+		return err
+	}
+	if err := m.db().SetAgentAccounts(rec.ID, splitList(a["accounts"])); err != nil {
+		return err
+	}
+	m.notice = "Chat Agent " + rec.Name + " saved"
+	return nil
+}
+
+// --- Rendering ---------------------------------------------------------------
+
+func (m agentModeModel) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+func (m agentModeModel) render() string {
+	header := renderThemedHeader(accountChips(m.mgr, nil), m.width, colorAgent, " wiregram · agents ")
+	notice := m.notice
+	if m.confirm != nil {
+		notice = m.confirmText
+	}
+	footer := renderThemedFooter(m.helpKeys(), m.fullHelp, notice, m.width, colorAgent)
+	bodyHeight := max(4, m.height-1-lipgloss.Height(footer))
+	var body string
+	switch {
+	case m.screen == scrWizard:
+		body = m.wiz.view(m.width, bodyHeight)
+	case m.screen == scrProviders:
+		body = renderBox("AI providers", m.providerLines(m.width-4, bodyHeight-2),
+			m.width, bodyHeight, colorAgent)
+	case m.width >= twoPaneWidth:
+		left := renderBox("Chat Agents", m.agentLines(agentSidebarWidth-4, bodyHeight-2),
+			agentSidebarWidth, bodyHeight, agentBorderColor(m.screen == scrAgents))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, left,
+			m.rightPane(m.width-agentSidebarWidth, bodyHeight))
+	case m.screen == scrAgents:
+		body = renderBox("Chat Agents", m.agentLines(m.width-4, bodyHeight-2),
+			m.width, bodyHeight, colorAgent)
+	default:
+		body = m.rightPane(m.width, bodyHeight)
+	}
+	return header + "\n" + body + "\n" + footer
+}
+
+func (m agentModeModel) rightPane(width, height int) string {
+	if m.screen == scrConv {
+		return renderBox(m.convTitle, m.convLines(width-4, height-2), width, height, colorAgent)
+	}
+	title := "Conversations"
+	if a, ok := m.selected(); ok {
+		title = a.Name + " — conversations"
+	}
+	return renderBox(title, m.threadLines(width-4, height-2), width, height,
+		agentBorderColor(m.screen == scrConvs))
+}
+
+func agentBorderColor(focused bool) color.Color {
+	if focused {
+		return colorAgent
+	}
+	return colorDim
+}
+
+// window returns the first visible item so that sel stays on screen.
+func window(sel, rows int) int {
+	if rows < 1 || sel < rows {
+		return 0
+	}
+	return sel - rows + 1
+}
+
+func listRow(text, right string, selected, focused bool, width int) string {
+	marker := "  "
+	if selected {
+		marker = styleAgent.Render(">") + " "
+	}
+	room := max(1, width-2-textfmt.DisplayWidth(right)-1)
+	row := marker + truncate(text, room)
+	gap := max(1, width-textfmt.DisplayWidth(row)-textfmt.DisplayWidth(right))
+	row += strings.Repeat(" ", gap) + right
+	switch {
+	case selected && focused:
+		return styleSelectedRow.Render(row)
+	case selected:
+		return styleTitle.Render(row)
+	}
+	return row
+}
+
+func (m agentModeModel) agentLines(width, height int) []string {
+	if len(m.agents) == 0 {
+		hint := "Press n to create your first Chat Agent."
+		if len(m.providers) == 0 {
+			hint = "Chat Agents answer incoming\nDMs with AI.\n\n" +
+				"Press n to connect a provider\nand create your first agent."
+		}
+		return centerLines(width, height, styleSubtle.Render(hint))
+	}
+	var lines []string
+	for i := window(m.sel, height/2); i < len(m.agents); i++ {
+		a := m.agents[i]
+		tags := m.accountTags(a.ID)
+		status := lipgloss.NewStyle().Foreground(colorGreen).Render("● on")
+		problem := m.mgr.Agents.Problem(a.ID)
+		switch {
+		case !a.Enabled:
+			status = styleDim.Render("paused")
+		case problem != "":
+			status = styleError.Render("✕ error")
+		case tags == "":
+			status = styleDim.Render("no accounts")
+		}
+		mode := "suggest"
+		if a.Auto {
+			mode = "auto"
+		}
+		media := "text"
+		if a.Vision {
+			media = "vision"
+		}
+		detail := styleDim.Render(fmt.Sprintf("    %s · %s %s", mode, mediaLabel(media), tags))
+		if problem != "" && a.Enabled {
+			detail = "    " + styleError.Render(truncate(problem, width-4))
+		}
+		lines = append(lines,
+			listRow(textfmt.Plain(a.Name), status, i == m.sel, m.screen == scrAgents, width),
+			textfmt.ClipLine(detail, width))
+	}
+	return lines
+}
+
+func (m agentModeModel) threadLines(width, height int) []string {
+	a, ok := m.selected()
+	if !ok {
+		return nil
+	}
+	if len(m.threads) == 0 {
+		hint := "No conversations yet."
+		if tags := m.accountTags(a.ID); tags == "" {
+			hint += "\nPress c to connect accounts."
+		} else {
+			hint += "\nIt answers incoming DMs on " + tags + "."
+		}
+		return centerLines(width, height, styleSubtle.Render(hint))
+	}
+	var lines []string
+	for i := window(m.tsel, height); i < len(m.threads); i++ {
+		t := m.threads[i]
+		right := styleDim.Render(agentTime(t.LastAt))
+		key := account.ConvKey{AgentID: a.ID, AccountKey: t.AccountID,
+			Chat: backend.ChatID{Backend: t.BackendType, Id: t.ChatID}}
+		if _, ok := m.mgr.Agents.Pending(key); ok {
+			right = styleAgent.Render("pending ") + right
+		}
+		text := styleAgent.Render("["+accountShort(m.mgr, t.AccountID)+"]") + " " + threadTitle(t)
+		lines = append(lines, listRow(text, right, i == m.tsel, m.screen == scrConvs, width))
+	}
+	return lines
+}
+
+func agentTime(t time.Time) string {
+	t = t.Local()
+	if y, mo, d := time.Now().Date(); t.Year() == y && t.Month() == mo && t.Day() == d {
+		return t.Format("15:04")
+	}
+	return t.Format("Jan 2")
+}
+
+func (m agentModeModel) convLines(width, height int) []string {
+	indent := 8 + textfmt.NickWidth + 1
+	var lines []string
+	for _, msg := range m.convLog {
+		nick := textfmt.Plain(msg.Sender)
+		style := lipgloss.NewStyle()
+		switch {
+		case msg.IsAgentReply:
+			nick, style = "agent", styleAgent
+		case msg.Outgoing:
+			nick = "you"
+		}
+		prefix := styleDim.Render(msg.Timestamp.Local().Format("[15:04]")) + " " +
+			style.Render(textfmt.FormatNick(nick)) + " "
+		lines = append(lines, textfmt.WrapMessage(prefix, textfmt.Plain(msg.Text), width, indent)...)
+	}
+	if s, ok := m.mgr.Agents.Pending(m.conv); ok {
+		lines = append(lines, "", styleAgent.Bold(true).Render("Suggested reply"))
+		lines = append(lines, strings.Split(wizardBubble(s.Text, min(width, 72), colorAgent), "\n")...)
+		lines = append(lines, styleSubtle.Render("y send · n discard"))
+	}
+	return bottomLines(lines, height)
+}
+
+func (m agentModeModel) providerLines(width, height int) []string {
+	if len(m.providers) == 0 {
+		return centerLines(width, height, styleSubtle.Render("No providers yet. Press n to connect one."))
+	}
+	var lines []string
+	for i := window(m.psel, height); i < len(m.providers); i++ {
+		p := m.providers[i]
+		right := styleDim.Render(p.Model)
+		if p.APIKeyEnv != "" && os.Getenv(p.APIKeyEnv) == "" {
+			right = styleError.Render("$"+p.APIKeyEnv+" not set") + " " + right
+		}
+		lines = append(lines, listRow(textfmt.Plain(p.Name)+"  "+styleDim.Render(p.BaseURL),
+			right, i == m.psel, true, width))
+	}
+	return lines
+}
+
+func (m agentModeModel) helpKeys() []helpKey {
+	var keys []helpKey
+	switch m.screen {
+	case scrWizard:
+		return m.wiz.helpKeys()
+	case scrAgents:
+		keys = []helpKey{{"↑↓", "select"}, {"⏎", "chats"}, {"n", "new"}, {"e", "edit"},
+			{"c", "accounts"}, {"space", "pause"}, {"d", "delete"}, {"p", "providers"}, {"esc", "back"}}
+	case scrConvs:
+		keys = []helpKey{{"↑↓", "select"}, {"⏎", "open"}, {"esc", "agents"}}
+	case scrConv:
+		keys = []helpKey{{"y", "send suggestion"}, {"n", "discard"}, {"esc", "back"}}
+	case scrProviders:
+		keys = []helpKey{{"↑↓", "select"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"esc", "agents"}}
+	}
+	if len(m.mgr.Accounts) > 1 {
+		keys = append(keys, helpKey{"M-1…9", "account"})
+	}
+	return append(keys, helpKey{"?", "more"})
 }

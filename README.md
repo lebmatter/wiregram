@@ -2,7 +2,7 @@
 
 A minimal multi-backend chat client for the terminal, written in Go. Supports
 Telegram, Mattermost, Matrix, and WhatsApp, with optional media playback via
-mpv and Kitty graphics, and optional AI agents that suggest or send replies.
+mpv and Kitty graphics, and optional Chat Agents that answer your DMs with AI.
 
 ## Build and run
 
@@ -55,13 +55,29 @@ Text chat needs nothing extra. To open attachments, install `mpv`; to view
 images and video, run Wiregram inside the Kitty terminal. Attachments download
 on demand into temporary files that are removed afterwards.
 
-## Agents
+## Chat Agents
 
-Optional and off by default. Open **Agents…** from the account picker to add an
-OpenAI-compatible provider (API key read from an environment variable) and
-assign agents to private chats. Agents either suggest replies for you to
-approve or reply automatically. Conversations and knowledge files are sent to
-the configured provider.
+Optional and off by default. Chat Agents are AI bots that answer **incoming
+private messages** on the accounts you connect to them. They never reply in
+groups or channels and never start a conversation.
+
+Press **Alt+A** (or pick **Chat Agents…** in the account picker) to open agent
+mode, then:
+
+1. Connect an OpenAI-compatible provider (OpenRouter, OpenAI, a local Ollama,
+   or any other). The API key is read from an environment variable and never
+   stored.
+2. Create an agent in the guided wizard: name, provider and model,
+   instructions, knowledge files, text only or text + vision, suggest or
+   auto-reply, and history retention.
+3. Connect accounts. Each account answers to at most one agent.
+
+Select an agent to see its conversations, tagged by account (`[TG1]`,
+`[WA2]`, matching the Alt+N numbers). In suggest mode, open a conversation and
+press `y` to send the drafted reply or `n` to discard it. Agent configuration
+and conversation history are stored in `wiregram.db`. Conversations, knowledge
+files and (for vision agents) incoming photos are sent to the configured
+provider.
 
 ## Development
 

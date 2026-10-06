@@ -3,13 +3,12 @@ package account
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,51 +20,75 @@ import (
 	"wiregram/internal/textfmt"
 )
 
+// aiMessage is one OpenAI-compatible chat message. Content is a string, or a
+// list of parts when an image is attached.
 type aiMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
-type aiPrompt struct {
-	system   string
-	messages []aiMessage
+type aiPart struct {
+	Type     string     `json:"type"`
+	Text     string     `json:"text,omitempty"`
+	ImageURL *aiURLPart `json:"image_url,omitempty"`
+}
+
+type aiURLPart struct {
+	URL string `json:"url"`
 }
 
 const (
 	agentDebounce          = 2 * time.Second
+	agentWorkerIdle        = 5 * time.Minute
 	agentMaxKnowledgeBytes = 64 << 10
 	agentMaxResponseBytes  = 1 << 20
-	agentDefaultContext    = 20
-	agentDefaultTimeout    = 45
-	agentRetentionInterval = 1 * time.Hour
+	agentMaxImageBytes     = 5 << 20
+	agentMaxTokens         = 1024
+	agentContext           = 20
+	agentTimeout           = 45 * time.Second
+	agentRetentionInterval = time.Hour
 )
 
-type AgentChatKey struct {
-	AgentID     int64
-	BackendType string
-	AccountID   string
-	ChatID      string
+// ConvKey names one agent conversation: an agent, the account it answers on
+// and the DM.
+type ConvKey struct {
+	AgentID    int64
+	AccountKey string
+	Chat       backend.ChatID
 }
 
-type agentSuggestion struct {
-	Text      string
+// Suggestion is a reply drafted in suggest mode, waiting for approval.
+type Suggestion struct {
 	ChatTitle string
-	Timestamp time.Time
+	Text      string
+	ReplyTo   string
+	At        time.Time
 }
 
 type runningAgent struct {
 	record   agent.AgentRecord
 	provider agent.AgentProvider
-	mu       sync.Mutex
-	inflight map[string]bool
+}
+
+// convWorker serialises replies for one conversation. wake is a one-slot
+// signal, so a burst of messages coalesces into a single reply.
+type convWorker struct {
+	wake chan struct{}
+	last backend.Message // newest incoming message; guarded by agentRuntime.mu
 }
 
 type agentRuntime struct {
-	Db      *agent.AgentDB
-	mgr     *AccountManager
-	Mu      sync.Mutex
-	agents  map[int64]*runningAgent
-	Pending map[AgentChatKey]*agentSuggestion
+	Db  *agent.AgentDB
+	mgr *AccountManager
+
+	mu         sync.Mutex
+	agents     map[int64]*runningAgent // enabled agents only
+	bindings   map[string]int64        // account key → agent
+	problems   map[int64]string        // last failure per agent, one plain line
+	pending    map[ConvKey]Suggestion
+	workers    map[ConvKey]*convWorker
+	subscribed map[*Account]backend.Backend
+
 	changed chan struct{}
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -75,58 +98,41 @@ type agentRuntime struct {
 func NewAgentRuntime(ctx context.Context, db *agent.AgentDB, mgr *AccountManager) *agentRuntime {
 	ctx, cancel := context.WithCancel(ctx)
 	return &agentRuntime{
-		Db:      db,
-		mgr:     mgr,
-		agents:  make(map[int64]*runningAgent),
-		Pending: make(map[AgentChatKey]*agentSuggestion),
-		changed: make(chan struct{}, 1),
-		ctx:     ctx,
-		cancel:  cancel,
+		Db:         db,
+		mgr:        mgr,
+		agents:     make(map[int64]*runningAgent),
+		bindings:   make(map[string]int64),
+		problems:   make(map[int64]string),
+		pending:    make(map[ConvKey]Suggestion),
+		workers:    make(map[ConvKey]*convWorker),
+		subscribed: make(map[*Account]backend.Backend),
+		changed:    make(chan struct{}, 1),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
 func (rt *agentRuntime) Start() {
-	records, err := rt.Db.ListAgents()
-	if err != nil {
-		return
-	}
-	for _, rec := range records {
-		if !rec.Enabled {
-			continue
-		}
-		prov, err := rt.Db.GetProvider(rec.ProviderID)
-		if err != nil {
-			continue
-		}
-		rt.agents[rec.ID] = &runningAgent{
-			record:   rec,
-			provider: prov,
-			inflight: make(map[string]bool),
-		}
-	}
-
-	for _, acct := range rt.mgr.Accounts {
-		rt.subscribeAccount(acct)
-	}
-
-	rt.wg.Add(1)
+	rt.Reload()
+	rt.wg.Add(2)
 	go rt.watchAccounts()
-
-	rt.wg.Add(1)
 	go rt.retentionLoop()
 }
 
 func (rt *agentRuntime) Stop() {
 	rt.cancel()
-	for _, acct := range rt.mgr.Accounts {
-		s := acct.Snapshot()
-		if s.Backend != nil {
-			s.Backend.RemoveSubscriber("agent")
-		}
+	rt.mu.Lock()
+	for _, b := range rt.subscribed {
+		b.RemoveSubscriber("agent")
 	}
+	rt.subscribed = make(map[*Account]backend.Backend)
+	rt.mu.Unlock()
 	rt.wg.Wait()
 	rt.Db.Close()
 }
+
+// Changed signals the UI when suggestions or agent problems change.
+func (rt *agentRuntime) Changed() <-chan struct{} { return rt.changed }
 
 func (rt *agentRuntime) notify() {
 	select {
@@ -135,53 +141,78 @@ func (rt *agentRuntime) notify() {
 	}
 }
 
-func (rt *agentRuntime) subscribeAccount(acct *Account) {
-	s := acct.Snapshot()
-	if s.Backend == nil {
+// Reload rereads agents and bindings and re-subscribes accounts. Call it after
+// any change to agents, providers or bindings.
+func (rt *agentRuntime) Reload() {
+	records, err := rt.Db.ListAgents()
+	if err != nil {
 		return
 	}
-
-	chats := rt.assignedChatsForAccount(acct)
-	if len(chats) == 0 {
+	bindings, err := rt.Db.AccountAgents()
+	if err != nil {
 		return
 	}
-
-	filter := func(cid backend.ChatID) bool {
-		for _, c := range chats {
-			if c == cid.Id {
-				return true
-			}
+	agents := make(map[int64]*runningAgent)
+	for _, rec := range records {
+		if !rec.Enabled {
+			continue
 		}
-		return false
-	}
-
-	events := s.Backend.AddSubscriber("agent", filter, 256)
-	rt.wg.Add(1)
-	go rt.listenBackend(acct, events)
-}
-
-func (rt *agentRuntime) assignedChatsForAccount(acct *Account) []string {
-	acctID := filepath.Base(acct.Dir)
-	rt.Mu.Lock()
-	agentIDs := make([]int64, 0, len(rt.agents))
-	for id := range rt.agents {
-		agentIDs = append(agentIDs, id)
-	}
-	rt.Mu.Unlock()
-
-	var chatIDs []string
-	for _, id := range agentIDs {
-		assignments, err := rt.Db.AgentChats(id)
+		prov, err := rt.Db.GetProvider(rec.ProviderID)
 		if err != nil {
 			continue
 		}
-		for _, a := range assignments {
-			if a.BackendType == acct.BackendType && a.AccountID == acctID {
-				chatIDs = append(chatIDs, a.ChatID)
-			}
+		agents[rec.ID] = &runningAgent{record: rec, provider: prov}
+	}
+	rt.mu.Lock()
+	rt.agents, rt.bindings = agents, bindings
+	for id := range rt.problems {
+		if agents[id] == nil {
+			delete(rt.problems, id)
 		}
 	}
-	return chatIDs
+	for key := range rt.pending {
+		if agents[key.AgentID] == nil {
+			delete(rt.pending, key)
+		}
+	}
+	rt.mu.Unlock()
+	rt.syncSubscriptions()
+	rt.notify()
+}
+
+// syncSubscriptions keeps one "agent" subscriber on every online account that
+// is bound to an enabled agent, and none elsewhere.
+func (rt *agentRuntime) syncSubscriptions() {
+	accounts := rt.mgr.List()
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	live := make(map[*Account]bool)
+	for _, acct := range accounts {
+		live[acct] = true
+		s := acct.Snapshot()
+		key := rt.mgr.AccountKey(acct)
+		wanted := s.Backend != nil && s.Status == "online" && rt.agents[rt.bindings[key]] != nil
+		current := rt.subscribed[acct]
+		switch {
+		case wanted && current != s.Backend:
+			if current != nil {
+				current.RemoveSubscriber("agent")
+			}
+			events := s.Backend.AddSubscriber("agent", nil, 256)
+			rt.subscribed[acct] = s.Backend
+			rt.wg.Add(1)
+			go rt.listen(acct, key, events)
+		case !wanted && current != nil:
+			current.RemoveSubscriber("agent")
+			delete(rt.subscribed, acct)
+		}
+	}
+	for acct, b := range rt.subscribed {
+		if !live[acct] {
+			b.RemoveSubscriber("agent")
+			delete(rt.subscribed, acct)
+		}
+	}
 }
 
 func (rt *agentRuntime) watchAccounts() {
@@ -190,18 +221,13 @@ func (rt *agentRuntime) watchAccounts() {
 		select {
 		case <-rt.ctx.Done():
 			return
-		case <-rt.mgr.Changed:
-			for _, acct := range rt.mgr.Accounts {
-				s := acct.Snapshot()
-				if s.Backend != nil && s.Status == "online" {
-					rt.subscribeAccount(acct)
-				}
-			}
+		case <-rt.mgr.agentChanged:
+			rt.syncSubscriptions()
 		}
 	}
 }
 
-func (rt *agentRuntime) listenBackend(acct *Account, events <-chan backend.BackendEvent) {
+func (rt *agentRuntime) listen(acct *Account, key string, events <-chan backend.BackendEvent) {
 	defer rt.wg.Done()
 	for {
 		select {
@@ -211,131 +237,233 @@ func (rt *agentRuntime) listenBackend(acct *Account, events <-chan backend.Backe
 			if !ok {
 				return
 			}
-			if ev.Kind == "message" && ev.Message != nil {
-				rt.handleMessage(acct, ev)
-			}
+			rt.handle(acct, key, ev)
 		}
 	}
 }
 
-func (rt *agentRuntime) handleMessage(acct *Account, ev backend.BackendEvent) {
-	msg := ev.Message
+// messageText is what the agent sees of a message: media as its bracket tag,
+// followed by any caption.
+func messageText(msg backend.Message) string {
+	text := strings.TrimSpace(msg.Text)
+	switch {
+	case msg.MediaLabel == "":
+		return text
+	case text == "":
+		return msg.MediaLabel
+	}
+	return msg.MediaLabel + " — " + text
+}
+
+func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.BackendEvent) {
+	// Agents only ever answer one-to-one DMs; groups and channels are ignored.
+	if ev.Kind != "message" || ev.Message == nil || !ev.DM || ev.Message.ViaBot {
+		return
+	}
+	msg := *ev.Message
+	text := messageText(msg)
+	if text == "" {
+		return
+	}
+	rt.mu.Lock()
+	ag := rt.agents[rt.bindings[accountKey]]
+	rt.mu.Unlock()
+	if ag == nil {
+		return
+	}
+	key := ConvKey{AgentID: ag.record.ID, AccountKey: accountKey, Chat: ev.Chat}
+	title := ""
+	if !msg.Outgoing {
+		title = msg.Sender
+	}
+	if err := rt.Db.LogMessage(key.AgentID, ev.Chat.Backend, accountKey, ev.Chat.Id, title, msg, text, false); err != nil {
+		rt.fail(key.AgentID, err)
+		return
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	if msg.Outgoing {
-		return
-	}
-	if msg.ViaBot {
-		return
-	}
-	if strings.TrimSpace(msg.Text) == "" {
-		return
-	}
-
-	agent := rt.agentForChat(acct, ev.Chat)
-	if agent == nil {
-		return
-	}
-
-	agent.mu.Lock()
-	if agent.inflight[ev.Chat.Id] {
-		agent.mu.Unlock()
-		return
-	}
-	agent.inflight[ev.Chat.Id] = true
-	agent.mu.Unlock()
-
-	acctID := filepath.Base(acct.Dir)
-	rt.Db.LogMessage(agent.record.ID, acct.BackendType, acctID, ev.Chat.Id, *msg, false)
-
-	go rt.processMessage(acct, agent, ev)
-}
-
-func (rt *agentRuntime) agentForChat(acct *Account, chat backend.ChatID) *runningAgent {
-	acctID := filepath.Base(acct.Dir)
-	rt.Mu.Lock()
-	defer rt.Mu.Unlock()
-	for _, agent := range rt.agents {
-		assignments, err := rt.Db.AgentChats(agent.record.ID)
-		if err != nil {
-			continue
+		// The owner answered, so a waiting draft is stale.
+		if _, ok := rt.pending[key]; ok {
+			delete(rt.pending, key)
+			rt.notify()
 		}
-		for _, a := range assignments {
-			if a.BackendType == acct.BackendType && a.AccountID == acctID && a.ChatID == chat.Id {
-				return agent
-			}
-		}
+		return
 	}
-	return nil
-}
-
-func (rt *agentRuntime) processMessage(acct *Account, agent *runningAgent, ev backend.BackendEvent) {
-	defer func() {
-		agent.mu.Lock()
-		delete(agent.inflight, ev.Chat.Id)
-		agent.mu.Unlock()
-	}()
-
+	w := rt.workers[key]
+	if w == nil {
+		w = &convWorker{wake: make(chan struct{}, 1)}
+		rt.workers[key] = w
+		rt.wg.Add(1)
+		go rt.serve(acct, key, w)
+	}
+	w.last = msg
+	// Signal under the lock so an idle worker cannot exit between lookup and wake.
 	select {
-	case <-rt.ctx.Done():
-		return
-	case <-time.After(agentDebounce):
+	case w.wake <- struct{}{}:
+	default:
 	}
+}
 
-	acctID := filepath.Base(acct.Dir)
-	prompt, err := rt.buildPrompt(agent, acct.BackendType, acctID, ev.Chat.Id)
-	if err != nil {
-		return
-	}
-
-	reply, err := rt.complete(agent.provider, prompt)
-	if err != nil {
-		return
-	}
-
-	if agent.record.AutoReply == 1 {
-		s := acct.Snapshot()
-		if s.Backend == nil {
+func (rt *agentRuntime) serve(acct *Account, key ConvKey, w *convWorker) {
+	defer rt.wg.Done()
+	idle := time.NewTimer(agentWorkerIdle)
+	defer idle.Stop()
+	for {
+		select {
+		case <-rt.ctx.Done():
 			return
-		}
-		chatEntries, _, err := s.Backend.Dialogs(rt.ctx, false)
-		if err != nil {
-			return
-		}
-		for _, entry := range chatEntries {
-			if entry.ID == ev.Chat {
-				sent, err := s.Backend.Send(rt.ctx, entry, reply, "")
-				if err == nil {
-					rt.Db.LogMessage(agent.record.ID, acct.BackendType, acctID, ev.Chat.Id, sent, true)
-				}
-				break
+		case <-idle.C:
+			rt.mu.Lock()
+			if len(w.wake) == 0 {
+				delete(rt.workers, key)
+				rt.mu.Unlock()
+				return
 			}
+			rt.mu.Unlock()
+			idle.Reset(agentWorkerIdle)
+			continue
+		case <-w.wake:
+		}
+		if !rt.settle(w) {
+			return
+		}
+		rt.mu.Lock()
+		trigger := w.last
+		rt.mu.Unlock()
+		rt.respond(acct, key, trigger)
+		idle.Reset(agentWorkerIdle)
+	}
+}
+
+// settle waits until the conversation has been quiet for agentDebounce.
+func (rt *agentRuntime) settle(w *convWorker) bool {
+	quiet := time.NewTimer(agentDebounce)
+	defer quiet.Stop()
+	for {
+		select {
+		case <-rt.ctx.Done():
+			return false
+		case <-w.wake:
+			quiet.Reset(agentDebounce)
+		case <-quiet.C:
+			return true
+		}
+	}
+}
+
+func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Message) {
+	rt.mu.Lock()
+	ag := rt.agents[key.AgentID]
+	rt.mu.Unlock()
+	if ag == nil {
+		return
+	}
+	history, err := rt.Db.ChatHistory(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id, agentContext)
+	if err != nil {
+		rt.fail(key.AgentID, err)
+		return
+	}
+	// Nothing to answer if the owner already replied while we waited.
+	if len(history) == 0 || history[len(history)-1].Outgoing {
+		return
+	}
+	s := acct.Snapshot()
+	if s.Backend == nil {
+		return
+	}
+	var entry backend.ChatEntry
+	if ag.record.Auto {
+		entry, err = rt.findChat(s.Backend, key.Chat)
+		if err != nil {
+			rt.fail(key.AgentID, err)
+			return
+		}
+		s.Backend.SetTyping(rt.ctx, entry)
+	}
+	messages, err := rt.buildMessages(ag, history)
+	if err != nil {
+		rt.fail(key.AgentID, err)
+		return
+	}
+	if ag.record.Vision {
+		if err := rt.attachPhoto(s.Backend, trigger, messages); err != nil {
+			rt.fail(key.AgentID, err)
+			return
+		}
+	}
+	reply, err := rt.complete(ag, messages)
+	if err != nil {
+		rt.fail(key.AgentID, err)
+		return
+	}
+	if ag.record.Auto {
+		if err := rt.send(s.Backend, entry, key, reply, trigger.ID); err != nil {
+			rt.fail(key.AgentID, err)
+			return
 		}
 	} else {
-		rt.Mu.Lock()
-		rt.Pending[AgentChatKey{
-			AgentID:     agent.record.ID,
-			BackendType: acct.BackendType,
-			AccountID:   acctID,
-			ChatID:      ev.Chat.Id,
-		}] = &agentSuggestion{
-			Text:      reply,
-			Timestamp: time.Now(),
-		}
-		rt.Mu.Unlock()
-		rt.notify()
+		rt.mu.Lock()
+		rt.pending[key] = Suggestion{ChatTitle: trigger.Sender, Text: reply, ReplyTo: trigger.ID, At: time.Now()}
+		rt.mu.Unlock()
 	}
+	rt.mu.Lock()
+	delete(rt.problems, key.AgentID)
+	rt.mu.Unlock()
+	rt.notify()
 }
 
-func (rt *agentRuntime) buildPrompt(agent *runningAgent, backendType, accountID, chatIDStr string) (aiPrompt, error) {
+func (rt *agentRuntime) fail(agentID int64, err error) {
+	if rt.ctx.Err() != nil {
+		return
+	}
+	rt.mu.Lock()
+	rt.problems[agentID] = textfmt.CleanError(err)
+	rt.mu.Unlock()
+	rt.notify()
+}
+
+// findChat looks the DM up in the chat list. Agents only answer existing
+// conversations, so there is never a chat to create.
+func (rt *agentRuntime) findChat(b backend.Backend, id backend.ChatID) (backend.ChatEntry, error) {
+	for _, archived := range []bool{false, true} {
+		entries, _, err := b.Dialogs(rt.ctx, archived)
+		if err != nil {
+			return backend.ChatEntry{}, fmt.Errorf("load chats: %w", err)
+		}
+		for _, e := range entries {
+			if e.ID == id {
+				if !e.IsDM {
+					return backend.ChatEntry{}, fmt.Errorf("agents only reply in private chats")
+				}
+				return e, nil
+			}
+		}
+	}
+	return backend.ChatEntry{}, fmt.Errorf("could not find the chat to reply in")
+}
+
+func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key ConvKey, text, replyTo string) error {
+	sent, err := b.Send(rt.ctx, entry, text, replyTo)
+	if err != nil {
+		return fmt.Errorf("send reply: %w", err)
+	}
+	if sent.Text == "" {
+		sent.Text = text
+	}
+	return rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id, "", sent, sent.Text, true)
+}
+
+func (rt *agentRuntime) buildMessages(ag *runningAgent, history []agent.AgentLoggedMessage) ([]aiMessage, error) {
 	var system strings.Builder
-	instructions := strings.TrimSpace(agent.record.Prompt)
+	instructions := strings.TrimSpace(ag.record.Prompt)
 	if instructions == "" {
 		instructions = "You are replying on behalf of the account owner. Be brief and helpful."
 	}
 	system.WriteString(instructions)
-
-	knowledge, err := rt.loadKnowledge(agent.record.ID)
+	knowledge, err := rt.loadKnowledge(ag.record.ID)
 	if err != nil {
-		return aiPrompt{}, err
+		return nil, err
 	}
 	if knowledge != "" {
 		system.WriteString("\n\nReference material:\n")
@@ -346,11 +474,8 @@ func (rt *agentRuntime) buildPrompt(agent *runningAgent, backendType, accountID,
 		"conversation and the reference material only, and say you do not know rather " +
 		"than guessing. Reply with the message text alone.")
 
-	history, err := rt.Db.ChatHistory(agent.record.ID, backendType, accountID, chatIDStr, agentDefaultContext)
-	if err != nil {
-		return aiPrompt{}, err
-	}
-	messages := make([]aiMessage, 0, len(history))
+	messages := make([]aiMessage, 0, len(history)+1)
+	messages = append(messages, aiMessage{Role: "system", Content: system.String()})
 	for _, h := range history {
 		role := "user"
 		if h.Outgoing || h.IsAgentReply {
@@ -358,23 +483,18 @@ func (rt *agentRuntime) buildPrompt(agent *runningAgent, backendType, accountID,
 		}
 		messages = append(messages, aiMessage{Role: role, Content: h.Text})
 	}
-
-	return aiPrompt{system: system.String(), messages: messages}, nil
+	return messages, nil
 }
 
 func (rt *agentRuntime) loadKnowledge(agentID int64) (string, error) {
-	paths, err := rt.Db.AgentKnowledge(agentID)
+	names, err := rt.Db.AgentKnowledge(agentID)
 	if err != nil {
 		return "", err
 	}
 	var out strings.Builder
 	total := 0
-	for _, name := range paths {
-		path := name
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(rt.mgr.Dir, path)
-		}
-		data, err := os.ReadFile(path)
+	for _, name := range names {
+		data, err := os.ReadFile(agent.KnowledgePath(rt.mgr.Dir, name))
 		if err != nil {
 			return "", fmt.Errorf("read knowledge file %s: %w", name, err)
 		}
@@ -382,16 +502,63 @@ func (rt *agentRuntime) loadKnowledge(agentID int64) (string, error) {
 		if total > agentMaxKnowledgeBytes {
 			return "", fmt.Errorf("knowledge files exceed %d KB in total", agentMaxKnowledgeBytes>>10)
 		}
-		fmt.Fprintf(&out, "\n--- %s ---\n%s\n", name, data)
+		fmt.Fprintf(&out, "\n--- %s ---\n%s\n", filepath.Base(name), data)
 	}
 	return out.String(), nil
 }
 
-func (rt *agentRuntime) complete(prov agent.AgentProvider, prompt aiPrompt) (string, error) {
-	if err := validateProviderURL(prov.BaseURL); err != nil {
+// attachPhoto adds the triggering photo to the last user message as an image
+// part. Only the newest photo is sent; earlier ones stay as text tags.
+func (rt *agentRuntime) attachPhoto(b backend.Backend, msg backend.Message, messages []aiMessage) error {
+	if !strings.Contains(msg.MediaLabel, "[photo]") {
+		return nil
+	}
+	if _, ok := b.MediaSaveable(msg); !ok {
+		return nil
+	}
+	dir, err := os.MkdirTemp("", "wiregram-agent-")
+	if err != nil {
+		return fmt.Errorf("create photo folder: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithTimeout(rt.ctx, agentTimeout)
+	defer cancel()
+	if err := b.SaveMedia(ctx, msg, dir); err != nil {
+		return fmt.Errorf("download photo: %w", err)
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) == 0 {
+		return fmt.Errorf("download photo: no file was saved")
+	}
+	info, err := files[0].Info()
+	if err != nil {
+		return fmt.Errorf("read photo: %w", err)
+	}
+	if info.Size() > agentMaxImageBytes {
+		return nil // Too large to send; the model still sees the [photo] tag.
+	}
+	data, err := os.ReadFile(filepath.Join(dir, files[0].Name()))
+	if err != nil {
+		return fmt.Errorf("read photo: %w", err)
+	}
+	mime := http.DetectContentType(data)
+	if !strings.HasPrefix(mime, "image/") {
+		return nil
+	}
+	last := &messages[len(messages)-1]
+	text, _ := last.Content.(string)
+	last.Content = []aiPart{
+		{Type: "text", Text: text},
+		{Type: "image_url", ImageURL: &aiURLPart{URL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}},
+	}
+	return nil
+}
+
+func (rt *agentRuntime) complete(ag *runningAgent, messages []aiMessage) (string, error) {
+	prov := ag.provider
+	if err := agent.ValidateProviderURL(prov.BaseURL); err != nil {
 		return "", err
 	}
-
 	var key string
 	if prov.APIKeyEnv != "" {
 		key = strings.TrimSpace(os.Getenv(prov.APIKeyEnv))
@@ -399,22 +566,23 @@ func (rt *agentRuntime) complete(prov agent.AgentProvider, prompt aiPrompt) (str
 			return "", fmt.Errorf("set %s to use provider %s", prov.APIKeyEnv, prov.Name)
 		}
 	}
-
+	model := ag.record.Model
+	if model == "" {
+		model = prov.Model
+	}
 	body, err := json.Marshal(struct {
-		Model    string      `json:"model"`
-		Messages []aiMessage `json:"messages"`
-	}{
-		Model:    prov.Model,
-		Messages: append([]aiMessage{{Role: "system", Content: prompt.system}}, prompt.messages...),
-	})
+		Model     string      `json:"model"`
+		Messages  []aiMessage `json:"messages"`
+		MaxTokens int         `json:"max_tokens"`
+	}{model, messages, agentMaxTokens})
 	if err != nil {
 		return "", fmt.Errorf("encode request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(rt.ctx, time.Duration(agentDefaultTimeout)*time.Second)
+	ctx, cancel := context.WithTimeout(rt.ctx, agentTimeout)
 	defer cancel()
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, prov.BaseURL+"/chat/completions", bytes.NewReader(body))
+	url := strings.TrimRight(prov.BaseURL, "/") + "/chat/completions"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
@@ -422,21 +590,18 @@ func (rt *agentRuntime) complete(prov agent.AgentProvider, prompt aiPrompt) (str
 	if key != "" {
 		request.Header.Set("Authorization", "Bearer "+key)
 	}
-
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "", fmt.Errorf("provider did not respond within %ds", agentDefaultTimeout)
+			return "", fmt.Errorf("provider did not respond within %s", agentTimeout)
 		}
 		return "", fmt.Errorf("reach provider: %w", err)
 	}
 	defer response.Body.Close()
-
 	data, err := io.ReadAll(io.LimitReader(response.Body, agentMaxResponseBytes))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
-
 	var parsed struct {
 		Choices []struct {
 			Message struct {
@@ -462,67 +627,57 @@ func (rt *agentRuntime) complete(prov agent.AgentProvider, prompt aiPrompt) (str
 	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
 }
 
-func validateProviderURL(baseURL string) error {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return fmt.Errorf("invalid provider URL: %w", err)
-	}
-	if u.Scheme == "https" {
-		return nil
-	}
-	host := u.Hostname()
-	ip := net.ParseIP(host)
-	if ip != nil && ip.IsLoopback() {
-		return nil
-	}
-	if host == "localhost" {
-		return nil
-	}
-	return fmt.Errorf("provider URL must use HTTPS (except for localhost)")
+// Problem is the agent's last failure, or "" when its last reply worked.
+func (rt *agentRuntime) Problem(agentID int64) string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.problems[agentID]
 }
 
-func (rt *agentRuntime) ApproveSuggestion(key AgentChatKey) error {
-	rt.Mu.Lock()
-	suggestion, ok := rt.Pending[key]
+// Pending returns the suggestion waiting in a conversation, if any.
+func (rt *agentRuntime) Pending(key ConvKey) (Suggestion, bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	s, ok := rt.pending[key]
+	return s, ok
+}
+
+// Approve sends a pending suggestion as a reply to the message that prompted it.
+func (rt *agentRuntime) Approve(key ConvKey) error {
+	rt.mu.Lock()
+	sug, ok := rt.pending[key]
+	rt.mu.Unlock()
 	if !ok {
-		rt.Mu.Unlock()
-		return fmt.Errorf("no pending suggestion")
+		return fmt.Errorf("there is no suggestion to send")
 	}
-	delete(rt.Pending, key)
-	rt.Mu.Unlock()
-
-	for _, acct := range rt.mgr.Accounts {
-		if acct.BackendType != key.BackendType || filepath.Base(acct.Dir) != key.AccountID {
-			continue
+	var acct *Account
+	for _, a := range rt.mgr.List() {
+		if rt.mgr.AccountKey(a) == key.AccountKey {
+			acct = a
 		}
-		s := acct.Snapshot()
-		if s.Backend == nil {
-			return fmt.Errorf("account offline")
-		}
-		chatEntries, _, err := s.Backend.Dialogs(rt.ctx, false)
-		if err != nil {
-			return fmt.Errorf("load dialogs: %w", err)
-		}
-		target := backend.ChatID{Backend: key.BackendType, Id: key.ChatID}
-		for _, entry := range chatEntries {
-			if entry.ID == target {
-				sent, err := s.Backend.Send(rt.ctx, entry, suggestion.Text, "")
-				if err != nil {
-					return fmt.Errorf("send: %w", err)
-				}
-				rt.Db.LogMessage(key.AgentID, key.BackendType, key.AccountID, key.ChatID, sent, true)
-				return nil
-			}
-		}
-		return fmt.Errorf("chat not found")
 	}
-	return fmt.Errorf("account not found")
+	if acct == nil {
+		return fmt.Errorf("that account has been removed")
+	}
+	s := acct.Snapshot()
+	if s.Backend == nil || s.Status != "online" {
+		return fmt.Errorf("that account is offline")
+	}
+	entry, err := rt.findChat(s.Backend, key.Chat)
+	if err != nil {
+		return err
+	}
+	if err := rt.send(s.Backend, entry, key, sug.Text, sug.ReplyTo); err != nil {
+		return err
+	}
+	rt.Discard(key)
+	return nil
 }
 
-func (rt *agentRuntime) DiscardSuggestion(key AgentChatKey) {
-	rt.Mu.Lock()
-	delete(rt.Pending, key)
-	rt.Mu.Unlock()
+func (rt *agentRuntime) Discard(key ConvKey) {
+	rt.mu.Lock()
+	delete(rt.pending, key)
+	rt.mu.Unlock()
 	rt.notify()
 }
 
@@ -531,48 +686,16 @@ func (rt *agentRuntime) retentionLoop() {
 	ticker := time.NewTicker(agentRetentionInterval)
 	defer ticker.Stop()
 	for {
+		records, err := rt.Db.ListAgents()
+		if err == nil {
+			for _, rec := range records {
+				rt.Db.PurgeOldMessages(rec.ID, rec.RetentionDays)
+			}
+		}
 		select {
 		case <-rt.ctx.Done():
 			return
 		case <-ticker.C:
-			rt.Mu.Lock()
-			for _, agent := range rt.agents {
-				rt.Db.PurgeOldMessages(agent.record.RetentionDays)
-			}
-			rt.Mu.Unlock()
 		}
-	}
-}
-
-func (rt *agentRuntime) Reload() {
-	records, err := rt.Db.ListAgents()
-	if err != nil {
-		return
-	}
-
-	rt.Mu.Lock()
-	rt.agents = make(map[int64]*runningAgent)
-	for _, rec := range records {
-		if !rec.Enabled {
-			continue
-		}
-		prov, err := rt.Db.GetProvider(rec.ProviderID)
-		if err != nil {
-			continue
-		}
-		rt.agents[rec.ID] = &runningAgent{
-			record:   rec,
-			provider: prov,
-			inflight: make(map[string]bool),
-		}
-	}
-	rt.Mu.Unlock()
-
-	for _, acct := range rt.mgr.Accounts {
-		s := acct.Snapshot()
-		if s.Backend != nil {
-			s.Backend.RemoveSubscriber("agent")
-		}
-		rt.subscribeAccount(acct)
 	}
 }

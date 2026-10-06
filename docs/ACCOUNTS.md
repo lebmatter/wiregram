@@ -45,19 +45,15 @@ For a large deployment, distribute account supervisors across processes with
 exclusive ownership of each session; never share a session file between live
 processes. The current CLI has no cross-process session locking.
 
-## Future AI integration
+## Chat Agents
 
-The connection runtime is independent of the terminal. The insertion point is
-the account's update handler **before** visible-chat filtering. Currently
-background messages are synchronized by gotd but not retained as an AI inbox.
-No AI calls or automatic replies are implemented.
-
-Add an account-tagged event envelope carrying Telegram account ID, peer kind/ID,
-message ID, and update kind. Use a bounded shared worker pool for model requests,
-with fairness and concurrency limits per account and ordered processing per
-conversation. Do not call a model synchronously inside the update handler or
-start an unbounded goroutine for each message. Route outgoing results through
-the same account's live client, with account-specific send limits and cancellation.
+Every backend broadcasts each message to `AddSubscriber` listeners, tagged with
+`BackendEvent.DM` for one-to-one private chats. The agent runtime
+(`internal/account/agents.go`) subscribes to each online account bound to an
+enabled agent and ignores every event that is not a DM. Each conversation gets
+one worker that debounces bursts into a single reply and exits when idle;
+replies only go to chats that already exist. Configuration, account bindings
+and history live in `wiregram.db` (`internal/agent`).
 
 Before reliable automation, add a durable inbox/outbox, persisted update offsets,
 deduplication keyed by account + peer + message/update identity, retry policy,

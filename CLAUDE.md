@@ -81,6 +81,13 @@ These are project constraints, not suggestions:
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with
   ` — ` before a caption. See `internal/telegram/media.go` for the full set.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
+- Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
+  (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as
+  `[TG1]`: backend plus Alt+N number. Chat Agents are created through the
+  scripted bubble wizard (`internal/tui/wizard.go`): fixed options or typed
+  values only, never free chat with a model.
+- Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
+  groups or channels and never start a chat.
 
 ## Architecture
 
@@ -122,7 +129,8 @@ lowest package that needs them rather than importing sideways.
 
 `os.UserConfigDir()/wiregram/` (typically `~/.config/wiregram/`):
 - `config.json` — API credentials and autolock
-- `wiregram.db` — SQLite database for agent configuration and message history
+- `wiregram.db` — SQLite database for Chat Agents: providers, agents, account
+  bindings, knowledge paths and message history
 - `session/session.json` — primary account session
 - `accounts/account-*/` — additional account sessions and identity files
 

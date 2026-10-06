@@ -531,7 +531,10 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			mx.notify()
 		}
 		msg := mx.eventToMessage(ev)
-		mx.subs.Broadcast(backend.BackendEvent{Kind: "message", Chat: backend.ChatID{Backend: "matrix", Id: roomID}, Message: &msg})
+		mx.subs.Broadcast(backend.BackendEvent{
+			Kind: "message", Chat: backend.ChatID{Backend: "matrix", Id: roomID},
+			DM: mx.isDirect(roomID), Message: &msg,
+		})
 
 	case "m.room.encrypted":
 		if roomID == subscribed {
@@ -541,7 +544,10 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			mx.notify()
 		}
 		msg := mx.eventToMessage(ev)
-		mx.subs.Broadcast(backend.BackendEvent{Kind: "message", Chat: backend.ChatID{Backend: "matrix", Id: roomID}, Message: &msg})
+		mx.subs.Broadcast(backend.BackendEvent{
+			Kind: "message", Chat: backend.ChatID{Backend: "matrix", Id: roomID},
+			DM: mx.isDirect(roomID), Message: &msg,
+		})
 
 	case "m.room.redaction":
 		targetID := ev.Redacts
@@ -669,6 +675,14 @@ func (mx *MxBackend) displayName(userID string) string {
 		}
 	}
 	return userID
+}
+
+// isDirect reports whether a room is a one-to-one DM, as Dialogs marks it.
+func (mx *MxBackend) isDirect(roomID string) bool {
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	room := mx.rooms[roomID]
+	return mx.dmRooms[roomID] && room != nil && len(room.members) <= 2
 }
 
 // Dialogs.

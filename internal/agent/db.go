@@ -11,7 +11,11 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 1
+const currentDBVersion = 2
+
+// PrimaryAccountKey names the account whose session lives in the config
+// directory itself rather than under accounts/.
+const PrimaryAccountKey = "primary"
 
 type AgentProvider struct {
 	ID        int64
@@ -21,20 +25,18 @@ type AgentProvider struct {
 	Model     string
 }
 
+// AgentRecord is a Chat Agent. It answers incoming DMs on the accounts bound
+// to it; Model overrides the provider's default when set.
 type AgentRecord struct {
 	ID            int64
 	Name          string
 	Prompt        string
-	AutoReply     int
+	Auto          bool // send replies directly instead of suggesting them
+	Vision        bool // pass incoming photos to the model
 	ProviderID    int64
+	Model         string
 	RetentionDays int
 	Enabled       bool
-}
-
-type AgentChatAssignment struct {
-	BackendType string
-	AccountID   string
-	ChatID      string
 }
 
 type AgentLoggedMessage struct {
@@ -53,12 +55,15 @@ type AgentDB struct {
 
 func OpenAgentDB(dir string) (*AgentDB, error) {
 	path := filepath.Join(dir, "wiregram.db")
-	db, err := sql.Open("sqlite", "file:"+path+"?_foreign_keys=on&_journal_mode=wal")
+	dsn := "file:" + path +
+		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open agent database: %w", err)
 	}
 	d := &AgentDB{db: db}
-	if err := d.migrate(); err != nil {
+	// Before v2 the primary account was keyed by the config directory's name.
+	if err := d.migrate(filepath.Base(dir)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate agent database: %w", err)
 	}
@@ -69,35 +74,81 @@ func (d *AgentDB) Close() error {
 	return d.db.Close()
 }
 
-func (d *AgentDB) migrate() error {
+func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	_, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS migrations (version INTEGER NOT NULL)`)
 	if err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
 	}
 
-	var version int
-	row := d.db.QueryRow(`SELECT version FROM migrations LIMIT 1`)
-	if err := row.Scan(&version); err != nil {
-		if err == sql.ErrNoRows {
-			version = 0
-		} else {
-			return fmt.Errorf("read migration version: %w", err)
+	version := 0
+	err = d.db.QueryRow(`SELECT version FROM migrations LIMIT 1`).Scan(&version)
+	if err == sql.ErrNoRows {
+		if _, err := d.db.Exec(`INSERT INTO migrations (version) VALUES (0)`); err != nil {
+			return fmt.Errorf("init migration version: %w", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("read migration version: %w", err)
 	}
 
-	if version < 1 {
-		if _, err := d.db.Exec(schemaV1); err != nil {
-			return fmt.Errorf("apply schema v1: %w", err)
+	steps := []func(*sql.Tx) error{
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV1)
+			return err
+		},
+		func(tx *sql.Tx) error {
+			if _, err := tx.Exec(schemaV2); err != nil {
+				return err
+			}
+			// Chat assignments become account bindings: one agent per account.
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO agent_accounts (account_key, agent_id)
+				SELECT CASE account_id WHEN ?1 THEN ?2 ELSE account_id END, MIN(agent_id)
+				FROM agent_chats GROUP BY account_id`, oldPrimaryKey, PrimaryAccountKey); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE agent_messages SET account_id = ? WHERE account_id = ?`,
+				PrimaryAccountKey, oldPrimaryKey); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`DROP TABLE agent_chats`)
+			return err
+		},
+	}
+	for v := version; v < currentDBVersion; v++ {
+		tx, err := d.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin schema v%d: %w", v+1, err)
+		}
+		if err := steps[v](tx); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("apply schema v%d: %w", v+1, err)
+		}
+		if _, err := tx.Exec(`UPDATE migrations SET version = ?`, v+1); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("record schema v%d: %w", v+1, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit schema v%d: %w", v+1, err)
 		}
 	}
-
-	if version == 0 {
-		_, err = d.db.Exec(`INSERT INTO migrations (version) VALUES (?)`, currentDBVersion)
-	} else if version < currentDBVersion {
-		_, err = d.db.Exec(`UPDATE migrations SET version = ?`, currentDBVersion)
-	}
-	return err
+	return nil
 }
+
+const schemaV2 = `
+ALTER TABLE agents ADD COLUMN model TEXT NOT NULL DEFAULT '';
+ALTER TABLE agents ADD COLUMN vision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_messages ADD COLUMN chat_title TEXT NOT NULL DEFAULT '';
+
+DELETE FROM agent_messages WHERE id NOT IN (
+	SELECT MIN(id) FROM agent_messages GROUP BY agent_id, account_id, chat_id, message_id
+);
+CREATE UNIQUE INDEX idx_agent_messages_unique
+	ON agent_messages(agent_id, account_id, chat_id, message_id);
+
+CREATE TABLE agent_accounts (
+	account_key TEXT PRIMARY KEY,
+	agent_id    INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE
+);
+`
 
 const schemaV1 = `
 CREATE TABLE IF NOT EXISTS providers (
@@ -221,7 +272,8 @@ func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 
 func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	rows, err := d.db.Query(
-		`SELECT id, name, prompt, autoreply, provider_id, retention_days, enabled FROM agents ORDER BY name`,
+		`SELECT id, name, prompt, autoreply, vision, provider_id, model, retention_days, enabled
+		 FROM agents ORDER BY name`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
@@ -230,7 +282,8 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	var out []AgentRecord
 	for rows.Next() {
 		var a AgentRecord
-		if err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.AutoReply, &a.ProviderID, &a.RetentionDays, &a.Enabled); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.Auto, &a.Vision, &a.ProviderID,
+			&a.Model, &a.RetentionDays, &a.Enabled); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		out = append(out, a)
@@ -240,8 +293,9 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 
 func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
 	res, err := d.db.Exec(
-		`INSERT INTO agents (name, prompt, autoreply, provider_id, retention_days, enabled) VALUES (?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Prompt, a.AutoReply, a.ProviderID, a.RetentionDays, a.Enabled,
+		`INSERT INTO agents (name, prompt, autoreply, vision, provider_id, model, retention_days, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Prompt, a.Auto, a.Vision, a.ProviderID, a.Model, a.RetentionDays, a.Enabled,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create agent: %w", err)
@@ -251,8 +305,9 @@ func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
 
 func (d *AgentDB) UpdateAgent(a AgentRecord) error {
 	_, err := d.db.Exec(
-		`UPDATE agents SET name = ?, prompt = ?, autoreply = ?, provider_id = ?, retention_days = ?, enabled = ? WHERE id = ?`,
-		a.Name, a.Prompt, a.AutoReply, a.ProviderID, a.RetentionDays, a.Enabled, a.ID,
+		`UPDATE agents SET name = ?, prompt = ?, autoreply = ?, vision = ?, provider_id = ?,
+		 model = ?, retention_days = ?, enabled = ? WHERE id = ?`,
+		a.Name, a.Prompt, a.Auto, a.Vision, a.ProviderID, a.Model, a.RetentionDays, a.Enabled, a.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update agent: %w", err)
@@ -305,43 +360,44 @@ func (d *AgentDB) SetAgentKnowledge(agentID int64, paths []string) error {
 	return tx.Commit()
 }
 
-// Agent chat assignments.
+// Account bindings. Each account answers to at most one agent.
 
-func (d *AgentDB) AgentChats(agentID int64) ([]AgentChatAssignment, error) {
-	rows, err := d.db.Query(
-		`SELECT backend_type, account_id, chat_id FROM agent_chats WHERE agent_id = ?`, agentID,
-	)
+// AccountAgents maps every bound account key to its agent.
+func (d *AgentDB) AccountAgents() (map[string]int64, error) {
+	rows, err := d.db.Query(`SELECT account_key, agent_id FROM agent_accounts`)
 	if err != nil {
-		return nil, fmt.Errorf("list agent chats: %w", err)
+		return nil, fmt.Errorf("list agent accounts: %w", err)
 	}
 	defer rows.Close()
-	var out []AgentChatAssignment
+	out := make(map[string]int64)
 	for rows.Next() {
-		var c AgentChatAssignment
-		if err := rows.Scan(&c.BackendType, &c.AccountID, &c.ChatID); err != nil {
-			return nil, fmt.Errorf("scan agent chat: %w", err)
+		var key string
+		var id int64
+		if err := rows.Scan(&key, &id); err != nil {
+			return nil, fmt.Errorf("scan agent account: %w", err)
 		}
-		out = append(out, c)
+		out[key] = id
 	}
 	return out, rows.Err()
 }
 
-func (d *AgentDB) SetAgentChats(agentID int64, chats []AgentChatAssignment) error {
+// SetAgentAccounts replaces the agent's bindings. A key bound to another agent
+// fails the whole change.
+func (d *AgentDB) SetAgentAccounts(agentID int64, keys []string) error {
 	tx, err := d.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin chats tx: %w", err)
+		return fmt.Errorf("begin accounts tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM agent_chats WHERE agent_id = ?`, agentID); err != nil {
-		return fmt.Errorf("clear agent chats: %w", err)
+	if _, err := tx.Exec(`DELETE FROM agent_accounts WHERE agent_id = ?`, agentID); err != nil {
+		return fmt.Errorf("clear agent accounts: %w", err)
 	}
-	for _, c := range chats {
+	for _, key := range keys {
 		if _, err := tx.Exec(
-			`INSERT INTO agent_chats (agent_id, backend_type, account_id, chat_id) VALUES (?, ?, ?, ?)`,
-			agentID, c.BackendType, c.AccountID, c.ChatID,
+			`INSERT INTO agent_accounts (account_key, agent_id) VALUES (?, ?)`, key, agentID,
 		); err != nil {
-			return fmt.Errorf("insert agent chat: %w", err)
+			return fmt.Errorf("account is already connected to another agent: %w", err)
 		}
 	}
 	return tx.Commit()
@@ -349,12 +405,16 @@ func (d *AgentDB) SetAgentChats(agentID int64, chats []AgentChatAssignment) erro
 
 // Message log.
 
-func (d *AgentDB) LogMessage(agentID int64, backendType, accountID, chatIDStr string, msg backend.Message, isAgentReply bool) error {
+// LogMessage records a DM message once; the backend's echo of an agent reply
+// only keeps the reply flag. chatTitle may be empty for outgoing messages.
+func (d *AgentDB) LogMessage(agentID int64, backendType, accountID, chatIDStr, chatTitle string, msg backend.Message, text string, isAgentReply bool) error {
 	_, err := d.db.Exec(
-		`INSERT INTO agent_messages (agent_id, backend_type, account_id, chat_id, message_id, sender, sender_id, text, timestamp, outgoing, is_agent_reply)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agentID, backendType, accountID, chatIDStr,
-		msg.ID, msg.Sender, msg.SenderID, msg.Text,
+		`INSERT INTO agent_messages (agent_id, backend_type, account_id, chat_id, chat_title, message_id, sender, sender_id, text, timestamp, outgoing, is_agent_reply)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (agent_id, account_id, chat_id, message_id) DO UPDATE SET
+		 	is_agent_reply = MAX(is_agent_reply, excluded.is_agent_reply)`,
+		agentID, backendType, accountID, chatIDStr, chatTitle,
+		msg.ID, msg.Sender, msg.SenderID, text,
 		msg.Timestamp.UTC().Format(time.RFC3339),
 		msg.Outgoing, isAgentReply,
 	)
@@ -369,7 +429,7 @@ func (d *AgentDB) ChatHistory(agentID int64, backendType, accountID, chatIDStr s
 		`SELECT message_id, sender, sender_id, text, timestamp, outgoing, is_agent_reply
 		 FROM agent_messages
 		 WHERE agent_id = ? AND backend_type = ? AND account_id = ? AND chat_id = ?
-		 ORDER BY timestamp DESC
+		 ORDER BY timestamp DESC, id DESC
 		 LIMIT ?`,
 		agentID, backendType, accountID, chatIDStr, limit,
 	)
@@ -394,9 +454,11 @@ func (d *AgentDB) ChatHistory(agentID int64, backendType, accountID, chatIDStr s
 	return out, rows.Err()
 }
 
-func (d *AgentDB) PurgeOldMessages(retentionDays int) (int64, error) {
+func (d *AgentDB) PurgeOldMessages(agentID int64, retentionDays int) (int64, error) {
 	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Format(time.RFC3339)
-	res, err := d.db.Exec(`DELETE FROM agent_messages WHERE created_at < ?`, cutoff)
+	res, err := d.db.Exec(
+		`DELETE FROM agent_messages WHERE agent_id = ? AND timestamp < ?`, agentID, cutoff,
+	)
 	if err != nil {
 		return 0, fmt.Errorf("purge old messages: %w", err)
 	}
@@ -409,14 +471,20 @@ type AgentThread struct {
 	BackendType  string
 	AccountID    string
 	ChatID       string
+	ChatTitle    string
 	LastAt       time.Time
 	MessageCount int
 }
 
 func (d *AgentDB) AgentThreads(agentID int64) ([]AgentThread, error) {
 	rows, err := d.db.Query(
-		`SELECT backend_type, account_id, chat_id, MAX(timestamp) as last_at, COUNT(*) as cnt
-		 FROM agent_messages
+		`SELECT backend_type, account_id, chat_id,
+		 	COALESCE((SELECT t.chat_title FROM agent_messages t
+		 		WHERE t.agent_id = m.agent_id AND t.account_id = m.account_id
+		 		AND t.chat_id = m.chat_id AND t.chat_title != ''
+		 		ORDER BY t.timestamp DESC LIMIT 1), ''),
+		 	MAX(timestamp) as last_at, COUNT(*) as cnt
+		 FROM agent_messages m
 		 WHERE agent_id = ?
 		 GROUP BY backend_type, account_id, chat_id
 		 ORDER BY last_at DESC`,
@@ -430,7 +498,7 @@ func (d *AgentDB) AgentThreads(agentID int64) ([]AgentThread, error) {
 	for rows.Next() {
 		var t AgentThread
 		var ts string
-		if err := rows.Scan(&t.BackendType, &t.AccountID, &t.ChatID, &ts, &t.MessageCount); err != nil {
+		if err := rows.Scan(&t.BackendType, &t.AccountID, &t.ChatID, &t.ChatTitle, &ts, &t.MessageCount); err != nil {
 			return nil, fmt.Errorf("scan agent thread: %w", err)
 		}
 		t.LastAt, _ = time.Parse(time.RFC3339, ts)
