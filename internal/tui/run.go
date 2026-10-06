@@ -90,7 +90,8 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			s = active.Snapshot()
 		}
 		if s.Backend != nil && s.Status == "online" {
-			err := runModes(s.Ctx, m, active, s.Backend, active.Histories)
+			var err error
+			active, err = runModes(ctx, s.Ctx, m, active, s.Backend, active.Histories)
 			if err == nil {
 				return nil
 			}
@@ -140,19 +141,21 @@ type accountSwitch struct{ to *account.Account }
 
 func (accountSwitch) Error() string { return "switch account" }
 
-func runModes(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string) error {
+// runModes returns the account active when the main screen exits; the user
+// can switch accounts without leaving it.
+func runModes(appCtx, ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string) (*account.Account, error) {
 	for {
 		entries, archiveUnread, err := b.Dialogs(ctx, false)
 		if err != nil {
 			if !backend.NetworkError(err) {
-				return err
+				return active, err
 			}
 			fmt.Fprintf(os.Stderr, "%s\n", textfmt.CleanError(err))
 			if err := backend.WaitFor(ctx, time.Second); err != nil {
-				return err
+				return active, err
 			}
 			continue
 		}
-		return tuiSelectChat(ctx, mgr, active, b, histories, entries, archiveUnread)
+		return tuiSelectChat(appCtx, ctx, mgr, active, b, histories, entries, archiveUnread)
 	}
 }
