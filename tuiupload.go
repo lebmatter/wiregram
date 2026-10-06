@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/filepicker"
 	"charm.land/bubbles/v2/key"
@@ -30,6 +31,7 @@ type uploadPanel struct {
 	kind    string
 	mime    string
 	lastDir string
+	matches []string // Tab completion candidates shown under the path
 }
 
 type pendingUpload struct {
@@ -110,7 +112,11 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 			return m, nil
 		case "enter":
 			return m.pickUpload(u.input.Value())
+		case "tab":
+			u.completePath()
+			return m, nil
 		}
+		u.matches = nil
 		u.input, cmd = u.input.Update(msg)
 		return m, cmd
 	}
@@ -134,6 +140,39 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 	}
 	u.input, cmd = u.input.Update(msg)
 	return m, cmd
+}
+
+// completePath extends the typed path by the longest common prefix of the
+// matching entries and lists them when more than one remains.
+func (u *uploadPanel) completePath() {
+	value := u.input.Value()
+	line := []rune(value)
+	candidates, _ := pathCompleter{}.Do(line, len(line))
+	u.matches = nil
+	if len(candidates) == 0 {
+		return
+	}
+	common := string(candidates[0])
+	for _, c := range candidates[1:] {
+		s := string(c)
+		for !strings.HasPrefix(s, common) {
+			_, size := utf8.DecodeLastRuneInString(common)
+			common = common[:len(common)-size]
+		}
+	}
+	if common != "" {
+		u.input.SetValue(value + common)
+		u.input.CursorEnd()
+	}
+	if len(candidates) > 1 {
+		typedBase := filepath.Base(expandHome(value))
+		if strings.HasSuffix(value, string(filepath.Separator)) || value == "" {
+			typedBase = ""
+		}
+		for _, c := range candidates {
+			u.matches = append(u.matches, typedBase+string(c))
+		}
+	}
 }
 
 // pickUpload validates the chosen file and moves on to the preview and caption.
@@ -170,6 +209,9 @@ func (m chatViewModel) uploadBody(width, height int) []string {
 	case uploadTyping:
 		lines = []string{heading, ""}
 		lines = append(lines, composerBox("Path", nil, "file › ", u.input, width, colorQuote)...)
+		for _, match := range u.matches {
+			lines = append(lines, "  "+styleSubtle.Render(match))
+		}
 	case uploadCaption:
 		card := []string{
 			styleTitle.Render(filepath.Base(u.path)),
@@ -190,7 +232,7 @@ func (m chatViewModel) uploadBody(width, height int) []string {
 func (m chatViewModel) uploadHelp() []helpKey {
 	switch m.upload.step {
 	case uploadTyping:
-		return []helpKey{{"⏎", "continue"}, {"esc", "back to browser"}}
+		return []helpKey{{"tab", "complete"}, {"⏎", "continue"}, {"esc", "back to browser"}}
 	case uploadCaption:
 		return []helpKey{{"⏎", "send"}, {"esc", "pick another file"}}
 	}
