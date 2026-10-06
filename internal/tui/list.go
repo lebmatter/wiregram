@@ -7,12 +7,20 @@ import (
 
 	"charm.land/bubbletea/v2"
 
+	"wiregram/internal/account"
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
 )
 
+// chatListModel is the sidebar tree: every account as a header, with the
+// active account expanded to its chats and the others collapsed above and
+// below it. Selection indexes run over the selectable rows in display order:
+// accounts above, chats, archive and search, accounts below, then "Manage
+// accounts…".
 type chatListModel struct {
 	ctx           context.Context
+	mgr           *account.AccountManager
+	active        *account.Account
 	b             backend.Backend
 	entries       []backend.ChatEntry
 	selected      int
@@ -30,6 +38,7 @@ type chatDeleteConfirm struct {
 }
 
 type chatListChoice struct{ index int }
+type chatListSwitch struct{ to *account.Account }
 type chatListRefresh struct{}
 type chatListAccounts struct{}
 type chatListSearch struct{}
@@ -38,10 +47,12 @@ type chatListQuit struct{}
 type chatListDeleteDone struct{ err error }
 type backendChanged struct{}
 
-func newChatListModel(ctx context.Context, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
+func newChatListModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
 	w, h := termSize()
-	return chatListModel{
+	m := chatListModel{
 		ctx:           ctx,
+		mgr:           mgr,
+		active:        active,
 		b:             b,
 		entries:       entries,
 		archived:      archived,
@@ -50,9 +61,39 @@ func newChatListModel(ctx context.Context, b backend.Backend, entries []backend.
 		width:         w,
 		height:        h,
 	}
+	m.selected = m.before()
+	return m
 }
 
-func (m chatListModel) maxIndex() int { return len(m.entries) + 2 }
+// others splits the accounts other than the active one into those listed
+// above and below it.
+func (m chatListModel) others() (above, below []*account.Account) {
+	if m.mgr == nil {
+		return nil, nil
+	}
+	for i, a := range m.mgr.Accounts {
+		if a == m.active {
+			return m.mgr.Accounts[:i], m.mgr.Accounts[i+1:]
+		}
+	}
+	return nil, m.mgr.Accounts
+}
+
+func (m chatListModel) before() int {
+	above, _ := m.others()
+	return len(above)
+}
+
+func (m chatListModel) maxIndex() int {
+	above, below := m.others()
+	return len(above) + len(m.entries) + 2 + len(below)
+}
+
+// chatIndex maps the selection to an entry, if a chat is selected.
+func (m chatListModel) chatIndex() (int, bool) {
+	i := m.selected - m.before()
+	return i, i >= 0 && i < len(m.entries)
+}
 
 func (m chatListModel) Init() tea.Cmd { return nil }
 
@@ -70,16 +111,17 @@ func (m chatListModel) refreshUnread() chatListModel {
 	return m
 }
 
-// row maps the selection to a display row; a separator sits between the
-// chats and the archive/search/accounts actions.
+// row maps a selection index to its display row. The active account's
+// header sits above its chats, and a separator below them.
 func (m chatListModel) row(index int) int {
-	if index < len(m.entries) {
+	before := m.before()
+	if index < before {
 		return index
 	}
-	if len(m.entries) == 0 {
-		return index + 2 // "No chats here" placeholder row
+	if index < before+len(m.entries) {
+		return index + 1
 	}
-	return index + 1
+	return index + 2 + max(0, 1-len(m.entries)) // "No chats here" placeholder
 }
 
 func (m chatListModel) scrolled() chatListModel {
@@ -132,25 +174,34 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 				m.selected++
 			}
 		case "alt+d", "alt+D":
-			if m.selected >= len(m.entries) || !m.caps.DeleteChat {
+			i, ok := m.chatIndex()
+			if !ok || !m.caps.DeleteChat {
 				return m, nil
 			}
-			entry := m.entries[m.selected]
+			entry := m.entries[i]
 			if !entry.IsDM {
 				return m, nil
 			}
 			m.confirm = &chatDeleteConfirm{entry: entry, revoke: false}
 		case "ctrl+alt+d":
-			if m.selected >= len(m.entries) || !m.caps.DeleteChat {
+			i, ok := m.chatIndex()
+			if !ok || !m.caps.DeleteChat {
 				return m, nil
 			}
-			entry := m.entries[m.selected]
+			entry := m.entries[i]
 			if !entry.IsDM || entry.IsSelf {
 				return m, nil
 			}
 			m.confirm = &chatDeleteConfirm{entry: entry, revoke: true}
 		case "enter":
+			above, below := m.others()
 			idx := m.selected
+			switch {
+			case idx < len(above):
+				to := above[idx]
+				return m, func() tea.Msg { return chatListSwitch{to} }
+			}
+			idx -= len(above)
 			switch {
 			case idx < len(m.entries):
 				return m, func() tea.Msg { return chatListChoice{idx} }
@@ -158,7 +209,10 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 				return m, func() tea.Msg { return chatListArchiveToggle{} }
 			case idx == len(m.entries)+1:
 				return m, func() tea.Msg { return chatListSearch{} }
-			case idx == len(m.entries)+2:
+			case idx-len(m.entries)-2 < len(below):
+				to := below[idx-len(m.entries)-2]
+				return m, func() tea.Msg { return chatListSwitch{to} }
+			default:
 				return m, func() tea.Msg { return chatListAccounts{} }
 			}
 		}
@@ -179,30 +233,77 @@ func (m chatListModel) title() string {
 	return "Chats"
 }
 
-// body renders the list rows for a width×height area.
+// accountRow is an account header in the tree: ▾ expanded, ▸ collapsed.
+func (m chatListModel) accountRow(a *account.Account, expanded, selected, focused bool, width int) string {
+	arrow := "▸ "
+	if expanded {
+		arrow = "▾ "
+	}
+	tag := accountShort(m.mgr, m.mgr.AccountKey(a))
+	label := textfmt.Plain(a.Label())
+	if _, rest, ok := strings.Cut(label, "] "); ok && strings.HasPrefix(label, "[") {
+		label = rest // the tag already names the backend
+	}
+	marker := "  "
+	if selected {
+		marker = "> "
+	}
+	text := marker + arrow + accountGlyph(a.Snapshot()) + " " + tag + " " + label
+	row := truncate(text, width)
+	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(row)))
+	switch {
+	case selected && focused:
+		return styleSelectedRow.Render(row)
+	case selected:
+		return styleTitle.Render(row)
+	case expanded:
+		return styleTitle.Foreground(colorAccent).Render(row)
+	}
+	return styleSubtle.Render(row)
+}
+
+// body renders the tree rows for a width×height area.
 func (m chatListModel) body(width, height int, focused bool) []string {
+	above, below := m.others()
 	var rows []string
-	for i, entry := range m.entries {
-		rows = append(rows, chatListLine(entry, i == m.selected, focused, width))
+	index := 0
+	for _, a := range above {
+		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
+		index++
+	}
+	if m.active != nil {
+		rows = append(rows, m.accountRow(m.active, true, false, focused, width))
+	}
+	for _, entry := range m.entries {
+		rows = append(rows, "    "+chatListLine(entry, index == m.selected, focused, max(1, width-4)))
+		index++
 	}
 	if len(m.entries) == 0 {
-		rows = append(rows, styleSubtle.Render("  No chats here"))
+		rows = append(rows, styleSubtle.Render("      No chats here"))
 	}
-	rows = append(rows, styleDim.Render(strings.Repeat("─", width)))
+	rows = append(rows, "    "+styleDim.Render(strings.Repeat("─", max(1, width-4))))
 
 	archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}
 	if m.archived {
 		archive = backend.ChatEntry{Title: "Back to chats"}
 	}
-	actions := []backend.ChatEntry{archive, {Title: "Search users…"}, {Title: "Accounts…"}}
-	for i, a := range actions {
-		index := len(m.entries) + i
-		line := chatListLine(a, index == m.selected, focused, width)
+	for _, a := range []backend.ChatEntry{archive, {Title: "Search users…"}} {
+		line := chatListLine(a, index == m.selected, focused, max(1, width-4))
 		if index != m.selected {
 			line = styleSubtle.Render(line)
 		}
-		rows = append(rows, line)
+		rows = append(rows, "    "+line)
+		index++
 	}
+	for _, a := range below {
+		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
+		index++
+	}
+	manage := chatListLine(backend.ChatEntry{Title: "Manage accounts…"}, index == m.selected, focused, width)
+	if index != m.selected {
+		manage = styleDim.Render(manage)
+	}
+	rows = append(rows, manage)
 	if m.offset < len(rows) {
 		rows = rows[m.offset:]
 	}
@@ -228,7 +329,7 @@ var chatListHelp = []helpKey{
 	{"↑↓", "select"},
 	{"⏎", "open"},
 	{"/", "search"},
-	{"a", "accounts"},
+	{"a", "manage accounts"},
 	{"r", "refresh"},
 	{"q", "quit"},
 }

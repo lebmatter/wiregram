@@ -33,7 +33,8 @@ Credentials are stored in the OS keyring by default (secret-tool on Linux,
 Keychain on macOS). Use --insecure to store them in plain JSON files instead.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
-The header lists every account; Alt+1..9 switches to that account.
+The sidebar lists every account with the active one expanded to its chats;
+Enter on another account, or Alt+1..9, switches to it.
 
 Keyboard shortcuts:
 
@@ -44,10 +45,10 @@ Keyboard shortcuts:
     ?                 Show all shortcuts
 
   Chat list
-    Up/k, Down/j     Select chat
-    Enter             Open chat
+    Up/k, Down/j     Select chat or account
+    Enter             Open chat, or switch to the selected account
     /                 Search users
-    a                 Switch accounts
+    a                 Manage accounts (add, sign in, retry)
     r                 Refresh chats
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)

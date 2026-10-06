@@ -60,13 +60,16 @@ These are project constraints, not suggestions:
 ## Display conventions
 
 - The UI is a BubbleTea TUI styled with lipgloss; shared colors, boxes,
-  header and footer live in `internal/tui/render.go`. Kitty graphics sequences are
+  footer and account tags live in `internal/tui/render.go`. Kitty graphics sequences are
   used only by the media viewer (mpv via `tea.Exec`).
 - Startup shows the `wiregramLogo` splash (`internal/tui/splash.go`) for about a second.
-- Inside an account: a one-line header (wordmark plus one chip per account:
-  status glyph, label, backend tag; Alt+N switches), the body, and a
+- There is no header bar. Inside an account the screen is the body and a
   `bubbles/help` footer with the notice on the right. Help hides keys the
   backend's `capabilities` rule out.
+- The chat mode sidebar is an account tree (`internal/tui/list.go`): every
+  account is a row (`▸`/`▾`, status glyph, `TG1` tag, label), the active one
+  expanded to its chats, archive and search. Enter on another account, or
+  Alt+N, switches to it. The agents mode sidebar lists the agents.
 - At `twoPaneWidth` (100) columns and wider the chat list is a sidebar beside
   the chat and Tab moves focus; narrower terminals show one pane at a time.
 - The root `tuiModel` owns the only `backend.Changed()` listener and drains

@@ -799,13 +799,12 @@ func (m agentModeModel) View() tea.View {
 }
 
 func (m agentModeModel) render() string {
-	header := renderThemedHeader(accountChips(m.mgr, nil), m.width, colorAgent, " wiregram · agents ")
 	notice := m.notice
 	if m.confirm != nil {
 		notice = m.confirmText
 	}
 	footer := renderThemedFooter(m.helpKeys(), m.fullHelp, notice, m.width, colorAgent)
-	bodyHeight := max(4, m.height-1-lipgloss.Height(footer))
+	bodyHeight := max(4, m.height-lipgloss.Height(footer))
 	var body string
 	switch {
 	case m.screen == scrWizard:
@@ -824,7 +823,7 @@ func (m agentModeModel) render() string {
 	default:
 		body = m.rightPane(m.width, bodyHeight)
 	}
-	return header + "\n" + body + "\n" + footer
+	return body + "\n" + footer
 }
 
 func (m agentModeModel) rightPane(width, height int) string {

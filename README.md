@@ -57,22 +57,40 @@ on demand into temporary files that are removed afterwards.
 
 ## Two modes
 
-Wiregram has two modes. Both share the header with one chip per account, and
-Alt+1..9 jumps to an account from either.
+Wiregram has two modes, each with a sidebar on the left: accounts in chat
+mode, agents in agents mode. Alt+1..9 jumps to an account from either.
 
 | | Chat mode | Agents mode |
 | --- | --- | --- |
 | Purpose | Read and write your chats yourself | Set up and supervise AI Chat Agents |
 | Open with | Default; pick an account | **Alt+A** from the chat list, or **Chat Agents…** in the account picker |
 | Highlight | Copper | Violet |
-| Leave with | `q` quits, `a` switches account | `Esc` returns to where you came from |
+| Sidebar | Accounts, active one expanded to its chats | Chat Agents |
+| Leave with | `q` quits | `Esc` returns to where you came from |
 
 ### Chat mode
 
-The everyday client: chat list, conversations, replies, threads, reactions,
-search, uploads, forwarding and media for every connected account. Terminals
-100 or more columns wide show the chat list beside the open chat; Tab moves
-between them.
+The everyday client: conversations, replies, threads, reactions, search,
+uploads, forwarding and media for every connected account.
+
+The sidebar is an account tree. Every account is a row with its status and
+tag (`TG1`, `WA2`…); the active account is expanded to its chats, and Enter on
+another account switches to it. Terminals 100 or more columns wide show the
+sidebar beside the open chat; Tab moves between them.
+
+```
+╭─ Chats ──────────────────╮
+│   ▸ ● TG1 Alice (+91…)   │
+│   ▾ ● WA2 Labeeb         │
+│     > Bob              2 │
+│       Carol              │
+│     ──────────────────── │
+│       Archived chats     │
+│       Search users…      │
+│   ▸ ○ MX3 @lab:matrix.org│
+│   Manage accounts…       │
+╰──────────────────────────╯
+```
 
 ### Agents mode
 

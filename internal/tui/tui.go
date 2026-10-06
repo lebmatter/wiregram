@@ -86,7 +86,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		width:         w,
 		height:        h,
 	}
-	m.list = newChatListModel(ctx, b, entries, false, archiveUnread)
+	m.list = newChatListModel(ctx, mgr, active, b, entries, false, archiveUnread)
 	return m.sized()
 }
 
@@ -103,7 +103,7 @@ func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen }
 func (m tuiModel) forwarding() bool { return m.chatOpen && m.searchOpen }
 
 func (m tuiModel) bodyHeight() int {
-	return max(4, m.height-1-lipgloss.Height(m.footer()))
+	return max(4, m.height-lipgloss.Height(m.footer()))
 }
 
 // sized pushes the current layout down to the list and chat models.
@@ -267,7 +267,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
-		chatListArchiveToggle, chatListSearch, chatListAccounts, chatListQuit,
+		chatListArchiveToggle, chatListSearch, chatListAccounts, chatListQuit, chatListSwitch,
 		chatListDeleteDone:
 		return true
 	}
@@ -349,7 +349,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		selected, offset := m.list.selected, m.list.offset
 		m.entries = msg.entries
 		m.archiveUnread = msg.archiveUnread
-		m.list = newChatListModel(m.ctx, m.b, msg.entries, m.archived, msg.archiveUnread)
+		m.list = newChatListModel(m.ctx, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
 		m.list.selected = min(selected, m.list.maxIndex())
 		m.list.offset = offset
 		return m, nil
@@ -368,7 +368,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case chatListArchiveToggle:
 		m = m.closeChat()
 		m.archived = !m.archived
-		m.list.selected, m.list.offset = 0, 0
+		m.list.selected, m.list.offset = m.list.before(), 0
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 
 	case chatListSearch:
@@ -382,6 +382,10 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case chatListAccounts:
 		m = m.closeChat()
 		return m.done(tuiResult{accounts: true})
+
+	case chatListSwitch:
+		m = m.closeChat()
+		return m.done(tuiResult{switchTo: msg.to})
 
 	case chatListQuit:
 		m = m.closeChat()
@@ -465,8 +469,7 @@ func (m tuiModel) render() string {
 		body = renderBox(m.list.title(), m.list.body(m.width-4, bodyHeight-2, true),
 			m.width, bodyHeight, colorAccent)
 	}
-	header := renderHeader(accountChips(m.mgr, m.active), m.width)
-	return header + "\n" + body + "\n" + m.footer()
+	return body + "\n" + m.footer()
 }
 
 func (m tuiModel) emptyPane(width, height int) string {

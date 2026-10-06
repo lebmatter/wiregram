@@ -125,13 +125,6 @@ func renderThemedFooter(keys []helpKey, full bool, notice string, width int, acc
 	return left + strings.Repeat(" ", gap) + styleNotice.Render(notice)
 }
 
-type accountChip struct {
-	label   string
-	backend string
-	glyph   string
-	active  bool
-}
-
 func backendTag(backendType string) string {
 	switch backendType {
 	case "telegram":
@@ -158,44 +151,9 @@ func accountGlyph(s account.AccountState) string {
 	return styleDim.Render("○")
 }
 
-func accountChips(mgr *account.AccountManager, active *account.Account) []accountChip {
-	if mgr == nil {
-		return nil
-	}
-	chips := make([]accountChip, 0, len(mgr.Accounts))
-	for _, a := range mgr.Accounts {
-		chips = append(chips, accountChip{
-			label:   textfmt.Plain(a.Label()),
-			backend: backendTag(a.BackendType),
-			glyph:   accountGlyph(a.Snapshot()),
-			active:  a == active,
-		})
-	}
-	return chips
-}
-
-// renderHeader is the one-line bar shown on every screen inside an account.
-// Chips are numbered to match the Alt+N account shortcuts.
-func renderHeader(chips []accountChip, width int) string {
-	return renderThemedHeader(chips, width, colorAccent, " wiregram ")
-}
-
-func renderThemedHeader(chips []accountChip, width int, accent color.Color, wordmark string) string {
-	parts := []string{lipgloss.NewStyle().Bold(true).Foreground(accent).Render(wordmark)}
-	for i, c := range chips {
-		label := truncate(c.label, 20)
-		if c.active {
-			label = styleTitle.Foreground(accent).Render(label)
-		} else {
-			label = styleSubtle.Render(label)
-		}
-		n := ""
-		if len(chips) > 1 && i < 9 {
-			n = styleDim.Render(fmt.Sprintf("%d ", i+1))
-		}
-		parts = append(parts, n+c.glyph+" "+label+" "+styleDim.Render(c.backend))
-	}
-	return textfmt.ClipLine(strings.Join(parts, "   "), width) + "\x1b[0m"
+// renderHeader is the wordmark line on the screens outside an account.
+func renderHeader(width int) string {
+	return textfmt.ClipLine(styleBrand.Render(" wiregram "), width) + "\x1b[0m"
 }
 
 // renderBox draws a rounded box exactly width×height cells with the title in

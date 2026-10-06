@@ -179,7 +179,7 @@ func (m accountListModel) View() tea.View {
 	if m.selected < len(m.accounts) {
 		notice = m.accounts[m.selected].Snapshot().Notice
 	}
-	content := renderHeader(nil, m.width) + "\n" +
+	content := renderHeader(m.width) + "\n" +
 		renderBox("Accounts", rows, m.width, bodyHeight, colorAccent) + "\n" +
 		renderFooter(accountListHelp, false, notice, m.width)
 	v := tea.NewView(content)
@@ -331,7 +331,7 @@ func (m addAccountModel) View() tea.View {
 		rows = append(rows, composerBox(title, nil, "› ", *m.prompt, min(inner, 60), colorAccent)...)
 	}
 	help := []helpKey{{"↑↓", "select"}, {"⏎", "confirm"}, {"esc", "cancel"}}
-	content := renderHeader(nil, m.width) + "\n" +
+	content := renderHeader(m.width) + "\n" +
 		renderBox("Add account", rows, m.width, bodyHeight, colorAccent) + "\n" +
 		renderFooter(help, false, "", m.width)
 	v := tea.NewView(content)
@@ -502,7 +502,7 @@ func (m loginModel) View() tea.View {
 	if m.notice != "" {
 		rows = append(rows, "", styleError.Render(textfmt.Plain(m.notice)))
 	}
-	content := renderHeader(nil, m.width) + "\n" +
+	content := renderHeader(m.width) + "\n" +
 		renderBox("Sign in — "+m.label, rows, m.width, bodyHeight, colorAccent) + "\n" +
 		renderFooter([]helpKey{{"⏎", "submit"}, {"esc", "cancel"}}, false, "", m.width)
 	v := tea.NewView(content)
