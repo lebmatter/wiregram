@@ -55,14 +55,33 @@ Text chat needs nothing extra. To open attachments, install `mpv`; to view
 images and video, run Wiregram inside the Kitty terminal. Attachments download
 on demand into temporary files that are removed afterwards.
 
-## Chat Agents
+## Two modes
+
+Wiregram has two modes. Both share the header with one chip per account, and
+Alt+1..9 jumps to an account from either.
+
+| | Chat mode | Agents mode |
+| --- | --- | --- |
+| Purpose | Read and write your chats yourself | Set up and supervise AI Chat Agents |
+| Open with | Default; pick an account | **Alt+A** from the chat list, or **Chat Agents…** in the account picker |
+| Highlight | Copper | Violet |
+| Leave with | `q` quits, `a` switches account | `Esc` returns to where you came from |
+
+### Chat mode
+
+The everyday client: chat list, conversations, replies, threads, reactions,
+search, uploads, forwarding and media for every connected account. Terminals
+100 or more columns wide show the chat list beside the open chat; Tab moves
+between them.
+
+### Agents mode
 
 Optional and off by default. Chat Agents are AI bots that answer **incoming
 private messages** on the accounts you connect to them. They never reply in
-groups or channels and never start a conversation.
+groups or channels and never start a conversation. They keep running in the
+background while you are in chat mode.
 
-Press **Alt+A** (or pick **Chat Agents…** in the account picker) to open agent
-mode, then:
+In agents mode:
 
 1. Connect an OpenAI-compatible provider (OpenRouter, OpenAI, a local Ollama,
    or any other). The API key is read from an environment variable and never
@@ -78,6 +97,16 @@ press `y` to send the drafted reply or `n` to discard it. Agent configuration
 and conversation history are stored in `wiregram.db`. Conversations, knowledge
 files and (for vision agents) incoming photos are sent to the configured
 provider.
+
+| Key | Agents mode |
+| --- | --- |
+| `n` / `e` / `d` | New, edit, delete agent |
+| `c` | Connect accounts |
+| `Space` | Pause or resume agent |
+| `p` | AI providers |
+| `Enter` | Show conversations, open one |
+| `y` / `n` | Send or discard a suggested reply |
+| `Esc` | Back, then out to chat mode |
 
 ## Development
 
