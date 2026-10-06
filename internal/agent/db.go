@@ -11,7 +11,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 2
+const currentDBVersion = 3
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -31,13 +31,23 @@ type AgentRecord struct {
 	ID            int64
 	Name          string
 	Prompt        string
-	Auto          bool // send replies directly instead of suggesting them
-	Vision        bool // pass incoming photos to the model
+	Auto          bool   // send replies directly instead of suggesting them
+	Media         string // MediaText, MediaTags or MediaVision
 	ProviderID    int64
 	Model         string
 	RetentionDays int
 	Enabled       bool
 }
+
+// What an agent receives of media messages.
+const (
+	MediaText   = "text"   // only plain text messages reach the agent
+	MediaTags   = "tags"   // media arrive as their bracket tag plus caption
+	MediaVision = "vision" // as tags, and incoming photos go to the model
+)
+
+func (a AgentRecord) TextOnly() bool { return a.Media == MediaText }
+func (a AgentRecord) Vision() bool   { return a.Media == MediaVision }
 
 type AgentLoggedMessage struct {
 	MessageID    string
@@ -112,6 +122,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(`DROP TABLE agent_chats`)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV3)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -132,6 +146,13 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV3 replaces the vision flag with a media mode; the old column stays,
+// unused, because SQLite cannot drop it cheaply.
+const schemaV3 = `
+ALTER TABLE agents ADD COLUMN media TEXT NOT NULL DEFAULT 'tags';
+UPDATE agents SET media = 'vision' WHERE vision = 1;
+`
 
 const schemaV2 = `
 ALTER TABLE agents ADD COLUMN model TEXT NOT NULL DEFAULT '';
@@ -272,7 +293,7 @@ func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 
 func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	rows, err := d.db.Query(
-		`SELECT id, name, prompt, autoreply, vision, provider_id, model, retention_days, enabled
+		`SELECT id, name, prompt, autoreply, media, provider_id, model, retention_days, enabled
 		 FROM agents ORDER BY name`,
 	)
 	if err != nil {
@@ -282,7 +303,7 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	var out []AgentRecord
 	for rows.Next() {
 		var a AgentRecord
-		if err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.Auto, &a.Vision, &a.ProviderID,
+		if err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.Auto, &a.Media, &a.ProviderID,
 			&a.Model, &a.RetentionDays, &a.Enabled); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
@@ -293,9 +314,9 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 
 func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
 	res, err := d.db.Exec(
-		`INSERT INTO agents (name, prompt, autoreply, vision, provider_id, model, retention_days, enabled)
+		`INSERT INTO agents (name, prompt, autoreply, media, provider_id, model, retention_days, enabled)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Prompt, a.Auto, a.Vision, a.ProviderID, a.Model, a.RetentionDays, a.Enabled,
+		a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays, a.Enabled,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create agent: %w", err)
@@ -305,9 +326,9 @@ func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
 
 func (d *AgentDB) UpdateAgent(a AgentRecord) error {
 	_, err := d.db.Exec(
-		`UPDATE agents SET name = ?, prompt = ?, autoreply = ?, vision = ?, provider_id = ?,
+		`UPDATE agents SET name = ?, prompt = ?, autoreply = ?, media = ?, provider_id = ?,
 		 model = ?, retention_days = ?, enabled = ? WHERE id = ?`,
-		a.Name, a.Prompt, a.Auto, a.Vision, a.ProviderID, a.Model, a.RetentionDays, a.Enabled, a.ID,
+		a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays, a.Enabled, a.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update agent: %w", err)

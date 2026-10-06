@@ -35,16 +35,13 @@ type WaBackend struct {
 	PushName  string
 
 	mu          sync.Mutex
-	subscribed  types.JID
-	pending     []waEvent
-	changed     chan struct{}
 	typing      map[types.JID]time.Time
 	unreads     map[types.JID]int
 	chatCache   []waChatEntry
 	msgCache    map[types.JID][]backend.Message
 	userCache   map[types.JID]string
 	recentEmoji []string
-	subs        backend.SubscriberSet
+	events      backend.Bus
 
 	configDir string
 }
@@ -57,17 +54,8 @@ type waChatEntry struct {
 	isGroup bool
 }
 
-type waEvent struct {
-	kind     string // "message", "edit", "delete", "reaction"
-	msg      backend.Message
-	editID   string
-	targetID string
-	reaction backend.GenericReactionUpdate
-}
-
 func NewWABackend(configDir string) *WaBackend {
 	return &WaBackend{
-		changed:   make(chan struct{}, 1),
 		typing:    make(map[types.JID]time.Time),
 		unreads:   make(map[types.JID]int),
 		chatCache: nil,
@@ -257,52 +245,27 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 
 	wa.mu.Lock()
 	wa.touchChat(chatJID, evt.Info.Timestamp)
-
-	if evt.IsEdit {
-		if wa.subscribed == chatJID {
-			wa.pending = append(wa.pending, waEvent{
-				kind:   "edit",
-				msg:    msg,
-				editID: getEditTargetID(evt),
-			})
-			wa.doNotify()
-		}
-		wa.mu.Unlock()
-		wa.subs.Broadcast(backend.BackendEvent{Kind: "edit", Chat: chat, Message: &msg})
-		return
-	}
-
-	if evt.Message.GetReactionMessage() != nil {
-		reaction := evt.Message.GetReactionMessage()
-		targetID := reaction.GetKey().GetID()
-		emoji := reaction.GetText()
-		if wa.subscribed == chatJID {
-			wa.pending = append(wa.pending, waEvent{
-				kind: "reaction",
-				reaction: backend.GenericReactionUpdate{
-					MessageID: targetID,
-				},
-			})
-			wa.doNotify()
-		}
-		_ = emoji
-		wa.mu.Unlock()
-		return
-	}
-
-	if !evt.Info.IsFromMe {
+	reaction := evt.Message.GetReactionMessage()
+	if !evt.IsEdit && reaction == nil && !evt.Info.IsFromMe {
 		wa.unreads[chatJID]++
 	}
-
-	if wa.subscribed == chatJID {
-		wa.pending = append(wa.pending, waEvent{kind: "message", msg: msg})
-		wa.doNotify()
-	}
+	// Person-to-person only: not groups, broadcasts or the own number.
+	dm := (chatJID.Server == types.DefaultUserServer || chatJID.Server == types.HiddenUserServer) &&
+		chatJID.User != wa.Jid.User
 	wa.mu.Unlock()
 
-	wa.subs.Broadcast(backend.BackendEvent{
-		Kind: "message", Chat: chat, DM: chatJID.Server == types.DefaultUserServer, Message: &msg,
-	})
+	switch {
+	case evt.IsEdit:
+		msg.ID = getEditTargetID(evt)
+		wa.events.Publish(backend.Event{Kind: backend.EventEdit, Chat: chat, DM: dm, Message: &msg})
+	case reaction != nil:
+		wa.events.Publish(backend.Event{
+			Kind: backend.EventReaction, Chat: chat,
+			Reaction: &backend.GenericReactionUpdate{MessageID: reaction.GetKey().GetID()},
+		})
+	default:
+		wa.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chat, DM: dm, Message: &msg})
+	}
 }
 
 func getEditTargetID(evt *events.Message) string {
@@ -330,7 +293,9 @@ func (wa *WaBackend) handleReceipt(evt *events.Receipt) {
 		wa.mu.Lock()
 		wa.unreads[chatJID] = 0
 		wa.mu.Unlock()
-		wa.notify()
+		wa.events.Publish(backend.Event{
+			Kind: backend.EventUnread, Chat: backend.ChatID{Backend: "whatsapp", Id: chatJID.String()},
+		})
 	}
 }
 
@@ -341,11 +306,10 @@ func (wa *WaBackend) handlePresence(evt *events.ChatPresence) {
 	} else {
 		delete(wa.typing, evt.Sender)
 	}
-	sub := wa.subscribed
 	wa.mu.Unlock()
-	if evt.Chat == sub {
-		wa.notify()
-	}
+	wa.events.Publish(backend.Event{
+		Kind: backend.EventTyping, Chat: backend.ChatID{Backend: "whatsapp", Id: evt.Chat.String()},
+	})
 }
 
 func (wa *WaBackend) handleHistorySync(evt *events.HistorySync) {
@@ -900,58 +864,12 @@ func (wa *WaBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 	return nil, fmt.Errorf("search is not available for WhatsApp")
 }
 
-// Subscribe/Unsubscribe.
+// Real-time events.
 
-func (wa *WaBackend) Subscribe(ch backend.ChatEntry) {
-	jid, err := wa.chatJID(ch)
-	if err != nil {
-		return
-	}
-	wa.mu.Lock()
-	wa.subscribed = jid
-	wa.pending = nil
-	wa.mu.Unlock()
-}
+// SetActive is a no-op: WhatsApp keeps no per-open-chat state.
+func (wa *WaBackend) SetActive(backend.ChatEntry) {}
 
-func (wa *WaBackend) Unsubscribe() {
-	wa.mu.Lock()
-	wa.subscribed = types.EmptyJID
-	wa.pending = nil
-	wa.mu.Unlock()
-}
-
-func (wa *WaBackend) Drain() ([]backend.Message, []backend.GenericReactionUpdate, []string) {
-	wa.mu.Lock()
-	events := wa.pending
-	wa.pending = nil
-	wa.mu.Unlock()
-	var msgs []backend.Message
-	var reactions []backend.GenericReactionUpdate
-	var deletions []string
-	for _, e := range events {
-		switch e.kind {
-		case "message":
-			msgs = append(msgs, e.msg)
-		case "edit":
-			msgs = append(msgs, e.msg)
-		case "delete":
-			deletions = append(deletions, e.targetID)
-		case "reaction":
-			reactions = append(reactions, e.reaction)
-		}
-	}
-	return msgs, reactions, deletions
-}
-
-func (wa *WaBackend) Changed() <-chan struct{} { return wa.changed }
-
-func (wa *WaBackend) AddSubscriber(id string, filter func(backend.ChatID) bool, bufSize int) <-chan backend.BackendEvent {
-	return wa.subs.Add(id, filter, bufSize)
-}
-
-func (wa *WaBackend) RemoveSubscriber(id string) {
-	wa.subs.Remove(id)
-}
+func (wa *WaBackend) Events() *backend.Bus { return &wa.events }
 
 func (wa *WaBackend) IsTyping() bool {
 	wa.mu.Lock()
@@ -1201,20 +1119,6 @@ func (wa *WaBackend) chatJID(ch backend.ChatEntry) (types.JID, error) {
 		return types.EmptyJID, fmt.Errorf("parse chat JID: %w", err)
 	}
 	return jid, nil
-}
-
-func (wa *WaBackend) notify() {
-	select {
-	case wa.changed <- struct{}{}:
-	default:
-	}
-}
-
-func (wa *WaBackend) doNotify() {
-	select {
-	case wa.changed <- struct{}{}:
-	default:
-	}
 }
 
 func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message {

@@ -325,42 +325,17 @@ func (tb *TelegramBackend) SearchMessages(ctx context.Context, ch backend.ChatEn
 	return tgMessagesToMessages(tb.C, msgs), nil
 }
 
-func (tb *TelegramBackend) Subscribe(ch backend.ChatEntry) {
-	tb.C.subscribe(entryToChat(ch).key)
-}
-
-func (tb *TelegramBackend) Unsubscribe() {
-	tb.C.subscribe(peerKey{})
-}
-
-func (tb *TelegramBackend) Drain() ([]backend.Message, []backend.GenericReactionUpdate, []string) {
-	msgs, reactions, deletions := tb.C.drain()
-	genMsgs := tgMessagesToMessages(tb.C, msgs)
-	genReactions := make([]backend.GenericReactionUpdate, len(reactions))
-	for i, r := range reactions {
-		genReactions[i] = backend.GenericReactionUpdate{
-			MessageID: strconv.Itoa(r.messageID),
-			Reactions: tgReactionsToMessageReactions(r.reactions),
-		}
+func (tb *TelegramBackend) SetActive(ch backend.ChatEntry) {
+	if ch.ID == (backend.ChatID{}) {
+		tb.C.setActive(peerKey{})
+		return
 	}
-	genDeletions := make([]string, len(deletions))
-	for i, id := range deletions {
-		genDeletions[i] = strconv.Itoa(id)
-	}
-	return genMsgs, genReactions, genDeletions
+	tb.C.setActive(entryToChat(ch).key)
 }
 
-func (tb *TelegramBackend) Changed() <-chan struct{} { return tb.C.changed }
-func (tb *TelegramBackend) IsTyping() bool           { return tb.C.isTyping() }
-func (tb *TelegramBackend) ClearTyping()             { tb.C.clearTyping() }
-
-func (tb *TelegramBackend) AddSubscriber(id string, filter func(backend.ChatID) bool, bufSize int) <-chan backend.BackendEvent {
-	return tb.C.subs.Add(id, filter, bufSize)
-}
-
-func (tb *TelegramBackend) RemoveSubscriber(id string) {
-	tb.C.subs.Remove(id)
-}
+func (tb *TelegramBackend) Events() *backend.Bus { return &tb.C.events }
+func (tb *TelegramBackend) IsTyping() bool       { return tb.C.isTyping() }
+func (tb *TelegramBackend) ClearTyping()         { tb.C.clearTyping() }
 
 func (tb *TelegramBackend) ReadMarker(ch backend.ChatEntry, msg backend.Message) string {
 	m, ok := msg.Raw.(*tg.Message)

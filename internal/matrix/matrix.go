@@ -34,8 +34,6 @@ type MxBackend struct {
 
 	mu           sync.Mutex
 	subscribed   string
-	pending      []mxPendingEvent
-	changed      chan struct{}
 	typing       map[string]time.Time
 	unreads      map[string]int
 	rooms        map[string]*mxRoom
@@ -44,7 +42,7 @@ type MxBackend struct {
 	ownReactions map[string]string // "eventID\x00emoji" → reaction event ID
 	recentEmoji  []string
 
-	subs backend.SubscriberSet
+	events backend.Bus
 
 	client     *http.Client
 	syncCancel context.CancelFunc
@@ -57,13 +55,6 @@ type mxRoom struct {
 	lastAt        time.Time
 	prevBatch     string
 	paginationEnd string
-}
-
-type mxPendingEvent struct {
-	kind    string // "message", "edit", "redact", "reaction"
-	event   mxTimelineEvent
-	editID  string // original event ID for edits
-	targets string // target event ID for redactions/reactions
 }
 
 // Sync response types.
@@ -121,7 +112,6 @@ type mxMessagesResponse struct {
 func NewMXBackend(homeserver string) *MxBackend {
 	return &MxBackend{
 		Homeserver:   strings.TrimRight(homeserver, "/"),
-		changed:      make(chan struct{}, 1),
 		typing:       make(map[string]time.Time),
 		unreads:      make(map[string]int),
 		rooms:        make(map[string]*mxRoom),
@@ -490,6 +480,7 @@ func (mx *MxBackend) processStateEvent(roomID string, ev mxTimelineEvent) {
 }
 
 func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, subscribed string) {
+	chat := backend.ChatID{Backend: "matrix", Id: roomID}
 	switch ev.Type {
 	case "m.room.message":
 		relatesTo := mxRelatesTo(ev.Content)
@@ -497,57 +488,37 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			relType, _ := relatesTo["rel_type"].(string)
 			if relType == "m.replace" {
 				targetID, _ := relatesTo["event_id"].(string)
-				if roomID == subscribed && targetID != "" {
-					mx.mu.Lock()
-					mx.pending = append(mx.pending, mxPendingEvent{
-						kind: "edit", event: ev, editID: targetID,
-					})
-					mx.mu.Unlock()
-					mx.notify()
+				if targetID == "" {
+					return
 				}
-				if targetID != "" {
-					msg := mx.eventToMessage(ev)
-					msg.ID = targetID
-					if newContent, ok := ev.Content["m.new_content"].(map[string]any); ok {
-						if body, ok := newContent["body"].(string); ok {
-							msg.Text = body
-						}
+				msg := mx.eventToMessage(ev)
+				msg.ID = targetID
+				if newContent, ok := ev.Content["m.new_content"].(map[string]any); ok {
+					if body, ok := newContent["body"].(string); ok {
+						msg.Text = body
 					}
-					msg.EditDate = int(ev.OriginServerTS / 1000)
-					mx.subs.Broadcast(backend.BackendEvent{Kind: "edit", Chat: backend.ChatID{Backend: "matrix", Id: roomID}, Message: &msg})
 				}
+				msg.EditDate = int(ev.OriginServerTS / 1000)
+				mx.events.Publish(backend.Event{
+					Kind: backend.EventEdit, Chat: chat, DM: mx.isDirect(roomID), Message: &msg,
+				})
 				return
 			}
 		}
-		if roomID == subscribed {
-			mx.mu.Lock()
-			mx.pending = append(mx.pending, mxPendingEvent{kind: "message", event: ev})
-			mx.mu.Unlock()
-			mx.notify()
-		} else if ev.Sender != mx.UserID {
+		if roomID != subscribed && ev.Sender != mx.UserID {
 			mx.mu.Lock()
 			mx.unreads[roomID]++
 			mx.mu.Unlock()
-			mx.notify()
 		}
 		msg := mx.eventToMessage(ev)
-		mx.subs.Broadcast(backend.BackendEvent{
-			Kind: "message", Chat: backend.ChatID{Backend: "matrix", Id: roomID},
-			DM: mx.isDirect(roomID), Message: &msg,
+		mx.events.Publish(backend.Event{
+			Kind: backend.EventMessage, Chat: chat, DM: mx.isDirect(roomID), Message: &msg,
 		})
 
 	case "m.room.encrypted":
-		if roomID == subscribed {
-			mx.mu.Lock()
-			mx.pending = append(mx.pending, mxPendingEvent{kind: "message", event: ev})
-			mx.mu.Unlock()
-			mx.notify()
-		}
+		// Never marked DM: agents cannot read encrypted content.
 		msg := mx.eventToMessage(ev)
-		mx.subs.Broadcast(backend.BackendEvent{
-			Kind: "message", Chat: backend.ChatID{Backend: "matrix", Id: roomID},
-			DM: mx.isDirect(roomID), Message: &msg,
-		})
+		mx.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chat, Message: &msg})
 
 	case "m.room.redaction":
 		targetID := ev.Redacts
@@ -556,13 +527,10 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 				targetID = tid
 			}
 		}
-		if roomID == subscribed && targetID != "" {
-			mx.mu.Lock()
-			mx.pending = append(mx.pending, mxPendingEvent{
-				kind: "redact", event: ev, targets: targetID,
+		if targetID != "" {
+			mx.events.Publish(backend.Event{
+				Kind: backend.EventDelete, Chat: chat, Deleted: []string{targetID},
 			})
-			mx.mu.Unlock()
-			mx.notify()
 		}
 
 	case "m.reaction":
@@ -580,34 +548,33 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			mx.ownReactions[targetID+"\x00"+emoji] = ev.EventID
 			mx.mu.Unlock()
 		}
-		if roomID == subscribed {
-			mx.mu.Lock()
-			mx.pending = append(mx.pending, mxPendingEvent{
-				kind: "reaction", event: ev, targets: targetID,
-			})
-			mx.mu.Unlock()
-			mx.notify()
-		}
+		// Matrix has no reaction aggregation here, so this only tells the UI
+		// which message changed.
+		mx.events.Publish(backend.Event{
+			Kind: backend.EventReaction, Chat: chat,
+			Reaction: &backend.GenericReactionUpdate{MessageID: targetID},
+		})
 	}
 }
 
 func (mx *MxBackend) processTypingEvent(roomID string, ev mxTimelineEvent, subscribed string) {
-	if roomID != subscribed {
-		return
-	}
 	userIDs, ok := ev.Content["user_ids"].([]any)
 	if !ok {
 		return
 	}
-	mx.mu.Lock()
-	mx.typing = make(map[string]time.Time)
-	for _, uid := range userIDs {
-		if s, ok := uid.(string); ok && s != mx.UserID {
-			mx.typing[s] = time.Now()
+	if roomID == subscribed {
+		mx.mu.Lock()
+		mx.typing = make(map[string]time.Time)
+		for _, uid := range userIDs {
+			if s, ok := uid.(string); ok && s != mx.UserID {
+				mx.typing[s] = time.Now()
+			}
 		}
+		mx.mu.Unlock()
 	}
-	mx.mu.Unlock()
-	mx.notify()
+	mx.events.Publish(backend.Event{
+		Kind: backend.EventTyping, Chat: backend.ChatID{Backend: "matrix", Id: roomID},
+	})
 }
 
 func (mx *MxBackend) loadSyncToken() {
@@ -1221,69 +1188,15 @@ func (mx *MxBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 	return messages, nil
 }
 
-// Subscribe / Unsubscribe / Drain / Changed.
+// Real-time events.
 
-func (mx *MxBackend) Subscribe(ch backend.ChatEntry) {
+func (mx *MxBackend) SetActive(ch backend.ChatEntry) {
 	mx.mu.Lock()
 	mx.subscribed = ch.ID.Id
-	mx.pending = nil
 	mx.mu.Unlock()
 }
 
-func (mx *MxBackend) Unsubscribe() {
-	mx.mu.Lock()
-	mx.subscribed = ""
-	mx.pending = nil
-	mx.mu.Unlock()
-}
-
-func (mx *MxBackend) Drain() ([]backend.Message, []backend.GenericReactionUpdate, []string) {
-	mx.mu.Lock()
-	events := mx.pending
-	mx.pending = nil
-	mx.mu.Unlock()
-
-	var messages []backend.Message
-	var reactions []backend.GenericReactionUpdate
-	var deletions []string
-
-	for _, ev := range events {
-		switch ev.kind {
-		case "message":
-			messages = append(messages, mx.eventToMessage(ev.event))
-		case "edit":
-			msg := mx.eventToMessage(ev.event)
-			msg.ID = ev.editID
-			// Extract new content.
-			if newContent, ok := ev.event.Content["m.new_content"].(map[string]any); ok {
-				if body, ok := newContent["body"].(string); ok {
-					msg.Text = body
-				}
-			}
-			msg.EditDate = int(ev.event.OriginServerTS / 1000)
-			messages = append(messages, msg)
-		case "redact":
-			deletions = append(deletions, ev.targets)
-		case "reaction":
-			// We don't have full reaction aggregation from server, so just notify
-			// the UI that reactions changed on the target message.
-			reactions = append(reactions, backend.GenericReactionUpdate{
-				MessageID: ev.targets,
-			})
-		}
-	}
-	return messages, reactions, deletions
-}
-
-func (mx *MxBackend) Changed() <-chan struct{} { return mx.changed }
-
-func (mx *MxBackend) AddSubscriber(id string, filter func(backend.ChatID) bool, bufSize int) <-chan backend.BackendEvent {
-	return mx.subs.Add(id, filter, bufSize)
-}
-
-func (mx *MxBackend) RemoveSubscriber(id string) {
-	mx.subs.Remove(id)
-}
+func (mx *MxBackend) Events() *backend.Bus { return &mx.events }
 
 func (mx *MxBackend) IsTyping() bool {
 	mx.mu.Lock()
@@ -1605,15 +1518,6 @@ func (mx *MxBackend) EmojiChoices(query string) []backend.EmojiOption {
 
 func (mx *MxBackend) ReactionChoices(query string) []backend.EmojiOption {
 	return mx.EmojiChoices(query)
-}
-
-// Notify helper.
-
-func (mx *MxBackend) notify() {
-	select {
-	case mx.changed <- struct{}{}:
-	default:
-	}
 }
 
 // Content helpers.

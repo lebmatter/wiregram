@@ -72,8 +72,8 @@ These are project constraints, not suggestions:
   Alt+N, switches to it. The agents mode sidebar lists the agents.
 - At `twoPaneWidth` (100) columns and wider the chat list is a sidebar beside
   the chat and Tab moves focus; narrower terminals show one pane at a time.
-- The root `tuiModel` owns the only `backend.Changed()` listener and drains
-  into the open chat, so the list and chat never race for update signals.
+- The root `tuiModel` owns the screen's only bus subscription and routes
+  events for the open chat into it, so the list and chat never race.
 - `>` marks the selected row in lists and the selected message in a chat.
 - Messages render as `[HH:MM] <sender> text` with a fixed-width nick column;
   the user is always `you`. A reply puts `┃ sender: excerpt` on the header
@@ -123,7 +123,15 @@ lowest package that needs them rather than importing sideways.
 
 - BubbleTea owns stdin. All UI state lives in the models and is touched only
   by `Update`; background work returns as `tea.Msg` values from commands.
-- Each account's gotd/td client runs its own update handler goroutine. Updates for the active chat are queued in `client.pending` and signaled via the `client.changed` channel.
+- Every backend publishes `backend.Event`s for every chat on its own
+  `backend.Bus` (`internal/backend/bus.go`), regardless of what the UI shows.
+  Consumers subscribe with a `Filter` applied at publish time: the TUI screen
+  (everything), the inbox watcher (`internal/account/inbox.go`, unseen counts
+  for every online account) and the agent runtime (DM messages only, text-only
+  when the agent is). `SetActive` only scopes unread suppression and typing.
+- `Publish` never blocks and no lock is held across a channel operation;
+  backends release their own mutex before publishing. Lock order is
+  `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`.
 - The inactivity lock lives in the chat model (`lockTick`); media plays through
   `tea.ExecProcess`.
 - Read receipts are batched with a timer to avoid flooding Telegram.

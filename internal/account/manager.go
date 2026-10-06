@@ -34,6 +34,7 @@ type AccountState struct {
 	Backend    backend.Backend
 	Ctx        context.Context
 	NeedsLogin bool
+	Unseen     int // incoming messages since the user last had this account open
 }
 
 type Account struct {
@@ -85,16 +86,17 @@ type AccountManager struct {
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
 	Changed  chan struct{}
-	// agentChanged mirrors Changed for the agent runtime, so the runtime and
-	// the UI never take each other's signal.
+	// agentChanged and inboxChanged mirror Changed for the agent runtime and
+	// the inbox watcher, so no listener takes another's signal.
 	agentChanged chan struct{}
+	inboxChanged chan struct{}
 	connecting   chan struct{}
 	mu           sync.Mutex
 	owners       map[int64]*Account
 }
 
 func (m *AccountManager) notify() {
-	for _, ch := range []chan struct{}{m.Changed, m.agentChanged} {
+	for _, ch := range []chan struct{}{m.Changed, m.agentChanged, m.inboxChanged} {
 		select {
 		case ch <- struct{}{}:
 		default:
@@ -134,7 +136,7 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 }
 
 func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*AccountManager, error) {
-	m := &AccountManager{cfg: cfg, Dir: dir, creds: creds, Changed: make(chan struct{}, 1), agentChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
+	m := &AccountManager{cfg: cfg, Dir: dir, creds: creds, Changed: make(chan struct{}, 1), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
 	add := func(path string, requireIdentity bool) error {
 		a := &Account{Dir: path, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 		a.state.Status = "offline"

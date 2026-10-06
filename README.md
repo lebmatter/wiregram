@@ -105,8 +105,9 @@ In agents mode:
    or any other). The API key is read from an environment variable and never
    stored.
 2. Create an agent in the guided wizard: name, provider and model,
-   instructions, knowledge files, text only or text + vision, suggest or
-   auto-reply, and history retention.
+   instructions, knowledge files, what it may see (text only, text + media
+   descriptions, or text + vision), suggest or auto-reply, and history
+   retention. A text-only agent never receives media messages at all.
 3. Connect accounts. Each account answers to at most one agent.
 
 Select an agent to see its conversations, tagged by account (`[TG1]`,
@@ -125,6 +126,67 @@ provider.
 | `Enter` | Show conversations, open one |
 | `y` / `n` | Send or discard a suggested reply |
 | `Esc` | Back, then out to chat mode |
+
+## Architecture
+
+Wiregram is one Go binary with no cgo. Packages live under `internal/`, and
+imports only point downwards:
+
+```
+cmd/wiregram ─▶ tui ─▶ account ─▶ telegram · matrix · mattermost · whatsapp
+                                 agent (SQLite store)
+                     all of them ─▶ backend ─▶ config, textfmt
+```
+
+- **backend**: the `Backend` interface every chat network implements, the
+  shared types (`ChatEntry`, `Message`), and the event bus.
+- **telegram, matrix, mattermost, whatsapp**: one backend each. A backend
+  never imports another backend or the UI.
+- **account**: discovers, connects and signs in accounts, and runs the Chat
+  Agents.
+- **agent**: the `wiregram.db` store for providers, agents, bindings and
+  history.
+- **tui**: the BubbleTea screens.
+
+### Message flow
+
+Every backend publishes its real-time updates as `backend.Event` values (new
+message, edit, delete, reaction, typing, unread change) on its own
+`backend.Bus`. A backend publishes every event for every chat, whatever is open
+in the UI. Consumers subscribe with a `Filter`, and the bus applies the filter
+while publishing, so a consumer never receives events it did not ask for.
+
+```
+            ┌───────────────── per account ─────────────────┐
+ network ─▶ │ backend ─▶ Bus ─┬─▶ UI screen   (all events)  │
+            │                 ├─▶ inbox       (messages)    │─▶ unseen (N) in sidebar
+            │                 └─▶ agent       (DM messages, │─▶ reply / suggestion
+            │                                  text only?)  │
+            └───────────────────────────────────────────────┘
+```
+
+- **UI**: the open account's screen holds one subscription. Its root model
+  passes events for the open chat to the chat view and refreshes unread
+  counts.
+- **Inbox**: one subscription per online account, so inactive accounts keep
+  counting unseen messages.
+- **Agents**: one subscription per account that is bound to an enabled agent.
+  The filter allows only messages in one-to-one chats with a person, never
+  groups, channels, Saved Messages, the self-DM or bots. For a text-only
+  agent it also drops anything carrying media. Each conversation gets a
+  worker that debounces bursts into one reply and exits when idle. N accounts
+  and N agents scale linearly.
+
+The bus is built so that it cannot deadlock or lose messages silently:
+
+- `Publish` never blocks. Each subscriber has its own queue, drained into its
+  channel by its own goroutine.
+- No lock is held across a blocking channel operation, and backends release
+  their own locks before publishing.
+- A subscriber that falls more than 4096 events behind loses the oldest ones,
+  and the loss is counted. An agent reports it as a problem.
+- `Close` is idempotent. Only the subscription's own goroutine closes its
+  channel.
 
 ## Development
 

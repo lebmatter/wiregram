@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/gotd/td/tg"
+
+	"wiregram/internal/backend"
 )
 
 type readState struct{ inbox, outbox int }
@@ -17,18 +19,15 @@ func (c *Client) readState(key peerKey) readState {
 
 func (c *Client) rememberRead(key peerKey, inbox, outbox int) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.reads == nil {
 		c.reads = make(map[peerKey]readState)
 	}
 	previous := c.reads[key]
 	next := readState{max(previous.inbox, inbox), max(previous.outbox, outbox)}
 	c.reads[key] = next
-	if previous != next && c.active == key {
-		select {
-		case c.changed <- struct{}{}:
-		default:
-		}
+	c.mu.Unlock()
+	if previous != next {
+		c.events.Publish(backend.Event{Kind: backend.EventUnread, Chat: peerKeyToID(key)})
 	}
 }
 

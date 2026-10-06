@@ -25,11 +25,6 @@ type peerKey struct {
 	id   int64
 }
 
-type reactionUpdate struct {
-	messageID int
-	reactions tg.MessageReactions
-}
-
 func keyOf(peer tg.PeerClass) peerKey {
 	switch p := peer.(type) {
 	case *tg.PeerUser:
@@ -43,31 +38,27 @@ func keyOf(peer tg.PeerClass) peerKey {
 }
 
 type Client struct {
-	AccountID        int64  // Set before publishing this connection to the UI.
-	AccountName      string // Set before publishing this connection to the UI.
-	cfg              config.Config
-	Telegram         *telegram.Client
-	Updates          *updates.Manager
-	Api              *tg.Client
-	mu               sync.Mutex
-	users            map[int64]*tg.User
-	chats            map[peerKey]string
-	reads            map[peerKey]readState
-	unreads          map[peerKey]int
-	contactUsers     []*tg.User
-	frequentUsers    []*tg.User
-	contactsLoaded   bool
-	frequentLoaded   bool
-	emojiRecent      []string
-	active           peerKey
-	pending          []*tg.Message
-	pendingReactions []reactionUpdate
-	pendingDeletions []int
-	peerTyping       bool
-	autoLock         bool
-	changed          chan struct{}
-	subs             backend.SubscriberSet
-	Report           func(error)
+	AccountID      int64  // Set before publishing this connection to the UI.
+	AccountName    string // Set before publishing this connection to the UI.
+	cfg            config.Config
+	Telegram       *telegram.Client
+	Updates        *updates.Manager
+	Api            *tg.Client
+	mu             sync.Mutex
+	users          map[int64]*tg.User
+	chats          map[peerKey]string
+	reads          map[peerKey]readState
+	unreads        map[peerKey]int
+	contactUsers   []*tg.User
+	frequentUsers  []*tg.User
+	contactsLoaded bool
+	frequentLoaded bool
+	emojiRecent    []string
+	active         peerKey
+	peerTyping     bool
+	autoLock       bool
+	events         backend.Bus
+	Report         func(error)
 }
 
 func NewClient(cfg config.Config, dir string, report func(error)) (*Client, error) {
@@ -78,7 +69,7 @@ func NewClient(cfg config.Config, dir string, report func(error)) (*Client, erro
 	c := &Client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
 		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
-		changed: make(chan struct{}, 1), cfg: cfg,
+		cfg: cfg,
 	}
 	middleware := telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
 		return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -131,35 +122,30 @@ func (c *Client) Remember(users []tg.UserClass, chats []tg.ChatClass) {
 	}
 }
 
-func (c *Client) subscribe(key peerKey) {
+func (c *Client) setActive(key peerKey) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.active, c.pending, c.pendingReactions, c.peerTyping = key, nil, nil, false
+	c.active, c.peerTyping = key, false
 }
 
-func (c *Client) drain() ([]*tg.Message, []reactionUpdate, []int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	messages := c.pending
-	reactions := c.pendingReactions
-	deletions := c.pendingDeletions
-	c.pending = nil
-	c.pendingReactions = nil
-	c.pendingDeletions = nil
-	return messages, reactions, deletions
+// isDM reports whether key is a one-to-one chat with a person: not Saved
+// Messages and not a bot. Callers hold c.mu.
+func (c *Client) isDM(key peerKey) bool {
+	if key.kind != 'u' || key.id == c.AccountID {
+		return false
+	}
+	u := c.users[key.id]
+	return u != nil && !u.Bot && !u.Self
 }
 
 func (c *Client) rememberUnread(key peerKey, unread int) {
 	c.mu.Lock()
 	previous := c.unreads[key]
 	c.unreads[key] = unread
-	if previous != unread && c.active == key {
-		select {
-		case c.changed <- struct{}{}:
-		default:
-		}
-	}
 	c.mu.Unlock()
+	if previous != unread {
+		c.events.Publish(backend.Event{Kind: backend.EventUnread, Chat: peerKeyToID(key)})
+	}
 }
 
 func (c *Client) cachedChatUnread(key peerKey) int {
@@ -173,41 +159,30 @@ func (c *Client) accept(value tg.MessageClass, newMessage bool) {
 	if !ok {
 		return
 	}
-	c.mu.Lock()
 	key := keyOf(m.PeerID)
+	c.mu.Lock()
 	if newMessage && !m.Out {
 		c.unreads[key]++
 	}
-	if c.active != (peerKey{}) && key == c.active {
-		c.pending = append(c.pending, m)
-		select {
-		case c.changed <- struct{}{}:
-		default:
-		}
-	}
+	dm := c.isDM(key)
 	c.mu.Unlock()
 
-	kind := "message"
+	kind := backend.EventMessage
 	if !newMessage {
-		kind = "edit"
+		kind = backend.EventEdit
 	}
 	msg := tgToMessage(c, m)
-	c.subs.Broadcast(backend.BackendEvent{
-		Kind: kind, Chat: peerKeyToID(key), DM: key.kind == 'u', Message: &msg,
-	})
+	c.events.Publish(backend.Event{Kind: kind, Chat: peerKeyToID(key), DM: dm, Message: &msg})
 }
 
 func (c *Client) acceptTyping(userID int64) {
+	key := peerKey{'u', userID}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.active == (peerKey{}) || c.active != (peerKey{'u', userID}) {
-		return
+	if c.active == key {
+		c.peerTyping = true
 	}
-	c.peerTyping = true
-	select {
-	case c.changed <- struct{}{}:
-	default:
-	}
+	c.mu.Unlock()
+	c.events.Publish(backend.Event{Kind: backend.EventTyping, Chat: peerKeyToID(key)})
 }
 
 func (c *Client) clearTyping() {
@@ -222,31 +197,23 @@ func (c *Client) isTyping() bool {
 	return c.peerTyping
 }
 
-func (c *Client) acceptDeletion(ids []int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.active == (peerKey{}) {
-		return
+// acceptDeletion publishes deleted IDs. Telegram does not say which private
+// chat or group they came from, so key is zero except for channels and the
+// event then carries no chat.
+func (c *Client) acceptDeletion(key peerKey, ids []int) {
+	deleted := make([]string, len(ids))
+	for i, id := range ids {
+		deleted[i] = strconv.Itoa(id)
 	}
-	c.pendingDeletions = append(c.pendingDeletions, ids...)
-	select {
-	case c.changed <- struct{}{}:
-	default:
+	ev := backend.Event{Kind: backend.EventDelete, Deleted: deleted}
+	if key != (peerKey{}) {
+		ev.Chat = peerKeyToID(key)
 	}
+	c.events.Publish(ev)
 }
 
 func (c *Client) acceptReaction(update *tg.UpdateMessageReactions) {
 	key := keyOf(update.Peer)
-	c.mu.Lock()
-	if c.active != (peerKey{}) && key == c.active {
-		c.pendingReactions = append(c.pendingReactions, reactionUpdate{update.MsgID, update.Reactions})
-		select {
-		case c.changed <- struct{}{}:
-		default:
-		}
-	}
-	c.mu.Unlock()
-
 	var reactions []backend.MessageReaction
 	for _, count := range update.Reactions.Results {
 		label := reactionLabel(count.Reaction)
@@ -257,7 +224,7 @@ func (c *Client) acceptReaction(update *tg.UpdateMessageReactions) {
 		reactions = append(reactions, backend.MessageReaction{Emoji: label, Count: count.Count, Chosen: chosen})
 	}
 	ru := backend.GenericReactionUpdate{MessageID: strconv.Itoa(update.MsgID), Reactions: reactions}
-	c.subs.Broadcast(backend.BackendEvent{Kind: "reaction", Chat: peerKeyToID(key), Reaction: &ru})
+	c.events.Publish(backend.Event{Kind: backend.EventReaction, Chat: peerKeyToID(key), Reaction: &ru})
 }
 
 func (c *Client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
@@ -297,9 +264,9 @@ func (c *Client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 		case *tg.UpdateReadChannelInbox:
 			c.rememberRead(peerKey{'c', u.ChannelID}, u.MaxID, 0)
 		case *tg.UpdateDeleteMessages:
-			c.acceptDeletion(u.Messages)
+			c.acceptDeletion(peerKey{}, u.Messages)
 		case *tg.UpdateDeleteChannelMessages:
-			c.acceptDeletion(u.Messages)
+			c.acceptDeletion(peerKey{'c', u.ChannelID}, u.Messages)
 		case *tg.UpdateUserTyping:
 			if _, ok := u.Action.(*tg.SendMessageCancelAction); ok {
 				c.clearTyping()

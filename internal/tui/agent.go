@@ -595,8 +595,9 @@ func (m agentModeModel) agentSteps(editing int64) []wizardStep {
 			},
 		},
 		choice("media", "What can it understand?",
-			wizardOption{label: "Text only", value: "text"},
-			wizardOption{label: "Text + vision (incoming photos go to the model)", value: "vision"}),
+			wizardOption{label: "Text only (media messages never reach it)", value: agent.MediaText},
+			wizardOption{label: "Text + media descriptions ([photo], [file]…)", value: agent.MediaTags},
+			wizardOption{label: "Text + vision (incoming photos go to the model)", value: agent.MediaVision}),
 		choice("mode", "How should it reply?",
 			wizardOption{label: "Suggest replies for me to approve", value: "suggest"},
 			wizardOption{label: "Reply automatically", value: "auto"}),
@@ -623,8 +624,11 @@ func (m agentModeModel) agentSteps(editing int64) []wizardStep {
 }
 
 func mediaLabel(v string) string {
-	if v == "vision" {
+	switch v {
+	case agent.MediaVision:
 		return "text + vision"
+	case agent.MediaTags:
+		return "text + media"
 	}
 	return "text only"
 }
@@ -689,10 +693,7 @@ func (m agentModeModel) agentAnswers(id int64) wizardAnswers {
 			continue
 		}
 		knowledge, _ := m.db().AgentKnowledge(id)
-		media, mode := "text", "suggest"
-		if a.Vision {
-			media = "vision"
-		}
+		media, mode := a.Media, "suggest"
 		if a.Auto {
 			mode = "auto"
 		}
@@ -764,7 +765,7 @@ func (m *agentModeModel) saveAgent(a wizardAnswers) error {
 	}
 	rec := agent.AgentRecord{
 		ID: m.target, Name: a["name"], Prompt: a["prompt"], Auto: a["mode"] == "auto",
-		Vision: a["media"] == "vision", ProviderID: providerID, Model: a["model"],
+		Media: a["media"], ProviderID: providerID, Model: a["model"],
 		RetentionDays: retention, Enabled: true,
 	}
 	if m.purpose == wizEditAgent {
@@ -898,11 +899,7 @@ func (m agentModeModel) agentLines(width, height int) []string {
 		if a.Auto {
 			mode = "auto"
 		}
-		media := "text"
-		if a.Vision {
-			media = "vision"
-		}
-		detail := styleDim.Render(fmt.Sprintf("    %s · %s %s", mode, mediaLabel(media), tags))
+		detail := styleDim.Render(fmt.Sprintf("    %s · %s %s", mode, mediaLabel(a.Media), tags))
 		if problem != "" && a.Enabled {
 			detail = "    " + styleError.Render(truncate(problem, width-4))
 		}

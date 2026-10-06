@@ -45,7 +45,6 @@ type chatListSearch struct{}
 type chatListArchiveToggle struct{}
 type chatListQuit struct{}
 type chatListDeleteDone struct{ err error }
-type backendChanged struct{}
 
 func newChatListModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
 	w, h := termSize()
@@ -96,13 +95,6 @@ func (m chatListModel) chatIndex() (int, bool) {
 }
 
 func (m chatListModel) Init() tea.Cmd { return nil }
-
-func listenBackend(b backend.Backend) tea.Cmd {
-	return func() tea.Msg {
-		<-b.Changed()
-		return backendChanged{}
-	}
-}
 
 func (m chatListModel) refreshUnread() chatListModel {
 	for i := range m.entries {
@@ -248,7 +240,11 @@ func (m chatListModel) accountRow(a *account.Account, expanded, selected, focuse
 	if selected {
 		marker = "> "
 	}
-	text := marker + arrow + accountGlyph(a.Snapshot()) + " " + tag + " " + label
+	state := a.Snapshot()
+	text := marker + arrow + accountGlyph(state) + " " + tag + " " + label
+	if !expanded && state.Unseen > 0 {
+		text += fmt.Sprintf(" (%d)", state.Unseen)
+	}
 	row := truncate(text, width)
 	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(row)))
 	switch {

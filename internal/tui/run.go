@@ -33,6 +33,10 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		defer m.Agents.Stop()
 	}
 
+	inboxCtx, stopInbox := context.WithCancel(ctx)
+	defer stopInbox()
+	go m.WatchInbox(inboxCtx)
+
 	var active *account.Account
 	for _, a := range m.Accounts {
 		m.Start(ctx, a, nil)

@@ -70,6 +70,15 @@ type runningAgent struct {
 	provider agent.AgentProvider
 }
 
+// binding is one account's live subscription for its agent. It is replaced
+// when the backend, the agent or the agent's media mode changes.
+type binding struct {
+	backend backend.Backend
+	sub     *backend.Subscription
+	agentID int64
+	media   string
+}
+
 // convWorker serialises replies for one conversation. wake is a one-slot
 // signal, so a burst of messages coalesces into a single reply.
 type convWorker struct {
@@ -77,6 +86,9 @@ type convWorker struct {
 	last backend.Message // newest incoming message; guarded by agentRuntime.mu
 }
 
+// agentRuntime runs every enabled agent on every account bound to it. Lock
+// order is rt.mu, then the bus locks inside backend.Bus; the bus never calls
+// back out, so holding rt.mu across Subscribe or Close cannot deadlock.
 type agentRuntime struct {
 	Db  *agent.AgentDB
 	mgr *AccountManager
@@ -87,7 +99,7 @@ type agentRuntime struct {
 	problems   map[int64]string        // last failure per agent, one plain line
 	pending    map[ConvKey]Suggestion
 	workers    map[ConvKey]*convWorker
-	subscribed map[*Account]backend.Backend
+	subscribed map[*Account]*binding
 
 	changed chan struct{}
 	ctx     context.Context
@@ -105,7 +117,7 @@ func NewAgentRuntime(ctx context.Context, db *agent.AgentDB, mgr *AccountManager
 		problems:   make(map[int64]string),
 		pending:    make(map[ConvKey]Suggestion),
 		workers:    make(map[ConvKey]*convWorker),
-		subscribed: make(map[*Account]backend.Backend),
+		subscribed: make(map[*Account]*binding),
 		changed:    make(chan struct{}, 1),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -123,9 +135,9 @@ func (rt *agentRuntime) Stop() {
 	rt.cancel()
 	rt.mu.Lock()
 	for _, b := range rt.subscribed {
-		b.RemoveSubscriber("agent")
+		b.sub.Close()
 	}
-	rt.subscribed = make(map[*Account]backend.Backend)
+	rt.subscribed = make(map[*Account]*binding)
 	rt.mu.Unlock()
 	rt.wg.Wait()
 	rt.Db.Close()
@@ -180,8 +192,10 @@ func (rt *agentRuntime) Reload() {
 	rt.notify()
 }
 
-// syncSubscriptions keeps one "agent" subscriber on every online account that
-// is bound to an enabled agent, and none elsewhere.
+// syncSubscriptions keeps one subscription on every online account that is
+// bound to an enabled agent, and none elsewhere. The filter is applied as the
+// backend publishes, so agents only ever see DM messages, and only text ones
+// when the agent is text-only. What the UI has open does not matter.
 func (rt *agentRuntime) syncSubscriptions() {
 	accounts := rt.mgr.List()
 	rt.mu.Lock()
@@ -191,25 +205,32 @@ func (rt *agentRuntime) syncSubscriptions() {
 		live[acct] = true
 		s := acct.Snapshot()
 		key := rt.mgr.AccountKey(acct)
-		wanted := s.Backend != nil && s.Status == "online" && rt.agents[rt.bindings[key]] != nil
+		ag := rt.agents[rt.bindings[key]]
+		wanted := s.Backend != nil && s.Status == "online" && ag != nil
 		current := rt.subscribed[acct]
-		switch {
-		case wanted && current != s.Backend:
-			if current != nil {
-				current.RemoveSubscriber("agent")
-			}
-			events := s.Backend.AddSubscriber("agent", nil, 256)
-			rt.subscribed[acct] = s.Backend
-			rt.wg.Add(1)
-			go rt.listen(acct, key, events)
-		case !wanted && current != nil:
-			current.RemoveSubscriber("agent")
+		if current != nil && (!wanted || current.backend != s.Backend ||
+			current.agentID != ag.record.ID || current.media != ag.record.Media) {
+			current.sub.Close()
 			delete(rt.subscribed, acct)
+			current = nil
 		}
+		if !wanted || current != nil {
+			continue
+		}
+		sub := s.Backend.Events().Subscribe(backend.Filter{
+			Kinds:    backend.EventMessage,
+			DMOnly:   true,
+			TextOnly: ag.record.TextOnly(),
+		})
+		rt.subscribed[acct] = &binding{
+			backend: s.Backend, sub: sub, agentID: ag.record.ID, media: ag.record.Media,
+		}
+		rt.wg.Add(1)
+		go rt.listen(acct, key, ag.record.ID, sub)
 	}
 	for acct, b := range rt.subscribed {
 		if !live[acct] {
-			b.RemoveSubscriber("agent")
+			b.sub.Close()
 			delete(rt.subscribed, acct)
 		}
 	}
@@ -227,15 +248,18 @@ func (rt *agentRuntime) watchAccounts() {
 	}
 }
 
-func (rt *agentRuntime) listen(acct *Account, key string, events <-chan backend.BackendEvent) {
+func (rt *agentRuntime) listen(acct *Account, key string, agentID int64, sub *backend.Subscription) {
 	defer rt.wg.Done()
 	for {
 		select {
 		case <-rt.ctx.Done():
 			return
-		case ev, ok := <-events:
+		case ev, ok := <-sub.C:
 			if !ok {
 				return
+			}
+			if n := sub.Dropped(); n > 0 {
+				rt.fail(agentID, fmt.Errorf("missed %d messages while busy", n))
 			}
 			rt.handle(acct, key, ev)
 		}
@@ -255,9 +279,10 @@ func messageText(msg backend.Message) string {
 	return msg.MediaLabel + " — " + text
 }
 
-func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.BackendEvent) {
-	// Agents only ever answer one-to-one DMs; groups and channels are ignored.
-	if ev.Kind != "message" || ev.Message == nil || !ev.DM || ev.Message.ViaBot {
+func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.Event) {
+	// The subscription filter already guarantees this; it is checked again
+	// because answering in a group would be far worse than a wasted check.
+	if ev.Kind != backend.EventMessage || ev.Message == nil || !ev.DM || ev.Message.ViaBot {
 		return
 	}
 	msg := *ev.Message
@@ -268,7 +293,7 @@ func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.Back
 	rt.mu.Lock()
 	ag := rt.agents[rt.bindings[accountKey]]
 	rt.mu.Unlock()
-	if ag == nil {
+	if ag == nil || (ag.record.TextOnly() && msg.MediaLabel != "") {
 		return
 	}
 	key := ConvKey{AgentID: ag.record.ID, AccountKey: accountKey, Chat: ev.Chat}
@@ -386,7 +411,7 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		rt.fail(key.AgentID, err)
 		return
 	}
-	if ag.record.Vision {
+	if ag.record.Vision() {
 		if err := rt.attachPhoto(s.Backend, trigger, messages); err != nil {
 			rt.fail(key.AgentID, err)
 			return

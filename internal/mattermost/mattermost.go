@@ -32,16 +32,14 @@ type MmBackend struct {
 	Username  string
 
 	mu          sync.Mutex
-	subscribed  string // channel ID
-	pending     []mmEvent
-	changed     chan struct{}
+	subscribed  string               // channel ID
 	typing      map[string]time.Time // userID → last typing event
 	unreads     map[string]int       // channelID → unread count
 	lastRead    map[string]string    // channelID → last read post ID
 	userCache   map[string]mmUser
 	recentEmoji []string
 
-	subs backend.SubscriberSet
+	events backend.Bus
 
 	client *http.Client
 	wsConn *websocket.Conn
@@ -83,6 +81,7 @@ type mmPost struct {
 	RootID    string          `json:"root_id"`
 	FileIDs   []string        `json:"file_ids"`
 	Metadata  *mmPostMetadata `json:"metadata,omitempty"`
+	Props     map[string]any  `json:"props,omitempty"`
 }
 
 type mmPostMetadata struct {
@@ -120,12 +119,6 @@ type mmChannelMember struct {
 	MentionCount int    `json:"mention_count"`
 }
 
-type mmEvent struct {
-	kind string // "post", "edit", "delete", "reaction", "typing"
-	post *mmPost
-	data json.RawMessage
-}
-
 type mmReaction struct {
 	UserID    string `json:"user_id"`
 	PostID    string `json:"post_id"`
@@ -136,7 +129,6 @@ type mmReaction struct {
 func NewMMBackend(serverURL string) *MmBackend {
 	return &MmBackend{
 		ServerURL: strings.TrimRight(serverURL, "/"),
-		changed:   make(chan struct{}, 1),
 		typing:    make(map[string]time.Time),
 		unreads:   make(map[string]int),
 		lastRead:  make(map[string]string),
@@ -816,68 +808,13 @@ func (mb *MmBackend) teamForChannel(ctx context.Context, ch backend.ChatEntry) s
 	return teams[0].ID
 }
 
-func (mb *MmBackend) Subscribe(ch backend.ChatEntry) {
+func (mb *MmBackend) SetActive(ch backend.ChatEntry) {
 	mb.mu.Lock()
 	mb.subscribed = ch.ID.Id
-	mb.pending = nil
 	mb.mu.Unlock()
 }
 
-func (mb *MmBackend) Unsubscribe() {
-	mb.mu.Lock()
-	mb.subscribed = ""
-	mb.pending = nil
-	mb.mu.Unlock()
-}
-
-func (mb *MmBackend) Drain() ([]backend.Message, []backend.GenericReactionUpdate, []string) {
-	mb.mu.Lock()
-	events := mb.pending
-	mb.pending = nil
-	mb.mu.Unlock()
-
-	var messages []backend.Message
-	var reactions []backend.GenericReactionUpdate
-	var deletions []string
-	ctx := context.Background()
-
-	for _, ev := range events {
-		switch ev.kind {
-		case "post":
-			if ev.post != nil {
-				messages = append(messages, mb.postToMessage(ctx, *ev.post))
-			}
-		case "edit":
-			if ev.post != nil {
-				messages = append(messages, mb.postToMessage(ctx, *ev.post))
-			}
-		case "delete":
-			if ev.post != nil {
-				deletions = append(deletions, ev.post.ID)
-			}
-		case "reaction":
-			if ev.post != nil {
-				var allReactions []mmReaction
-				mb.apiJSON(ctx, "GET", "/posts/"+ev.post.ID+"/reactions", nil, &allReactions)
-				reactions = append(reactions, backend.GenericReactionUpdate{
-					MessageID: ev.post.ID,
-					Reactions: mb.aggregateReactions(allReactions),
-				})
-			}
-		}
-	}
-	return messages, reactions, deletions
-}
-
-func (mb *MmBackend) Changed() <-chan struct{} { return mb.changed }
-
-func (mb *MmBackend) AddSubscriber(id string, filter func(backend.ChatID) bool, bufSize int) <-chan backend.BackendEvent {
-	return mb.subs.Add(id, filter, bufSize)
-}
-
-func (mb *MmBackend) RemoveSubscriber(id string) {
-	mb.subs.Remove(id)
-}
+func (mb *MmBackend) Events() *backend.Bus { return &mb.events }
 
 func (mb *MmBackend) IsTyping() bool {
 	mb.mu.Lock()
@@ -1093,13 +1030,6 @@ func (mb *MmBackend) ReactionChoices(query string) []backend.EmojiOption {
 	return mb.EmojiChoices(query)
 }
 
-func (mb *MmBackend) notify() {
-	select {
-	case mb.changed <- struct{}{}:
-	default:
-	}
-}
-
 func (mb *MmBackend) StartWebSocket(ctx context.Context) {
 	wsCtx, cancel := context.WithCancel(ctx)
 	mb.wsStop = cancel
@@ -1171,11 +1101,13 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 	subscribed := mb.subscribed
 	mb.mu.Unlock()
 
+	chat := backend.ChatID{Backend: "mattermost", Id: channelID}
 	switch event.Event {
 	case "posted":
 		var wrapper struct {
 			Post        string `json:"post"`
 			ChannelType string `json:"channel_type"`
+			ChannelName string `json:"channel_name"`
 		}
 		if err := json.Unmarshal(event.Data, &wrapper); err != nil {
 			return
@@ -1184,20 +1116,18 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		if err := json.Unmarshal([]byte(wrapper.Post), &post); err != nil {
 			return
 		}
-		if post.ChannelID == subscribed {
-			mb.mu.Lock()
-			mb.pending = append(mb.pending, mmEvent{kind: "post", post: &post})
-			mb.mu.Unlock()
-		} else if post.UserID != mb.UserID {
+		if post.ChannelID != subscribed && post.UserID != mb.UserID {
 			mb.mu.Lock()
 			mb.unreads[post.ChannelID]++
 			mb.mu.Unlock()
 		}
-		mb.notify()
+		// A "D" channel named after the user twice is the self DM.
+		dm := wrapper.ChannelType == "D" && post.Props["from_bot"] != "true" &&
+			wrapper.ChannelName != mb.UserID+"__"+mb.UserID
 		msg := mb.postToMessage(context.Background(), post)
-		mb.subs.Broadcast(backend.BackendEvent{
-			Kind: "message", Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
-			DM: wrapper.ChannelType == "D", Message: &msg,
+		mb.events.Publish(backend.Event{
+			Kind: backend.EventMessage, Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
+			DM: dm, Message: &msg,
 		})
 
 	case "post_edited":
@@ -1211,14 +1141,13 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		if err := json.Unmarshal([]byte(wrapper.Post), &post); err != nil {
 			return
 		}
-		if post.ChannelID == subscribed {
-			mb.mu.Lock()
-			mb.pending = append(mb.pending, mmEvent{kind: "edit", post: &post})
-			mb.mu.Unlock()
-			mb.notify()
-		}
+		// The edit event does not carry the channel type, so it is never
+		// marked DM.
 		msg := mb.postToMessage(context.Background(), post)
-		mb.subs.Broadcast(backend.BackendEvent{Kind: "edit", Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID}, Message: &msg})
+		mb.events.Publish(backend.Event{
+			Kind: backend.EventEdit, Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
+			Message: &msg,
+		})
 
 	case "post_deleted":
 		var wrapper struct {
@@ -1231,12 +1160,10 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		if err := json.Unmarshal([]byte(wrapper.Post), &post); err != nil {
 			return
 		}
-		if post.ChannelID == subscribed {
-			mb.mu.Lock()
-			mb.pending = append(mb.pending, mmEvent{kind: "delete", post: &post})
-			mb.mu.Unlock()
-			mb.notify()
-		}
+		mb.events.Publish(backend.Event{
+			Kind: backend.EventDelete, Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
+			Deleted: []string{post.ID},
+		})
 
 	case "reaction_added", "reaction_removed":
 		var wrapper struct {
@@ -1249,19 +1176,27 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		if err := json.Unmarshal([]byte(wrapper.Reaction), &reaction); err != nil {
 			return
 		}
-		if channelID == subscribed {
-			mb.mu.Lock()
-			mb.pending = append(mb.pending, mmEvent{kind: "reaction", post: &mmPost{ID: reaction.PostID}})
-			mb.mu.Unlock()
-			mb.notify()
-		}
+		// Aggregate here, on the websocket goroutine, never on the UI's.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var all []mmReaction
+		mb.apiJSON(ctx, "GET", "/posts/"+reaction.PostID+"/reactions", nil, &all)
+		cancel()
+		mb.events.Publish(backend.Event{
+			Kind: backend.EventReaction, Chat: chat,
+			Reaction: &backend.GenericReactionUpdate{
+				MessageID: reaction.PostID, Reactions: mb.aggregateReactions(all),
+			},
+		})
 
 	case "typing":
-		if channelID == subscribed && event.Broadcast.UserID != mb.UserID {
+		if event.Broadcast.UserID == mb.UserID {
+			return
+		}
+		if channelID == subscribed {
 			mb.mu.Lock()
 			mb.typing[event.Broadcast.UserID] = time.Now()
 			mb.mu.Unlock()
-			mb.notify()
 		}
+		mb.events.Publish(backend.Event{Kind: backend.EventTyping, Chat: chat})
 	}
 }

@@ -54,6 +54,7 @@ type chatViewModel struct {
 	reads    *genericReadReporter
 	replying *backend.Message
 	typing   bool
+	early    []backend.Event // arrived while the first history page was loading
 
 	subMode chatSubMode
 	notice  string
@@ -109,12 +110,8 @@ type chatHistoryLoaded struct {
 	older    bool
 }
 
-type chatBackendUpdate struct {
-	incoming  []backend.Message
-	reactions []backend.GenericReactionUpdate
-	deletions []string
-	typing    bool
-}
+// chatEvent is one bus event for the open chat, routed by the root model.
+type chatEvent struct{ ev backend.Event }
 
 type chatReadTick struct{}
 type chatTypingTimeout struct{}
@@ -212,7 +209,7 @@ func (m chatViewModel) loadHistory() tea.Cmd {
 	b := m.b
 	entry := m.entry
 	return func() tea.Msg {
-		b.Subscribe(entry)
+		b.SetActive(entry)
 		if err := b.RefreshReadState(ctx, entry); err != nil && ctx.Err() == nil {
 		}
 		msgs, err := b.History(ctx, entry)
@@ -234,16 +231,10 @@ func (m chatViewModel) loadOlderHistory() tea.Cmd {
 	}
 }
 
-// drainBackend collects queued updates for the open chat. The root model owns
-// the single Changed() listener so the list and chat never race for signals.
-func (m chatViewModel) drainBackend() chatBackendUpdate {
-	incoming, reactions, deletions := m.b.Drain()
-	return chatBackendUpdate{
-		incoming:  incoming,
-		reactions: reactions,
-		deletions: deletions,
-		typing:    m.b.IsTyping(),
-	}
+// wants reports whether ev belongs to this chat. Telegram deletions outside
+// channels name no chat, so they apply to whichever chat is open.
+func (m chatViewModel) wants(ev backend.Event) bool {
+	return ev.Chat == m.entry.ID || (ev.Kind == backend.EventDelete && ev.Chat == backend.ChatID{})
 }
 
 func (m chatViewModel) sendMessage(outgoing chatOutgoing) tea.Cmd {
@@ -344,8 +335,12 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		cm, cmd := m.handleHistoryLoaded(msg)
 		return cm.clearSelectedChanged(), cmd
 
-	case chatBackendUpdate:
-		cm, cmd := m.handleBackendUpdate(msg)
+	case chatEvent:
+		if m.messages == nil {
+			m.early = append(m.early, msg.ev)
+			return m, nil
+		}
+		cm, cmd := m.handleEvent(msg.ev)
 		return cm.clearSelectedChanged(), cmd
 
 	case chatTypingTimeout:
@@ -540,17 +535,31 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 		m.seen[msg.ID] = true
 	}
 	m.reads = newGenericReadReporter(m.b, m.entry)
-	return m, m.startReadTimer()
+	cmds := []tea.Cmd{m.startReadTimer()}
+	for _, ev := range m.early {
+		var cmd tea.Cmd
+		m, cmd = m.handleEvent(ev)
+		cmds = append(cmds, cmd)
+	}
+	m.early = nil
+	return m, tea.Batch(cmds...)
 }
 
-func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel, tea.Cmd) {
-	for _, inc := range msg.incoming {
-		if !inc.Outgoing {
+func (m chatViewModel) handleEvent(ev backend.Event) (chatViewModel, tea.Cmd) {
+	switch ev.Kind {
+	case backend.EventMessage, backend.EventEdit:
+		if ev.Message == nil {
+			break
+		}
+		if !ev.Message.Outgoing {
 			m.typing = false
 		}
-		m = m.appendMessage(inc)
-	}
-	for _, update := range msg.reactions {
+		m = m.appendMessage(*ev.Message)
+	case backend.EventReaction:
+		update := ev.Reaction
+		if update == nil {
+			break
+		}
 		for i, existing := range m.messages {
 			if existing.ID == update.MessageID {
 				old := backend.FormatMessageReactions(existing.Reactions)
@@ -566,10 +575,9 @@ func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel
 				break
 			}
 		}
-	}
-	if len(msg.deletions) > 0 {
-		removed := make(map[string]bool, len(msg.deletions))
-		for _, id := range msg.deletions {
+	case backend.EventDelete:
+		removed := make(map[string]bool, len(ev.Deleted))
+		for _, id := range ev.Deleted {
 			removed[id] = true
 			delete(m.seen, id)
 			delete(m.changedMessages, id)
@@ -584,12 +592,11 @@ func (m chatViewModel) handleBackendUpdate(msg chatBackendUpdate) (chatViewModel
 		if m.selected >= len(m.messages) {
 			m.selected = max(0, len(m.messages)-1)
 		}
-	}
-	if msg.typing {
-		m.typing = true
-	}
-	if msg.typing {
-		return m, m.typingTimeoutCmd()
+	case backend.EventTyping:
+		if m.b.IsTyping() {
+			m.typing = true
+			return m, m.typingTimeoutCmd()
+		}
 	}
 	return m, nil
 }
@@ -1208,7 +1215,7 @@ func (m chatViewModel) cleanup() {
 	if m.cancel != nil {
 		m.cancel()
 	}
-	m.b.Unsubscribe()
+	m.b.SetActive(backend.ChatEntry{})
 	if m.reads != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

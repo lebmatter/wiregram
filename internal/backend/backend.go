@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"wiregram/internal/config"
@@ -80,65 +79,6 @@ type GenericReactionUpdate struct {
 	Reactions []MessageReaction
 }
 
-// backendEvent is a unified event delivered to subscribers.
-type BackendEvent struct {
-	Kind     string                 // "message", "edit", "delete", "reaction"
-	Chat     ChatID                 // which chat the event belongs to
-	DM       bool                   // one-to-one private chat; set on "message" events
-	Message  *Message               // for "message" and "edit"
-	DeleteID string                 // message ID for "delete"
-	Reaction *GenericReactionUpdate // for "reaction"
-}
-
-type backendSubscriber struct {
-	filter func(ChatID) bool
-	ch     chan BackendEvent
-}
-
-// subscriberSet manages a set of event subscribers. Each backend embeds one.
-type SubscriberSet struct {
-	mu   sync.Mutex
-	subs map[string]*backendSubscriber
-}
-
-func (ss *SubscriberSet) Add(id string, filter func(ChatID) bool, bufSize int) <-chan BackendEvent {
-	ch := make(chan BackendEvent, bufSize)
-	ss.mu.Lock()
-	if ss.subs == nil {
-		ss.subs = make(map[string]*backendSubscriber)
-	}
-	// Replacing a subscriber closes its old channel so its reader can exit.
-	if old, ok := ss.subs[id]; ok {
-		close(old.ch)
-	}
-	ss.subs[id] = &backendSubscriber{filter: filter, ch: ch}
-	ss.mu.Unlock()
-	return ch
-}
-
-func (ss *SubscriberSet) Remove(id string) {
-	ss.mu.Lock()
-	if sub, ok := ss.subs[id]; ok {
-		close(sub.ch)
-		delete(ss.subs, id)
-	}
-	ss.mu.Unlock()
-}
-
-func (ss *SubscriberSet) Broadcast(ev BackendEvent) {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	for _, sub := range ss.subs {
-		if sub.filter != nil && !sub.filter(ev.Chat) {
-			continue
-		}
-		select {
-		case sub.ch <- ev:
-		default:
-		}
-	}
-}
-
 type Capabilities struct {
 	Forward       bool
 	DeleteForMe   bool
@@ -193,11 +133,11 @@ type Backend interface {
 	// Search
 	SearchMessages(ctx context.Context, ch ChatEntry, query string) ([]Message, error)
 
-	// Real-time events
-	Subscribe(ch ChatEntry)
-	Unsubscribe()
-	Drain() (msgs []Message, reactions []GenericReactionUpdate, deletions []string)
-	Changed() <-chan struct{}
+	// Real-time events. Every event for every chat is published on Events,
+	// whatever is open. SetActive names the open chat (zero entry for none) so
+	// the backend can suppress its unread count and scope IsTyping.
+	Events() *Bus
+	SetActive(ch ChatEntry)
 	IsTyping() bool
 	ClearTyping()
 
@@ -219,10 +159,6 @@ type Backend interface {
 	UserSearchBase(ctx context.Context, recentChats []ChatEntry) (UserSearchBase, error)
 	UserSearchRemote(ctx context.Context, query string) ([]UserCandidate, error)
 	OpenUserCandidate(ctx context.Context, c UserCandidate) (ChatEntry, error)
-
-	// Subscribers
-	AddSubscriber(id string, filter func(ChatID) bool, bufSize int) <-chan BackendEvent
-	RemoveSubscriber(id string)
 
 	// Emoji
 	RecentEmoji() []string

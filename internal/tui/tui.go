@@ -34,6 +34,7 @@ type tuiModel struct {
 	mgr           *account.AccountManager
 	active        *account.Account
 	b             backend.Backend
+	events        *backend.Subscription // every event of this account
 	histories     map[backend.ChatID][]string
 	entries       []backend.ChatEntry
 	archived      bool
@@ -59,7 +60,20 @@ type tuiDialogsLoaded struct {
 
 type tuiRetryDialogs struct{}
 type tuiChipsTick struct{}
-type chatDrainNow struct{}
+
+// busEvent is one event from the account's subscription; ok is false once
+// the subscription has been closed.
+type busEvent struct {
+	ev backend.Event
+	ok bool
+}
+
+func listenEvents(sub *backend.Subscription) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-sub.C
+		return busEvent{ev, ok}
+	}
+}
 
 func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
 	return func() tea.Msg {
@@ -73,13 +87,14 @@ func chipsTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tuiChipsTick{} })
 }
 
-func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) tuiModel {
+func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, events *backend.Subscription, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) tuiModel {
 	w, h := termSize()
 	m := tuiModel{
 		ctx:           ctx,
 		mgr:           mgr,
 		active:        active,
 		b:             b,
+		events:        events,
 		histories:     histories,
 		entries:       entries,
 		archiveUnread: archiveUnread,
@@ -91,7 +106,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(listenBackend(m.b), chipsTick())
+	return tea.Batch(listenEvents(m.events), chipsTick())
 }
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
@@ -176,25 +191,18 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case tuiChipsTick:
 		return m, chipsTick()
 
-	case backendChanged:
-		// The root owns the only Changed() listener so the list and the chat
-		// never race each other for update signals.
+	case busEvent:
+		// The root owns the account's only UI subscription and routes events
+		// for the open chat, so the list and chat never race for them.
+		if !msg.ok {
+			return m, nil
+		}
 		var cmd tea.Cmd
-		if m.chatOpen && m.chat.messages != nil {
-			m.chat, cmd = m.chat.Update(m.chat.drainBackend())
-		} else if !m.chatOpen {
-			m.b.Drain()
+		if m.chatOpen && m.chat.wants(msg.ev) {
+			m.chat, cmd = m.chat.Update(chatEvent{msg.ev})
 		}
 		m.list = m.list.refreshUnread()
-		return m, tea.Batch(cmd, listenBackend(m.b))
-
-	case chatDrainNow:
-		var cmd tea.Cmd
-		if m.chatOpen {
-			m.chat, cmd = m.chat.Update(m.chat.drainBackend())
-		}
-		m.list = m.list.refreshUnread()
-		return m, cmd
+		return m, tea.Batch(cmd, listenEvents(m.events))
 
 	case chatHistoryLoaded:
 		if !m.chatOpen {
@@ -202,10 +210,6 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.chat, cmd = m.chat.Update(msg)
-		if !msg.older && msg.err == nil {
-			// Catch up on anything queued while history was loading.
-			cmd = tea.Batch(cmd, func() tea.Msg { return chatDrainNow{} })
-		}
 		return m, cmd
 
 	case chatReturnToList:
@@ -485,7 +489,11 @@ func (m tuiModel) emptyPane(width, height int) string {
 // tuiSelectChat runs one account's main screen until the user quits (nil),
 // asks for the account picker, or switches account.
 func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) error {
-	m := newTuiModel(ctx, mgr, active, b, histories, entries, archiveUnread)
+	events := b.Events().Subscribe(backend.Filter{})
+	defer events.Close()
+	active.ClearUnseen()
+	defer active.ClearUnseen()
+	m := newTuiModel(ctx, mgr, active, b, events, histories, entries, archiveUnread)
 	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil {
 		return fmt.Errorf("run TUI: %w", err)
