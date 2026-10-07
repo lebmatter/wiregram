@@ -212,6 +212,14 @@ func (tb *TelegramBackend) History(ctx context.Context, ch backend.ChatEntry) ([
 	return tgMessagesToMessages(tb.C, msgs), nil
 }
 
+func (tb *TelegramBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
+	msgs, err := tb.C.unreadHistory(ctx, entryToChat(ch), limit)
+	if err != nil {
+		return nil, err
+	}
+	return backend.NewestIncoming(tgMessagesToMessages(tb.C, msgs), limit), nil
+}
+
 func (tb *TelegramBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, beforeID string) ([]backend.Message, error) {
 	msgs, err := tb.C.olderHistory(ctx, entryToChat(ch), msgIDToInt(beforeID))
 	if err != nil {

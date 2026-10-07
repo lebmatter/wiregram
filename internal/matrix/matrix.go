@@ -724,6 +724,16 @@ func (mx *MxBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backe
 	return msgs, nil
 }
 
+// UnreadMessages pages back from the latest sync. Reactions and state events
+// share the timeline, so it reads a full page rather than just limit events.
+func (mx *MxBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
+	msgs, _, err := mx.fetchMessages(ctx, ch.ID.Id, mx.syncToken, 25)
+	if err != nil {
+		return nil, err
+	}
+	return backend.NewestIncoming(msgs, limit), nil
+}
+
 func (mx *MxBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, beforeID string) ([]backend.Message, error) {
 	roomID := ch.ID.Id
 	mx.mu.Lock()

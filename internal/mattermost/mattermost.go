@@ -511,7 +511,26 @@ func (mb *MmBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, bef
 	return mb.fetchPosts(ctx, ch.ID.Id, beforeID, 25)
 }
 
+// UnreadMessages reads the newest posts, which the unread count covers, and
+// skips the per-post reaction requests a History page makes.
+func (mb *MmBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
+	msgs, err := mb.loadPosts(ctx, ch.ID.Id, "", limit)
+	if err != nil {
+		return nil, err
+	}
+	return backend.NewestIncoming(msgs, limit), nil
+}
+
 func (mb *MmBackend) fetchPosts(ctx context.Context, channelID, before string, perPage int) ([]backend.Message, error) {
+	messages, err := mb.loadPosts(ctx, channelID, before, perPage)
+	if err != nil {
+		return nil, err
+	}
+	mb.loadReactions(ctx, messages)
+	return messages, nil
+}
+
+func (mb *MmBackend) loadPosts(ctx context.Context, channelID, before string, perPage int) ([]backend.Message, error) {
 	path := fmt.Sprintf("/channels/%s/posts?per_page=%d", channelID, perPage)
 	if before != "" {
 		path += "&before=" + before
@@ -531,7 +550,6 @@ func (mb *MmBackend) fetchPosts(ctx context.Context, channelID, before string, p
 		}
 		messages = append(messages, mb.postToMessage(ctx, p))
 	}
-	mb.loadReactions(ctx, messages)
 	return messages, nil
 }
 

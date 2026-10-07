@@ -14,19 +14,28 @@ import (
 )
 
 func (c *Client) history(ctx context.Context, entry chat) ([]*tg.Message, error) {
-	return c.fetchHistory(ctx, entry, 0)
+	return c.fetchHistory(ctx, &tg.MessagesGetHistoryRequest{Peer: entry.peer, Limit: 30})
 }
 
 func (c *Client) olderHistory(ctx context.Context, entry chat, offsetID int) ([]*tg.Message, error) {
-	return c.fetchHistory(ctx, entry, offsetID)
-}
-
-func (c *Client) fetchHistory(ctx context.Context, entry chat, offsetID int) ([]*tg.Message, error) {
-	result, err := c.Api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+	return c.fetchHistory(ctx, &tg.MessagesGetHistoryRequest{
 		Peer:     entry.peer,
 		Limit:    30,
 		OffsetID: offsetID,
 	})
+}
+
+// unreadHistory loads at most limit of the newest messages past the read marker.
+func (c *Client) unreadHistory(ctx context.Context, entry chat, limit int) ([]*tg.Message, error) {
+	return c.fetchHistory(ctx, &tg.MessagesGetHistoryRequest{
+		Peer:  entry.peer,
+		Limit: limit,
+		MinID: c.readState(entry.key).inbox,
+	})
+}
+
+func (c *Client) fetchHistory(ctx context.Context, request *tg.MessagesGetHistoryRequest) ([]*tg.Message, error) {
+	result, err := c.Api.MessagesGetHistory(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("load messages: %w", err)
 	}

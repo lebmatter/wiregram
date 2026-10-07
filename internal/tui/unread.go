@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"sync"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -93,25 +94,27 @@ func (m unreadModel) load() (unreadModel, tea.Cmd) {
 	m.loading = true
 	ctx, b, entries, gen := m.ctx, m.b, m.entries, m.gen
 	return m, func() tea.Msg {
-		cards := make([]unreadCard, 0, len(entries))
-		for _, e := range entries {
-			msgs, err := b.History(ctx, e)
-			cards = append(cards, unreadCard{entry: e, msgs: lastUnread(msgs, e.Unread), err: err})
+		cards := make([]unreadCard, len(entries))
+		var wg sync.WaitGroup
+		for i, e := range entries {
+			wg.Go(func() {
+				msgs, err := unreadMessages(ctx, b, e)
+				cards[i] = unreadCard{entry: e, msgs: msgs, err: err}
+			})
 		}
+		wg.Wait()
 		return unreadLoaded{gen, cards}
 	}
 }
 
-// lastUnread keeps the newest incoming messages among the unread tail.
-func lastUnread(msgs []backend.Message, unread int) []backend.Message {
-	msgs = msgs[max(0, len(msgs)-unread):]
-	var in []backend.Message
-	for _, msg := range msgs {
-		if !msg.Outgoing {
-			in = append(in, msg)
-		}
+// unreadMessages uses the backend's unread API when it has one, else keeps
+// the newest incoming messages among the unread tail of a History page.
+func unreadMessages(ctx context.Context, b backend.Backend, e backend.ChatEntry) ([]backend.Message, error) {
+	if f, ok := b.(backend.UnreadFetcher); ok {
+		return f.UnreadMessages(ctx, e, min(e.Unread, unreadCardLines))
 	}
-	return in[max(0, len(in)-unreadCardLines):]
+	msgs, err := b.History(ctx, e)
+	return backend.NewestIncoming(msgs[max(0, len(msgs)-e.Unread):], unreadCardLines), err
 }
 
 func (m unreadModel) resized(width, height int) unreadModel {

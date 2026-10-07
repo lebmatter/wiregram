@@ -167,6 +167,25 @@ type Backend interface {
 	ReactionChoices(query string) []EmojiOption
 }
 
+// UnreadFetcher is implemented by backends whose API can fetch a chat's
+// unread messages directly, cheaper than a History page.
+type UnreadFetcher interface {
+	// UnreadMessages returns at most limit of the newest incoming unread
+	// messages, oldest first.
+	UnreadMessages(ctx context.Context, ch ChatEntry, limit int) ([]Message, error)
+}
+
+// NewestIncoming keeps the last limit messages the user did not send.
+func NewestIncoming(msgs []Message, limit int) []Message {
+	var in []Message
+	for _, msg := range msgs {
+		if !msg.Outgoing {
+			in = append(in, msg)
+		}
+	}
+	return in[max(0, len(in)-limit):]
+}
+
 // Generic rendering functions that work with any backend.
 
 func GenericMessageSender(msg Message) string {
