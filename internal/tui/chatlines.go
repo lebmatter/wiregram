@@ -137,13 +137,16 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			body += styleSubtle.Render(fmt.Sprintf(" · %d %s", n, plural(n, "reply", "replies")))
 		}
 		prefix := marker + backend.GenericMessagePrefix(msg, entry) + " "
+		var lines []string
 		if msg.ReplyToID == "" {
-			return textfmt.WrapMessage(prefix, body, lineWidth, indent)
+			lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
+		} else {
+			// Replies put the quoted original on the header row and the text below it.
+			quote := textfmt.ClipLine(prefix+renderQuote(byID[msg.ReplyToID], entry), lineWidth)
+			lines = append([]string{quote},
+				textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 		}
-		// Replies put the quoted original on the header row and the text below it.
-		quote := textfmt.ClipLine(prefix+renderQuote(byID[msg.ReplyToID], entry), lineWidth)
-		return append([]string{quote},
-			textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
+		return append(lines, previewCard(msg.Preview, indent, lineWidth)...)
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines, owners := []string{}, []int{}
@@ -204,4 +207,38 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		owners = append(owners, -1)
 	}
 	return lines, owners
+}
+
+// previewCard draws a link preview as a small box under the message text,
+// or nothing when there is no preview or too little room.
+func previewCard(p *backend.LinkPreview, indent, lineWidth int) []string {
+	width := min(60, lineWidth-indent)
+	if p == nil || width < 20 {
+		return nil
+	}
+	inner := width - 4
+	var body []string
+	if p.Title != "" {
+		body = append(body, styleTitle.Render(truncate(textfmt.Plain(p.Title), inner)))
+	}
+	if p.Description != "" {
+		desc := textfmt.WrapLineIndent(textfmt.Plain(p.Description), inner, 0)
+		for i, line := range desc[:min(2, len(desc))] {
+			line = strings.TrimLeft(line, " ")
+			if i == 1 && len(desc) > 2 {
+				line = textfmt.ClipLine(line, inner-1) + "…"
+			}
+			body = append(body, styleSubtle.Render(line))
+		}
+	}
+	site := p.Site
+	if site == "" {
+		site = p.URL
+	}
+	pad := strings.Repeat(" ", indent)
+	lines := strings.Split(renderBox(site, body, width, len(body)+2, colorDim), "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	return lines
 }

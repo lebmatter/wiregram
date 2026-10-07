@@ -92,6 +92,12 @@ These are project constraints, not suggestions:
   Groups show the title; channels show `Channel: TITLE`.
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with
   ` — ` before a caption. See `internal/telegram/media.go` for the full set.
+- A message with a link preview gets a small rounded card (site, title, two
+  lines of description) under its text, in the chat and the thread pane.
+  Previews come only from the server:
+  Telegram webpages, Mattermost OpenGraph embeds, WhatsApp link fields, and
+  the Matrix homeserver's `preview_url`, fetched once per link in the
+  background. Wiregram never fetches linked pages itself.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 - Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
   (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as

@@ -129,9 +129,11 @@ func (m chatViewModel) threadBox(width, height int, focused bool) string {
 	if len(thread) == 0 {
 		lines = append(lines, styleSubtle.Render("The thread's first message is no longer loaded."))
 	}
+	const indent = 7 + 2 + textfmt.NickWidth + 2
 	for i, msg := range thread {
 		lines = append(lines, textfmt.WrapMessage(backend.GenericMessagePrefix(msg, m.entry)+" ",
-			backend.GenericMessageText(msg), inner, 7+2+textfmt.NickWidth+2)...)
+			backend.GenericMessageText(msg), inner, indent)...)
+		lines = append(lines, previewCard(msg.Preview, indent, inner)...)
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))

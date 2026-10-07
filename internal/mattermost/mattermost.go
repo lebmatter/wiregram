@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +86,18 @@ type mmPost struct {
 }
 
 type mmPostMetadata struct {
-	Files []mmFileInfo `json:"files,omitempty"`
+	Files  []mmFileInfo `json:"files,omitempty"`
+	Embeds []mmEmbed    `json:"embeds,omitempty"`
+}
+
+type mmEmbed struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
+	Data struct {
+		SiteName    string `json:"site_name"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	} `json:"data"`
 }
 
 type mmFileInfo struct {
@@ -484,8 +496,31 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		ReplyToID:  p.RootID,
 		MediaLabel: mediaLabel,
 		Multiline:  strings.Contains(p.Message, "\n"),
+		Preview:    mmPreview(p.Metadata),
 		Raw:        p,
 	}
+}
+
+// mmPreview returns the first OpenGraph embed the server attached.
+func mmPreview(md *mmPostMetadata) *backend.LinkPreview {
+	if md == nil {
+		return nil
+	}
+	for _, e := range md.Embeds {
+		if e.Type != "opengraph" || (e.Data.Title == "" && e.Data.Description == "") {
+			continue
+		}
+		site := e.Data.SiteName
+		if site == "" {
+			if u, err := url.Parse(e.URL); err == nil {
+				site = u.Hostname()
+			}
+		}
+		return &backend.LinkPreview{
+			URL: e.URL, Site: site, Title: e.Data.Title, Description: e.Data.Description,
+		}
+	}
+	return nil
 }
 
 func mmFileLabel(f mmFileInfo) string {

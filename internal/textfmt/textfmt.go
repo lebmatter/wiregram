@@ -75,3 +75,17 @@ func AppendQuery(query []rune, key string) []rune {
 	}
 	return query
 }
+
+// FirstURL returns the first http(s) link in text, without trailing
+// punctuation, or "" when there is none.
+func FirstURL(text string) string {
+	for _, field := range strings.Fields(text) {
+		if strings.HasPrefix(field, "https://") || strings.HasPrefix(field, "http://") {
+			link := strings.TrimRight(field, ".,;:!?)]'\"")
+			if !strings.HasSuffix(link, "://") {
+				return link
+			}
+		}
+	}
+	return ""
+}

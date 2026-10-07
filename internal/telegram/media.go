@@ -6,6 +6,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
+	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
 )
 
@@ -53,10 +54,32 @@ func formatMedia(media tg.MessageMediaClass) string {
 		return fmt.Sprintf("[venue] %s, %s", m.Title, m.Address)
 	case *tg.MessageMediaGame:
 		return "[game] " + m.Game.Title
+	case *tg.MessageMediaWebPage:
+		return "" // shown as a preview card instead
 	case *tg.MessageMediaInvoice:
 		return fmt.Sprintf("[invoice] %s, %s %s", m.Title, formatAmount(m.TotalAmount, m.Currency), m.Currency)
 	default:
 		return "[unsupported media]"
+	}
+}
+
+// webPagePreview returns the link preview Telegram attached, or nil while it
+// is still pending or has nothing to show.
+func webPagePreview(media tg.MessageMediaClass) *backend.LinkPreview {
+	m, ok := media.(*tg.MessageMediaWebPage)
+	if !ok {
+		return nil
+	}
+	page, ok := m.Webpage.(*tg.WebPage)
+	if !ok || (page.Title == "" && page.Description == "") {
+		return nil
+	}
+	site := page.SiteName
+	if site == "" {
+		site = page.DisplayURL
+	}
+	return &backend.LinkPreview{
+		URL: page.URL, Site: site, Title: page.Title, Description: page.Description,
 	}
 }
 

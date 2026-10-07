@@ -48,6 +48,7 @@ type chatViewModel struct {
 	selected         int
 	seen             map[string]bool
 	changedMessages  map[string]bool
+	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	historyExhausted bool
 
 	input textinput.Model
@@ -112,6 +113,11 @@ type chatHistoryLoaded struct {
 	messages []backend.Message
 	err      error
 	older    bool
+}
+
+type linkPreviewLoaded struct {
+	url     string
+	preview *backend.LinkPreview
 }
 
 // chatEvent is one bus event for the open chat, routed by the root model.
@@ -195,6 +201,7 @@ func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.Chat
 		histories:       histories,
 		seen:            make(map[string]bool),
 		changedMessages: make(map[string]bool),
+		previews:        make(map[string]*backend.LinkPreview),
 		input:           ti,
 		sends:           make(chan chatOutgoing),
 		autoLock:        b.AutoLockEnabled(),
@@ -299,6 +306,9 @@ func (m chatViewModel) typingTimeoutCmd() tea.Cmd {
 }
 
 func (m chatViewModel) appendMessage(msg backend.Message) chatViewModel {
+	if msg.Preview == nil {
+		msg.Preview = m.previews[textfmt.FirstURL(msg.Text)]
+	}
 	if msg.ID != "" && msg.ID != "0" && m.seen[msg.ID] {
 		for i, prev := range m.messages {
 			if prev.ID == msg.ID && msg.EditDate >= prev.EditDate {
@@ -356,7 +366,19 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 	case chatHistoryLoaded:
 		cm, cmd := m.handleHistoryLoaded(msg)
-		return cm.clearSelectedChanged(), cmd
+		return cm.clearSelectedChanged(), tea.Batch(cmd, cm.fetchPreviews(msg.messages))
+
+	case linkPreviewLoaded:
+		if msg.preview == nil {
+			return m, nil
+		}
+		m.previews[msg.url] = msg.preview
+		for i := range m.messages {
+			if m.messages[i].Preview == nil && textfmt.FirstURL(m.messages[i].Text) == msg.url {
+				m.messages[i].Preview = msg.preview
+			}
+		}
+		return m, nil
 
 	case chatEvent:
 		if m.messages == nil {
@@ -545,6 +567,34 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	return m, nil
 }
 
+// fetchPreviews asks backends that preview links on request (Matrix) about
+// each new link once per chat; cards appear as the answers arrive.
+func (m chatViewModel) fetchPreviews(msgs []backend.Message) tea.Cmd {
+	lp, ok := m.b.(backend.LinkPreviewer)
+	if !ok {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, msg := range msgs {
+		link := textfmt.FirstURL(msg.Text)
+		if _, asked := m.previews[link]; msg.Preview != nil || link == "" || asked {
+			continue
+		}
+		m.previews[link] = nil
+		ctx := m.ctx
+		cmds = append(cmds, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			p, err := lp.LinkPreview(ctx, link)
+			if err != nil {
+				p = nil // a missing preview is not worth a notice
+			}
+			return linkPreviewLoaded{link, p}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel, tea.Cmd) {
 	if msg.err != nil {
 		if !msg.older {
@@ -598,6 +648,7 @@ func (m chatViewModel) handleEvent(ev backend.Event) (chatViewModel, tea.Cmd) {
 			m.typing = false
 		}
 		m = m.appendMessage(*ev.Message)
+		return m, m.fetchPreviews([]backend.Message{*ev.Message})
 	case backend.EventReaction:
 		update := ev.Reaction
 		if update == nil {

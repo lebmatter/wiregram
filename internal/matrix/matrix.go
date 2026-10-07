@@ -1372,6 +1372,52 @@ func (mx *MxBackend) openMXC(ctx context.Context, mxcURL string) (io.ReadCloser,
 	return resp.Body, nil
 }
 
+// LinkPreview asks the homeserver to summarise link; wiregram never fetches
+// the page itself. Older servers only have the unauthenticated media path.
+func (mx *MxBackend) LinkPreview(ctx context.Context, link string) (*backend.LinkPreview, error) {
+	paths := []string{"/_matrix/client/v1/media/preview_url", "/_matrix/media/v3/preview_url"}
+	for _, path := range paths {
+		req, err := http.NewRequestWithContext(ctx, "GET",
+			mx.Homeserver+path+"?url="+url.QueryEscape(link), nil)
+		if err != nil {
+			return nil, fmt.Errorf("create preview request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+mx.AccessToken)
+		resp, err := mx.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("link preview: %w", err)
+		}
+		if resp.StatusCode == http.StatusNotFound && path == paths[0] {
+			resp.Body.Close()
+			continue
+		}
+		var og struct {
+			Site        string `json:"og:site_name"`
+			Title       string `json:"og:title"`
+			Description string `json:"og:description"`
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&og)
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("link preview: HTTP %d", resp.StatusCode)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decode link preview: %w", err)
+		}
+		if og.Title == "" && og.Description == "" {
+			return nil, nil
+		}
+		site := og.Site
+		if u, err := url.Parse(link); site == "" && err == nil {
+			site = u.Hostname()
+		}
+		return &backend.LinkPreview{
+			URL: link, Site: site, Title: og.Title, Description: og.Description,
+		}, nil
+	}
+	return nil, nil
+}
+
 func (mx *MxBackend) AcknowledgeMedia(ctx context.Context, msg backend.Message) {}
 
 // User search.

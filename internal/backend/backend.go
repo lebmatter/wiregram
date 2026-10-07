@@ -49,7 +49,16 @@ type Message struct {
 	MediaLabel string
 	Multiline  bool
 	Reactions  []MessageReaction
+	Preview    *LinkPreview
 	Raw        any
+}
+
+// LinkPreview is a server-supplied summary of a link in a message.
+type LinkPreview struct {
+	URL         string
+	Site        string
+	Title       string
+	Description string
 }
 
 // userCandidate is one row in the user search.
@@ -173,6 +182,13 @@ type UnreadFetcher interface {
 	// UnreadMessages returns at most limit of the newest incoming unread
 	// messages, oldest first.
 	UnreadMessages(ctx context.Context, ch ChatEntry, limit int) ([]Message, error)
+}
+
+// LinkPreviewer is implemented by backends whose server can summarise a URL
+// on request, for messages that arrive without a preview.
+type LinkPreviewer interface {
+	// LinkPreview returns nil when the server has nothing for url.
+	LinkPreview(ctx context.Context, url string) (*LinkPreview, error)
 }
 
 // NewestIncoming keeps the last limit messages the user did not send.

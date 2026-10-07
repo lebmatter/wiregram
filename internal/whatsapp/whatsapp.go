@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mime"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1148,6 +1149,7 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(evt.Message),
 		Forwarded:  isForwarded(evt.Message),
+		Preview:    waPreview(evt.Message),
 		Raw:        evt,
 	}
 }
@@ -1190,6 +1192,23 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(m),
 		Forwarded:  isForwarded(m),
+		Preview:    waPreview(m),
+	}
+}
+
+// waPreview returns the link preview the sender's phone attached, if any.
+func waPreview(m *waE2E.Message) *backend.LinkPreview {
+	ext := m.GetExtendedTextMessage()
+	if ext == nil || ext.GetTitle() == "" {
+		return nil
+	}
+	link := ext.GetMatchedText()
+	site := link
+	if u, err := url.Parse(link); err == nil && u.Hostname() != "" {
+		site = u.Hostname()
+	}
+	return &backend.LinkPreview{
+		URL: link, Site: site, Title: ext.GetTitle(), Description: ext.GetDescription(),
 	}
 }
 

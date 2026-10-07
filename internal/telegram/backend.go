@@ -118,6 +118,7 @@ func tgToMessage(c *Client, m *tg.Message) backend.Message {
 		MediaLabel: formatMedia(m.Media),
 		Multiline:  len(m.Message) > 0 && (m.Message[0] == '\n' || m.Message[len(m.Message)-1] == '\n' || containsNewline(m.Message)),
 		Reactions:  reactions,
+		Preview:    webPagePreview(m.Media),
 		Raw:        m,
 	}
 }
