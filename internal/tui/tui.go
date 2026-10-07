@@ -191,6 +191,21 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case tuiChipsTick:
 		return m, chipsTick()
 
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		left := 0
+		if m.twoPane() {
+			left = sidebarWidth
+		}
+		if mouse.Button != tea.MouseLeft || !m.chatOpen || m.chat.locked || m.searchOpen ||
+			mouse.X < left || mouse.Y >= m.bodyHeight() {
+			return m, nil
+		}
+		m.focus = focusChat
+		var cmd tea.Cmd
+		m.chat, cmd = m.chat.Update(chatClick{mouse.Y})
+		return m, cmd
+
 	case busEvent:
 		// The root owns the account's only UI subscription and routes events
 		// for the open chat, so the list and chat never race for them.
@@ -420,6 +435,11 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) footer() string {
+	if m.chatOpen && !m.searchOpen && !m.fullHelp && (m.focus == focusChat || m.chat.opening != nil) {
+		if line, ok := m.chat.footerLine(); ok {
+			return truncate(line, m.width)
+		}
+	}
 	var keys []helpKey
 	notice := m.list.notice()
 	switch {
@@ -456,6 +476,9 @@ func (m tuiModel) footer() string {
 func (m tuiModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	// Clicks open media; this takes over native selection (Shift+drag in most
+	// terminals).
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 

@@ -7,7 +7,8 @@ AGENTS.md, whose durable rules were folded in here.)
 
 ## Project
 
-Wiregram is a minimal multi-backend chat client for the terminal, in Go. No mouse, no cgo. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
+Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. The only mouse input is a
+left click on a chat message, which opens its attachment with `xdg-open`. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 

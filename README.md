@@ -40,7 +40,10 @@ make
   Wiregram asks you to log in.
 - **WhatsApp** needs no config. Add it from the account picker and pair with a code.
   WhatsApp may ban numbers that use unofficial clients.
-- **Media** opens in `mpv`. Run Wiregram inside Kitty to see images inline.
+- **Media** opens in `mpv` with `o`. Run Wiregram inside Kitty to see images inline.
+  Or click a media message to download it to a private temp folder and open it in
+  your default app (`xdg-open`, or `open` on macOS). Hold Shift while dragging to
+  select text.
 
 ## Chat Agents
 

@@ -95,7 +95,9 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 }
 
 // Generic selected lines rendering.
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, replying *backend.Message, typing bool, width, height int) ([]string, string) {
+// genericSelectedLines also returns, for each line, the index of the message
+// it belongs to (-1 for none) so mouse clicks can find their message.
+func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, replying *backend.Message, typing bool, width, height int) ([]string, []int) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -144,11 +146,12 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
-		lines := []string{}
+		lines, owners := []string{}, []int{}
 		if replying != nil {
 			lines = append(lines, textfmt.ClipLine("replying to "+backend.GenericReplySummary(*replying, entry), lineWidth))
+			owners = append(owners, -1)
 		}
-		return lines, ""
+		return lines, owners
 	}
 	blocks := make(map[int][]string)
 	block := func(i int) []string {
@@ -181,22 +184,24 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		used += len(next)
 	}
 	lines := make([]string, 0, used+1)
-	readID := ""
+	owners := make([]int, 0, used+1)
 	for i := start; i < end; i++ {
 		visible := block(i)
 		if i == selected && len(visible) > available {
 			visible = selectedBlock
 		}
 		lines = append(lines, visible...)
-		if !messages[i].Outgoing && messages[i].ID > readID {
-			readID = messages[i].ID
+		for range visible {
+			owners = append(owners, i)
 		}
 	}
 	if replying != nil {
 		lines = append(lines, textfmt.ClipLine("replying to "+backend.GenericReplySummary(*replying, entry), lineWidth))
+		owners = append(owners, -1)
 	}
 	if typing {
 		lines = append(lines, textfmt.ClipLine(textfmt.Plain(entry.Title)+" is typing...", lineWidth))
+		owners = append(owners, -1)
 	}
-	return lines, readID
+	return lines, owners
 }

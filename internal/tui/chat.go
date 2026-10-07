@@ -2,12 +2,15 @@ package tui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image/color"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -71,6 +74,7 @@ type chatViewModel struct {
 
 	upload  uploadPanel
 	uploads []pendingUpload
+	opening *mediaDownload
 	spin    spinner.Model
 
 	threadRoot  string
@@ -123,6 +127,25 @@ type mediaReady struct {
 	cleanup func()
 }
 type mediaFinished struct{ err error }
+
+// chatClick is a left click at row y of the chat pane, counted from its top
+// border.
+type chatClick struct{ y int }
+
+type mediaOpened struct {
+	filename string
+	err      error
+}
+
+// mediaDownload is the click-to-open download in progress; bytes is polled
+// from the partial file on disk.
+type mediaDownload struct {
+	filename string
+	part     string
+	bytes    int64
+}
+
+type mediaProgressTick struct{}
 type lockTick struct{}
 
 type chatReactionResult struct {
@@ -417,7 +440,7 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 	case spinner.TickMsg:
 		// Let the spinner stop once nothing is loading or uploading.
-		if m.messages != nil && len(m.uploads) == 0 {
+		if m.messages != nil && len(m.uploads) == 0 && m.opening == nil {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -487,6 +510,26 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	case mediaFinished:
 		if msg.err != nil && !isContextCanceled(msg.err) {
 			m.notice = msg.err.Error()
+		}
+
+	case chatClick:
+		return m.handleClick(msg)
+
+	case mediaProgressTick:
+		if m.opening == nil {
+			return m, nil
+		}
+		m.opening.bytes = dirSize(m.opening.part)
+		return m, mediaProgressCmd()
+
+	case mediaOpened:
+		m.opening = nil
+		if msg.err != nil {
+			if !isContextCanceled(msg.err) {
+				m.notice = msg.err.Error()
+			}
+		} else {
+			m.notice = "opened " + msg.filename
 		}
 
 	case emojiPicked:
@@ -1085,6 +1128,162 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 		}
 		return mediaReady{cmd, cleanup}
 	}
+}
+
+// handleClick selects the clicked message and, when it carries media, opens
+// it in the desktop's default application.
+func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
+	m = m.resetLock()
+	i, ok := m.messageAt(msg.y)
+	if !ok {
+		return m, nil
+	}
+	m.selected = i
+	sel := m.messages[i]
+	filename, ok := m.b.MediaSaveable(sel)
+	if !ok || m.opening != nil {
+		return m, nil
+	}
+	key := fmt.Sprintf("%s\x00%v\x00%s", m.b.AccountLabel(), m.entry.ID, sel.ID)
+	sum := sha256.Sum256([]byte(key))
+	dir := filepath.Join(mediaCacheRoot(), hex.EncodeToString(sum[:12]))
+	m.notice = ""
+	m.opening = &mediaDownload{filename: filename, part: dir + ".part"}
+	return m, tea.Batch(m.openExternalCmd(sel, dir, filename), mediaProgressCmd(), m.spin.Tick)
+}
+
+func mediaProgressCmd() tea.Cmd {
+	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return mediaProgressTick{} })
+}
+
+// dirSize sums the sizes of the files directly inside dir.
+func dirSize(dir string) int64 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
+}
+
+// footerLine replaces the help bar while a clicked attachment downloads, or
+// says how to open the selected message's attachment.
+func (m chatViewModel) footerLine() (string, bool) {
+	if m.opening != nil {
+		text := "downloading " + m.opening.filename
+		if m.opening.bytes > 0 {
+			text += " · " + textfmt.FormatSize(m.opening.bytes)
+		}
+		return m.spin.View() + styleSubtle.Render(text+"…"), true
+	}
+	if m.notice != "" || m.subMode != chatSubNone || m.privateMode {
+		return "", false
+	}
+	sel, ok := m.selectedMsg()
+	if !ok {
+		return "", false
+	}
+	filename, ok := m.b.MediaSaveable(sel)
+	if !ok {
+		return "", false
+	}
+	return styleAccent.Render("click") + styleSubtle.Render(" to download and open "+filename), true
+}
+
+// messageAt maps a row of the chat pane to the message drawn there, using
+// the same layout as chatBox and messageLines.
+func (m chatViewModel) messageAt(y int) (int, bool) {
+	if m.subMode != chatSubNone || m.privateMode || m.messages == nil {
+		return 0, false
+	}
+	inner, bodyHeight := m.width-4, m.height-2
+	height := bodyHeight - len(m.composer(inner, m.focused)) - len(m.uploads)
+	row := y - 1
+	if row < 0 || row >= height {
+		return 0, false
+	}
+	_, owners := genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages,
+		nil, false, inner, height)
+	// bottomLines pads short content at the top and trims long content there.
+	row -= max(0, height-len(owners))
+	row += max(0, len(owners)-height)
+	if row < 0 || row >= len(owners) || owners[row] < 0 {
+		return 0, false
+	}
+	return owners[row], true
+}
+
+// openExternalCmd downloads the attachment into a per-user temp cache unless
+// an earlier click already did, then hands it to xdg-open (open on macOS).
+func (m chatViewModel) openExternalCmd(sel backend.Message, dir, filename string) tea.Cmd {
+	ctx := m.ctx
+	b := m.b
+	return func() tea.Msg {
+		if err := ensureMediaCache(); err != nil {
+			return mediaOpened{err: err}
+		}
+		path := filepath.Join(dir, filename)
+		if _, err := os.Stat(path); err != nil {
+			// Download beside the final directory and rename it into place, so
+			// an interrupted download is never mistaken for a cached one.
+			part := dir + ".part"
+			if err := os.RemoveAll(part); err != nil {
+				return mediaOpened{err: fmt.Errorf("clear partial download: %w", err)}
+			}
+			if err := os.Mkdir(part, 0o700); err != nil {
+				return mediaOpened{err: fmt.Errorf("create download directory: %w", err)}
+			}
+			if err := b.SaveMedia(ctx, sel, part); err != nil {
+				_ = os.RemoveAll(part)
+				return mediaOpened{err: err}
+			}
+			if err := os.Rename(part, dir); err != nil {
+				return mediaOpened{err: fmt.Errorf("store download: %w", err)}
+			}
+		}
+		opener := "xdg-open"
+		if runtime.GOOS == "darwin" {
+			opener = "open"
+		}
+		if _, err := exec.LookPath(opener); err != nil {
+			return mediaOpened{err: fmt.Errorf("install %s to open media", opener)}
+		}
+		// Not tied to ctx: the viewer should outlive a chat switch.
+		cmd := exec.Command(opener, path)
+		if err := cmd.Start(); err != nil {
+			return mediaOpened{err: fmt.Errorf("run %s: %w", opener, err)}
+		}
+		go func() { _ = cmd.Wait() }()
+		return mediaOpened{filename: filename}
+	}
+}
+
+// mediaCacheRoot is the private directory under the system temp dir that
+// holds clicked attachments.
+func mediaCacheRoot() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("wiregram-%d", os.Getuid()))
+}
+
+// ensureMediaCache creates mediaCacheRoot, refusing one another user could
+// have planted.
+func ensureMediaCache() error {
+	dir := mediaCacheRoot()
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("create media cache: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("check media cache: %w", err)
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("media cache %s is not a private directory", dir)
+	}
+	return nil
 }
 
 // View renders the chat pane as a box exactly m.width×m.height cells.
