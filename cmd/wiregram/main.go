@@ -85,7 +85,8 @@ Keyboard shortcuts:
     Esc               Back to chat list
     Ctrl+C            Close chat
 
-  Thread
+  Thread (opens by itself on a threaded message in wide terminals)
+    Up/Down           Move through the chat's messages
     Enter             Reply in thread
     Esc               Close thread
 

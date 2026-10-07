@@ -128,9 +128,9 @@ type mediaReady struct {
 }
 type mediaFinished struct{ err error }
 
-// chatClick is a left click at row y of the chat pane, counted from its top
-// border.
-type chatClick struct{ y int }
+// chatClick is a left click at column x and row y of the chat pane, counted
+// from its left and top borders.
+type chatClick struct{ x, y int }
 
 type mediaOpened struct {
 	filename string
@@ -690,12 +690,16 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if m.selected > 0 {
 			m.selected--
 		} else if !m.historyExhausted && len(m.messages) > 0 {
-			return m, m.loadOlderHistory()
+			var cmd tea.Cmd
+			m, cmd = m.followThread()
+			return m, tea.Batch(cmd, m.loadOlderHistory())
 		}
+		return m.followThread()
 	case "down":
 		if m.selected+1 < len(m.messages) {
 			m.selected++
 		}
+		return m.followThread()
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
@@ -736,7 +740,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		for i, msg := range m.messages {
 			if msg.ID == sel.ReplyToID {
 				m.selected = i
-				return m, nil
+				return m.followThread()
 			}
 		}
 		m.notice = "the quoted message is not loaded; scroll up to load older messages"
@@ -940,7 +944,7 @@ func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		}
 		m.subMode = chatSubNone
 		m.searchResults = nil
-		return m, nil
+		return m.followThread()
 	default:
 		return m.searchEdited(msg)
 	}
@@ -1134,22 +1138,24 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 // it in the desktop's default application.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	m = m.resetLock()
-	i, ok := m.messageAt(msg.y)
+	i, ok := m.messageAt(msg.x, msg.y)
 	if !ok {
 		return m, nil
 	}
 	m.selected = i
 	sel := m.messages[i]
+	m, follow := m.followThread()
 	filename, ok := m.b.MediaSaveable(sel)
 	if !ok || m.opening != nil {
-		return m, nil
+		return m, follow
 	}
 	key := fmt.Sprintf("%s\x00%v\x00%s", m.b.AccountLabel(), m.entry.ID, sel.ID)
 	sum := sha256.Sum256([]byte(key))
 	dir := filepath.Join(mediaCacheRoot(), hex.EncodeToString(sum[:12]))
 	m.notice = ""
 	m.opening = &mediaDownload{filename: filename, part: dir + ".part"}
-	return m, tea.Batch(m.openExternalCmd(sel, dir, filename), mediaProgressCmd(), m.spin.Tick)
+	return m, tea.Batch(follow, m.openExternalCmd(sel, dir, filename), mediaProgressCmd(),
+		m.spin.Tick)
 }
 
 func mediaProgressCmd() tea.Cmd {
@@ -1197,12 +1203,17 @@ func (m chatViewModel) footerLine() (string, bool) {
 
 // messageAt maps a row of the chat pane to the message drawn there, using
 // the same layout as chatBox and messageLines.
-func (m chatViewModel) messageAt(y int) (int, bool) {
-	if m.subMode != chatSubNone || m.privateMode || m.messages == nil {
+func (m chatViewModel) messageAt(x, y int) (int, bool) {
+	width, split := m.threadSplit()
+	if (m.subMode != chatSubNone && !split) || m.privateMode || m.messages == nil {
 		return 0, false
 	}
-	inner, bodyHeight := m.width-4, m.height-2
-	height := bodyHeight - len(m.composer(inner, m.focused)) - len(m.uploads)
+	if x >= width {
+		return 0, false
+	}
+	// The chat beside an open thread draws its composer unfocused.
+	inner, bodyHeight := width-4, m.height-2
+	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
 	row := y - 1
 	if row < 0 || row >= height {
 		return 0, false
@@ -1289,8 +1300,7 @@ func ensureMediaCache() error {
 // View renders the chat pane as a box exactly m.width×m.height cells.
 func (m chatViewModel) View() string {
 	if m.subMode == chatSubThread {
-		if m.width >= 90 {
-			chatWidth := m.width * 3 / 5
+		if chatWidth, split := m.threadSplit(); split {
 			return lipgloss.JoinHorizontal(lipgloss.Top,
 				m.chatBox(chatWidth, m.height, false),
 				m.threadBox(m.width-chatWidth, m.height, m.focused))
@@ -1466,6 +1476,7 @@ var chatEditHelp = []helpKey{
 }
 
 var chatThreadHelp = []helpKey{
+	{"↑↓", "messages"},
 	{"⏎", "reply in thread"},
 	{"esc", "close thread"},
 }

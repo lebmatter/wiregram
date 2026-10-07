@@ -51,6 +51,41 @@ func threadMessages(messages []backend.Message, rootID string) []backend.Message
 	return out
 }
 
+// threadPaneMinWidth is the chat pane width from which the thread shows beside
+// the chat instead of replacing it.
+const threadPaneMinWidth = 90
+
+// threadSplit returns the chat box width while the thread shows beside it.
+func (m chatViewModel) threadSplit() (int, bool) {
+	if m.subMode != chatSubThread || m.width < threadPaneMinWidth {
+		return m.width, false
+	}
+	return m.width * 3 / 5, true
+}
+
+// followThread opens the selected message's thread beside the chat while
+// browsing, and closes it once the selection leaves every thread.
+func (m chatViewModel) followThread() (chatViewModel, tea.Cmd) {
+	if m.width < threadPaneMinWidth || m.privateMode {
+		return m, nil
+	}
+	sel, ok := m.selectedMsg()
+	if !ok {
+		return m, nil
+	}
+	root := threadRootOf(m.messages, sel)
+	switch {
+	case len(threadMessages(m.messages, root.ID)) < 2:
+		m.subMode = chatSubNone
+		m.threadRoot = ""
+		return m, nil
+	case root.ID == m.threadRoot:
+		m.subMode = chatSubThread // keeps the half-typed reply
+		return m, nil
+	}
+	return m.openThread(sel)
+}
+
 func (m chatViewModel) openThread(sel backend.Message) (chatViewModel, tea.Cmd) {
 	root := threadRootOf(m.messages, sel)
 	m.threadRoot = root.ID
@@ -67,6 +102,12 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		m.subMode = chatSubNone
 		m.threadRoot = ""
 		return m, nil
+	case "up", "down":
+		if m.width >= threadPaneMinWidth {
+			// The chat beside the thread keeps moving its selection.
+			m.subMode = chatSubNone
+			return m.handleKey(msg)
+		}
 	case "enter":
 		text := strings.TrimSpace(m.threadInput.Value())
 		if text == "" {

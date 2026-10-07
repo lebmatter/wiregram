@@ -221,7 +221,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		m.focus = focusChat
 		var cmd tea.Cmd
-		m.chat, cmd = m.chat.Update(chatClick{mouse.Y})
+		m.chat, cmd = m.chat.Update(chatClick{mouse.X - left, mouse.Y})
 		return m, cmd
 
 	case busEvent:
