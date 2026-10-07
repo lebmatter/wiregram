@@ -251,6 +251,19 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		// A paste goes wherever typing would.
+		if !m.paneOpen() || m.focus != focusChat || (m.chatOpen && m.chat.locked) {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		if m.searchOpen {
+			m.search, cmd = m.search.Update(msg)
+		} else if m.chatOpen {
+			m.chat, cmd = m.chat.resetLock().updateInput(msg)
+		}
+		return m, cmd
 	}
 
 	if m.isListMsg(msg) {
@@ -262,10 +275,15 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	if m.searchOpen {
 		m.search, searchCmd = m.search.Update(msg)
 	}
+	var inputCmd tea.Cmd
 	if m.chatOpen {
 		m.chat, chatCmd = m.chat.Update(msg)
+		// Ctrl+V comes back from the input as a message of its own.
+		if !m.searchOpen && m.focus == focusChat {
+			m.chat, inputCmd = m.chat.updateInput(msg)
+		}
 	}
-	return m, tea.Batch(searchCmd, chatCmd)
+	return m, tea.Batch(searchCmd, chatCmd, inputCmd)
 }
 
 func (m tuiModel) isListMsg(msg tea.Msg) bool {

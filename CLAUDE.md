@@ -88,7 +88,8 @@ These are project constraints, not suggestions:
   (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as
   `[TG1]`: backend plus Alt+N number. Chat Agents are created through the
   scripted bubble wizard (`internal/tui/wizard.go`): fixed options or typed
-  values only, never free chat with a model.
+  values only, never free chat with a model. Adding an account (network,
+  server URL, then the sign-in prompts) uses the same bubble style in copper.
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat.
 

@@ -407,7 +407,7 @@ func (m agentModeModel) startWizard(purpose wizardPurpose, target int64) (tea.Mo
 	m.purpose, m.target = purpose, target
 	switch purpose {
 	case wizNewProvider:
-		m.wiz = newWizard("Connect an AI provider", m.providerSteps(false), nil)
+		m.wiz = newWizard("Connect an AI provider", colorAgent, m.providerSteps(false), nil)
 	case wizEditProvider:
 		initial := wizardAnswers{"preset": "custom"}
 		for _, p := range m.providers {
@@ -416,14 +416,14 @@ func (m agentModeModel) startWizard(purpose wizardPurpose, target int64) (tea.Mo
 				initial["env"], initial["model"] = p.APIKeyEnv, p.Model
 			}
 		}
-		m.wiz = newWizard("Edit provider", m.providerSteps(true), initial)
+		m.wiz = newWizard("Edit provider", colorAgent, m.providerSteps(true), initial)
 	case wizNewAgent:
-		m.wiz = newWizard("New Chat Agent", m.agentSteps(0), nil)
+		m.wiz = newWizard("New Chat Agent", colorAgent, m.agentSteps(0), nil)
 	case wizEditAgent:
-		m.wiz = newWizard("Edit Chat Agent", m.agentSteps(target), m.agentAnswers(target))
+		m.wiz = newWizard("Edit Chat Agent", colorAgent, m.agentSteps(target), m.agentAnswers(target))
 	case wizConnect:
 		initial := wizardAnswers{"accounts": m.boundKeys(target)}
-		m.wiz = newWizard("Connect accounts", []wizardStep{m.accountsStep(target)}, initial)
+		m.wiz = newWizard("Connect accounts", colorAgent, []wizardStep{m.accountsStep(target)}, initial)
 	}
 	m.screen = scrWizard
 	return m, m.wiz.Init()

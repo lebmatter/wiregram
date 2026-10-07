@@ -211,10 +211,12 @@ func (m userSearchModel) Update(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
-	// Spinner ticks, filter results and status-message timeouts.
-	var cmd tea.Cmd
+	// Spinner ticks, filter results and status-message timeouts go to the
+	// list; pastes go to the search box.
+	var cmd, edit tea.Cmd
 	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	m, edit = m.edited(msg)
+	return m, tea.Batch(cmd, edit)
 }
 
 // finished ends an open or forward; on failure the picker stays up with the error.
@@ -269,6 +271,11 @@ func (m userSearchModel) handleKey(msg tea.KeyPressMsg) (userSearchModel, tea.Cm
 		})
 	}
 	// Everything else edits the search box.
+	return m.edited(msg)
+}
+
+// edited passes msg to the search box and searches again if the query changed.
+func (m userSearchModel) edited(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	if q := strings.TrimSpace(m.input.Value()); q != m.query {

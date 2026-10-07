@@ -47,6 +47,7 @@ type wizardStep struct {
 
 type wizardModel struct {
 	title   string
+	accent  color.Color
 	steps   []wizardStep
 	initial wizardAnswers
 	answers wizardAnswers
@@ -66,8 +67,10 @@ func say(text string) func(wizardAnswers) string {
 	return func(wizardAnswers) string { return text }
 }
 
-func newWizard(title string, steps []wizardStep, initial wizardAnswers) wizardModel {
-	m := wizardModel{title: title, steps: steps, initial: initial}
+func newWizard(
+	title string, accent color.Color, steps []wizardStep, initial wizardAnswers,
+) wizardModel {
+	m := wizardModel{title: title, accent: accent, steps: steps, initial: initial}
 	return m.restart()
 }
 
@@ -248,16 +251,11 @@ func (m wizardModel) helpKeys() []helpKey {
 // view renders the transcript as bubbles, newest at the bottom.
 func (m wizardModel) view(width, height int) string {
 	inner := width - 4
-	bubbleWidth := min(64, max(20, inner*3/4))
+	bubbleWidth := wizardBubbleWidth(inner)
+	accent := lipgloss.NewStyle().Foreground(m.accent)
 	var lines []string
-	add := func(block string) { lines = append(lines, strings.Split(block, "\n")...) }
-	ask := func(text string) {
-		add(lipgloss.NewStyle().Foreground(colorAgent).Bold(true).Render("wiregram"))
-		add(wizardBubble(text, bubbleWidth, colorAgent))
-	}
 	for _, i := range m.done {
 		step := m.steps[i]
-		ask(step.ask(m.answers))
 		reply := m.answers[step.key]
 		if step.show != nil {
 			reply = step.show(reply, m.answers)
@@ -265,28 +263,27 @@ func (m wizardModel) view(width, height int) string {
 		if reply == "" {
 			reply = "(skip)"
 		}
-		add(lipgloss.PlaceHorizontal(inner, lipgloss.Right, styleSubtle.Render("you")))
-		add(lipgloss.PlaceHorizontal(inner, lipgloss.Right, wizardBubble(reply, bubbleWidth, colorDim)))
-		add("")
+		lines = wizardAsk(lines, step.ask(m.answers), bubbleWidth, m.accent)
+		lines = wizardReply(lines, reply, inner, bubbleWidth)
 	}
 	if m.cur < len(m.steps) {
 		step := m.steps[m.cur]
-		ask(step.ask(m.answers))
+		lines = wizardAsk(lines, step.ask(m.answers), bubbleWidth, m.accent)
 		switch step.kind {
 		case wizText:
 			m.input.SetWidth(max(10, inner-4))
-			add(styleAgent.Render("› ") + m.input.View())
+			lines = append(lines, accent.Render("› ")+m.input.View())
 		default:
 			for j, o := range step.options(m.answers) {
 				marker := "  "
 				if j == m.cursor {
-					marker = styleAgent.Render("> ")
+					marker = accent.Render("> ")
 				}
 				box := ""
 				if step.kind == wizMulti {
 					box = "[ ] "
 					if m.picked[o.value] {
-						box = styleAgent.Render("[x] ")
+						box = accent.Render("[x] ")
 					}
 				}
 				row := marker + box + o.label
@@ -295,14 +292,29 @@ func (m wizardModel) view(width, height int) string {
 				} else if j == m.cursor {
 					row = marker + box + styleTitle.Render(o.label)
 				}
-				add(row)
+				lines = append(lines, row)
 			}
 		}
 		if m.err != "" {
-			add(styleError.Render(m.err))
+			lines = append(lines, styleError.Render(m.err))
 		}
 	}
-	return renderBox(m.title, bottomLines(lines, height-2), width, height, colorAgent)
+	return renderBox(m.title, bottomLines(lines, height-2), width, height, m.accent)
+}
+
+func wizardBubbleWidth(inner int) int { return min(64, max(20, inner*3/4)) }
+
+// wizardAsk appends wiregram's question bubble to lines.
+func wizardAsk(lines []string, text string, width int, accent color.Color) []string {
+	lines = append(lines, lipgloss.NewStyle().Foreground(accent).Bold(true).Render("wiregram"))
+	return append(lines, strings.Split(wizardBubble(text, width, accent), "\n")...)
+}
+
+// wizardReply appends the user's right-aligned answer bubble and a gap to lines.
+func wizardReply(lines []string, text string, inner, width int) []string {
+	lines = append(lines, lipgloss.PlaceHorizontal(inner, lipgloss.Right, styleSubtle.Render("you")))
+	bubble := lipgloss.PlaceHorizontal(inner, lipgloss.Right, wizardBubble(text, width, colorDim))
+	return append(append(lines, strings.Split(bubble, "\n")...), "")
 }
 
 func wizardBubble(text string, width int, border color.Color) string {

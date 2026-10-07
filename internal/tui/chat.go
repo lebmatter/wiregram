@@ -899,22 +899,50 @@ func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		m.searchResults = nil
 		return m, nil
 	default:
-		var cmd tea.Cmd
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		newQuery := strings.TrimSpace(m.searchInput.Value())
-		if newQuery != m.searchQuery {
-			m.searchQuery = newQuery
-			if newQuery != "" {
-				return m, tea.Batch(cmd, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
-					return chatSearchDebounce{}
-				}))
-			}
-			m.searchResults = nil
-			m.searchSelected = 0
-		}
-		return m, cmd
+		return m.searchEdited(msg)
 	}
 	return m, nil
+}
+
+// searchEdited passes msg to the search box and re-runs the query if it changed.
+func (m chatViewModel) searchEdited(msg tea.Msg) (chatViewModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	newQuery := strings.TrimSpace(m.searchInput.Value())
+	if newQuery != m.searchQuery {
+		m.searchQuery = newQuery
+		if newQuery != "" {
+			return m, tea.Batch(cmd, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+				return chatSearchDebounce{}
+			}))
+		}
+		m.searchResults = nil
+		m.searchSelected = 0
+	}
+	return m, cmd
+}
+
+// updateInput hands a non-key message, such as a paste, to the input on screen.
+func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
+	var cmd tea.Cmd
+	switch m.subMode {
+	case chatSubNone:
+		m.input, cmd = m.input.Update(msg)
+	case chatSubSearch:
+		return m.searchEdited(msg)
+	case chatSubEdit:
+		m.editInput, cmd = m.editInput.Update(msg)
+	case chatSubThread:
+		m.threadInput, cmd = m.threadInput.Update(msg)
+	case chatSubUpload:
+		if m.upload.step == uploadTyping {
+			m.upload.matches = nil
+		}
+		if m.upload.step != uploadPick {
+			m.upload.input, cmd = m.upload.input.Update(msg)
+		}
+	}
+	return m, cmd
 }
 
 func (m chatViewModel) handleEditKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {

@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -222,11 +224,10 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 }
 
 type addAccountModel struct {
-	selected int
-	prompt   *textinput.Model
-	result   string
-	width    int
-	height   int
+	wiz     wizardModel
+	answers wizardAnswers // nil when cancelled
+	width   int
+	height  int
 }
 
 var addAccountOptions = []struct {
@@ -239,101 +240,92 @@ var addAccountOptions = []struct {
 	{"whatsapp", "WhatsApp"},
 }
 
-func newAddAccountModel() addAccountModel {
-	w, h := termSize()
-	return addAccountModel{width: w, height: h}
+func addAccountSteps() []wizardStep {
+	needsServer := func(a wizardAnswers) bool {
+		return a["network"] == "mattermost" || a["network"] == "matrix"
+	}
+	return []wizardStep{
+		{
+			key:  "network",
+			kind: wizChoice,
+			ask:  say("Which network is the new account on?"),
+			options: func(wizardAnswers) []wizardOption {
+				var opts []wizardOption
+				for _, o := range addAccountOptions {
+					label := o.label + "  " + styleDim.Render(backendTag(o.key))
+					opts = append(opts, wizardOption{label: label, value: o.key})
+				}
+				return opts
+			},
+			show: func(v string, _ wizardAnswers) string {
+				for _, o := range addAccountOptions {
+					if o.key == v {
+						return o.label
+					}
+				}
+				return v
+			},
+		},
+		{
+			key:  "server",
+			kind: wizText,
+			ask: func(a wizardAnswers) string {
+				if a["network"] == "matrix" {
+					return "Which Matrix homeserver?"
+				}
+				return "What's your Mattermost server URL?"
+			},
+			skip: func(a wizardAnswers) bool { return !needsServer(a) },
+			validate: func(v string, _ wizardAnswers) error {
+				if u, err := url.Parse(withScheme(v)); err != nil || u.Host == "" {
+					return errors.New("That doesn't look like a server address.")
+				}
+				return nil
+			},
+		},
+	}
 }
 
-func (m addAccountModel) Init() tea.Cmd { return nil }
+// withScheme defaults a bare server address to https.
+func withScheme(s string) string {
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return s
+	}
+	return "https://" + s
+}
+
+func newAddAccountModel() addAccountModel {
+	w, h := termSize()
+	return addAccountModel{
+		wiz:    newWizard("Add account", colorAccent, addAccountSteps(), nil),
+		width:  w,
+		height: h,
+	}
+}
+
+func (m addAccountModel) Init() tea.Cmd { return m.wiz.Init() }
 
 func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-
-	case tea.KeyPressMsg:
-		if m.prompt != nil {
-			return m.updatePrompt(msg)
-		}
-		switch msg.String() {
-		case "esc", "ctrl+c", "ctrl+d":
-			return m, tea.Quit
-		case "k", "up":
-			if m.selected > 0 {
-				m.selected--
-			}
-		case "j", "down":
-			if m.selected < len(addAccountOptions)-1 {
-				m.selected++
-			}
-		case "enter":
-			opt := addAccountOptions[m.selected]
-			if opt.key == "mattermost" || opt.key == "matrix" {
-				ti := textinput.New()
-				ti.Focus()
-				m.prompt = &ti
-				return m, ti.Focus()
-			}
-			m.result = opt.key
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-func (m addAccountModel) updatePrompt(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+c", "ctrl+d":
-		m.prompt = nil
 		return m, nil
-	case "enter":
-		value := strings.TrimSpace(m.prompt.Value())
-		if value == "" {
-			m.prompt = nil
-			return m, nil
-		}
-		opt := addAccountOptions[m.selected]
-		if opt.key == "mattermost" {
-			if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
-				value = "https://" + value
-			}
-		} else if opt.key == "matrix" {
-			if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
-				value = "https://" + value
-			}
-		}
-		m.result = opt.key + ":" + value
+	case wizardFinished:
+		m.answers = msg.answers
 		return m, tea.Quit
-	default:
-		ti, cmd := m.prompt.Update(msg)
-		m.prompt = &ti
-		return m, cmd
+	case wizardCancelled:
+		return m, tea.Quit
 	}
+	var cmd tea.Cmd
+	m.wiz, cmd = m.wiz.Update(msg)
+	return m, cmd
 }
 
 func (m addAccountModel) View() tea.View {
 	bodyHeight := max(4, m.height-2)
-	inner := m.width - 4
-	rows := []string{styleSubtle.Render("Which network is the new account on?"), ""}
-	for i, opt := range addAccountOptions {
-		row := fmt.Sprintf("  %d  %s  %s", i+1, opt.label, styleDim.Render(backendTag(opt.key)))
-		if i == m.selected {
-			row = styleSelectedRow.Render(styleAccent.Render("> ") + row[2:])
-		}
-		rows = append(rows, row)
-	}
-	if m.prompt != nil {
-		title := "Server URL"
-		if addAccountOptions[m.selected].key == "matrix" {
-			title = "Homeserver URL"
-		}
-		rows = append(rows, "")
-		rows = append(rows, composerBox(title, nil, "› ", *m.prompt, min(inner, 60), colorAccent)...)
-	}
-	help := []helpKey{{"↑↓", "select"}, {"⏎", "confirm"}, {"esc", "cancel"}}
 	content := renderHeader(m.width) + "\n" +
-		renderBox("Add account", rows, m.width, bodyHeight, colorAccent) + "\n" +
-		renderFooter(help, false, "", m.width)
+		m.wiz.view(m.width, bodyHeight) + "\n" +
+		renderFooter(m.wiz.helpKeys(), false, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
@@ -346,18 +338,14 @@ func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.A
 	if err != nil {
 		return nil, fmt.Errorf("run add account: %w", err)
 	}
-	final := result.(addAccountModel)
-	if final.result == "" {
-		return nil, context.Canceled
-	}
-	parts := strings.SplitN(final.result, ":", 2)
-	switch parts[0] {
+	answers := result.(addAccountModel).answers
+	switch answers["network"] {
 	case "telegram":
 		return mgr.AddTelegram()
 	case "mattermost":
-		return mgr.AddMattermost(parts[1])
+		return mgr.AddMattermost(withScheme(answers["server"]))
 	case "matrix":
-		return mgr.AddMatrix(parts[1])
+		return mgr.AddMatrix(withScheme(answers["server"]))
 	case "whatsapp":
 		return mgr.AddWhatsApp()
 	}
@@ -372,11 +360,15 @@ type loginModel struct {
 	label    string
 	input    textinput.Model
 	current  *account.LoginPrompt
+	turns    []loginTurn
 	notice   string
 	done     bool
 	width    int
 	height   int
 }
+
+// loginTurn is one answered sign-in prompt, kept for the transcript.
+type loginTurn struct{ ask, reply string }
 
 type loginPromptMsg struct {
 	req account.LoginPrompt
@@ -476,6 +468,11 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			value := m.input.Value()
+			reply := value
+			if m.current.Masked {
+				reply = "••••••"
+			}
+			m.turns = append(m.turns, loginTurn{loginLabel(m.current.Label), reply})
 			m.current.Answer <- account.LoginAnswer{Text: value}
 			m.notice = ""
 			m.current = nil
@@ -486,28 +483,47 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	// Pastes, whether bracketed or Ctrl+V, arrive as their own messages.
+	if m.current != nil {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
 func (m loginModel) View() tea.View {
 	bodyHeight := max(4, m.height-2)
 	inner := m.width - 4
-	var rows []string
+	bubbleWidth := wizardBubbleWidth(inner)
+	var lines []string
+	for _, t := range m.turns {
+		lines = wizardAsk(lines, t.ask, bubbleWidth, colorAccent)
+		lines = wizardReply(lines, t.reply, inner, bubbleWidth)
+	}
 	if m.current != nil {
-		label := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(m.current.Label), ":"))
-		rows = append(rows, composerBox(label, nil, "› ", m.input, min(inner, 60), colorAccent)...)
+		lines = wizardAsk(lines, loginLabel(m.current.Label), bubbleWidth, colorAccent)
+		m.input.SetWidth(max(10, inner-4))
+		lines = append(lines, styleAccent.Render("› ")+m.input.View())
 	} else {
-		rows = append(rows, styleSubtle.Render("Waiting for server…"))
+		lines = append(lines, styleSubtle.Render("Waiting for server…"))
 	}
 	if m.notice != "" {
-		rows = append(rows, "", styleError.Render(textfmt.Plain(m.notice)))
+		lines = append(lines, styleError.Render(textfmt.Plain(m.notice)))
 	}
-	content := renderHeader(m.width) + "\n" +
-		renderBox("Sign in — "+m.label, rows, m.width, bodyHeight, colorAccent) + "\n" +
-		renderFooter([]helpKey{{"⏎", "submit"}, {"esc", "cancel"}}, false, "", m.width)
+	box := renderBox("Sign in — "+m.label, bottomLines(lines, bodyHeight-2),
+		m.width, bodyHeight, colorAccent)
+	content := renderHeader(m.width) + "\n" + box + "\n" +
+		renderFooter([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, false, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
+}
+
+// loginLabel turns a backend prompt like "Phone (international format): " into
+// bubble text.
+func loginLabel(label string) string {
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(label), ":"))
 }
 
 func tuiLogin(ctx context.Context, mgr *account.AccountManager, a *account.Account) error {
