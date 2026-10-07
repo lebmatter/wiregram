@@ -1,4 +1,4 @@
-[<img src="assets/wiregram-logo.svg" alt="Wiregram" width="360">](https://wiregram.chat)
+[<img src="assets/wiregram-animated.svg" alt="" height="117"> <img src="assets/wiregram-logo.svg" alt="Wiregram" width="360">](https://wiregram.chat)
 
 Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Matrix and
 Mattermost in one keyboard-driven window, with optional AI Chat Agents that answer your
