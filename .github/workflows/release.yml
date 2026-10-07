@@ -16,7 +16,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Asset names match the download links on docs/index.html.
+      # Asset names match the download links on the website.
       - name: Build
         env:
           CGO_ENABLED: "0"
