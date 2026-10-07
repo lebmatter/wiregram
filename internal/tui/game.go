@@ -291,7 +291,10 @@ func (m gameModeModel) onEnvelope(env game.Envelope) (gameModeModel, tea.Cmd) {
 		case m.waiting != "":
 			m.notice, m.waiting = textfmt.Plain(m.waiting)+" left", ""
 		case m.screen == gamePlay && m.matchID == env.ID:
-			m = m.endMatch()
+			// After game over the result stays up until esc.
+			if !m.over {
+				m = m.endMatch()
+			}
 			m.notice = textfmt.Plain(m.opponent()) + " left the game"
 		}
 	}
