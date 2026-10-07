@@ -8,7 +8,8 @@ AGENTS.md, whose durable rules were folded in here.)
 ## Project
 
 Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. The only mouse input is a
-left click on a chat message, which opens its attachment with `xdg-open`. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
+left click: on a chat message it opens the attachment with `xdg-open`, and on an Unread
+card it opens that chat. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 
@@ -75,6 +76,9 @@ These are project constraints, not suggestions:
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label), the active one
   expanded to its chats, archive and search. Enter on another account, or
   Alt+N, switches to it. The agents mode sidebar lists the agents.
+- Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
+  of full-width cards, one per chat with unread messages. The card border and tag show the
+  kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
 - At `twoPaneWidth` (100) columns and wider the chat list is a sidebar beside
   the chat and Tab moves focus; narrower terminals show one pane at a time.
 - The root `tuiModel` owns the screen's only bus subscription and routes

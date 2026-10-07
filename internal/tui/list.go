@@ -42,6 +42,7 @@ type chatListSwitch struct{ to *account.Account }
 type chatListRefresh struct{}
 type chatListAccounts struct{}
 type chatListSearch struct{}
+type chatListUnread struct{}
 type chatListArchiveToggle struct{}
 type chatListQuit struct{}
 type chatListDeleteDone struct{ err error }
@@ -85,7 +86,7 @@ func (m chatListModel) before() int {
 
 func (m chatListModel) maxIndex() int {
 	above, below := m.others()
-	return len(above) + len(m.entries) + 2 + len(below)
+	return len(above) + len(m.entries) + 3 + len(below)
 }
 
 // chatIndex maps the selection to an entry, if a chat is selected.
@@ -155,6 +156,8 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			return m, func() tea.Msg { return chatListRefresh{} }
 		case "/":
 			return m, func() tea.Msg { return chatListSearch{} }
+		case "u":
+			return m, func() tea.Msg { return chatListUnread{} }
 		case "a":
 			return m, func() tea.Msg { return chatListAccounts{} }
 		case "k", "up":
@@ -198,11 +201,13 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			case idx < len(m.entries):
 				return m, func() tea.Msg { return chatListChoice{idx} }
 			case idx == len(m.entries):
-				return m, func() tea.Msg { return chatListArchiveToggle{} }
+				return m, func() tea.Msg { return chatListUnread{} }
 			case idx == len(m.entries)+1:
+				return m, func() tea.Msg { return chatListArchiveToggle{} }
+			case idx == len(m.entries)+2:
 				return m, func() tea.Msg { return chatListSearch{} }
-			case idx-len(m.entries)-2 < len(below):
-				to := below[idx-len(m.entries)-2]
+			case idx-len(m.entries)-3 < len(below):
+				to := below[idx-len(m.entries)-3]
 				return m, func() tea.Msg { return chatListSwitch{to} }
 			default:
 				return m, func() tea.Msg { return chatListAccounts{} }
@@ -283,7 +288,11 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	if m.archived {
 		archive = backend.ChatEntry{Title: "Back to chats"}
 	}
-	for _, a := range []backend.ChatEntry{archive, {Title: "Search users…"}} {
+	unread := backend.ChatEntry{Title: "Unread"}
+	for _, e := range m.entries {
+		unread.Unread += e.Unread
+	}
+	for _, a := range []backend.ChatEntry{unread, archive, {Title: "Search users…"}} {
 		line := chatListLine(a, index == m.selected, focused, max(1, width-4))
 		if index != m.selected {
 			line = styleSubtle.Render(line)
@@ -325,6 +334,7 @@ var chatListHelp = []helpKey{
 	{"↑↓", "select"},
 	{"⏎", "open"},
 	{"/", "search"},
+	{"u", "unread"},
 	{"a", "manage accounts"},
 	{"r", "refresh"},
 	{"q", "quit"},

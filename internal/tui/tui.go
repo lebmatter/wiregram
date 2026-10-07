@@ -45,6 +45,8 @@ type tuiModel struct {
 	chatOpen      bool
 	search        userSearchModel
 	searchOpen    bool
+	unread        unreadModel
+	unreadOpen    bool
 	focus         tuiFocus
 	fullHelp      bool
 	result        *tuiResult
@@ -112,8 +114,9 @@ func (m tuiModel) Init() tea.Cmd {
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
 
-// paneOpen reports whether the right-hand pane holds a chat or the user search.
-func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen }
+// paneOpen reports whether the right-hand pane holds a chat, the user search
+// or the unread view.
+func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen || m.unreadOpen }
 
 // forwarding reports whether the forward picker is up over the chat it came from.
 func (m tuiModel) forwarding() bool { return m.chatOpen && m.searchOpen }
@@ -140,6 +143,11 @@ func (m tuiModel) sized() tuiModel {
 	} else if m.searchOpen {
 		m.search = m.search.resized(m.width, bodyHeight)
 	}
+	if m.unreadOpen && m.twoPane() {
+		m.unread = m.unread.resized(m.width-sidebarWidth, bodyHeight)
+	} else if m.unreadOpen {
+		m.unread = m.unread.resized(m.width, bodyHeight)
+	}
 	m.chat.embedded = m.twoPane()
 	m.chat.focused = m.focus == focusChat
 	m.list = m.list.scrolled()
@@ -153,6 +161,7 @@ func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
 
 func (m tuiModel) closeChat() tuiModel {
 	m.searchOpen = false
+	m.unreadOpen = false
 	if !m.chatOpen {
 		m.focus = focusList
 		return m
@@ -197,6 +206,14 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		left := 0
 		if m.twoPane() {
 			left = sidebarWidth
+		}
+		if mouse.Button == tea.MouseLeft && m.unreadOpen && mouse.X >= left &&
+			mouse.Y < m.bodyHeight() {
+			m.focus = focusChat
+			if i, ok := m.unread.cardAt(mouse.Y); ok {
+				return m.openChat(m.unread.cards[i].entry)
+			}
+			return m, nil
 		}
 		if mouse.Button != tea.MouseLeft || !m.chatOpen || m.chat.locked || m.searchOpen ||
 			mouse.X < left || mouse.Y >= m.bodyHeight() {
@@ -257,6 +274,19 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		return m.openChat(msg.entry)
 
+	case unreadLoaded:
+		if m.unreadOpen {
+			m.unread, _ = m.unread.Update(msg)
+		}
+		return m, nil
+
+	case unreadPicked:
+		return m.openChat(msg.entry)
+
+	case unreadClosed:
+		m = m.closeChat()
+		return m, nil
+
 	case userSearchClosed:
 		if m.forwarding() {
 			m.searchOpen = false
@@ -305,7 +335,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
-		chatListArchiveToggle, chatListSearch, chatListAccounts, chatListQuit, chatListSwitch,
+		chatListArchiveToggle, chatListSearch, chatListUnread, chatListAccounts, chatListQuit, chatListSwitch,
 		chatListDeleteDone:
 		return true
 	}
@@ -354,6 +384,10 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case k == "esc" && !paneFocused && m.paneOpen() && m.list.confirm == nil:
 		m = m.closeChat()
 		return m, loadDialogs(m.ctx, m.b, m.archived)
+	}
+	if paneFocused && m.unreadOpen {
+		m.unread, cmd = m.unread.Update(msg)
+		return m, cmd
 	}
 	if paneFocused && m.searchOpen {
 		if m.forwarding() {
@@ -422,6 +456,14 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.focus = focusChat
 		return m, cmd
 
+	case chatListUnread:
+		m = m.closeChat()
+		var cmd tea.Cmd
+		m.unread, cmd = newUnread(m.ctx, m.b, m.entries)
+		m.unreadOpen = true
+		m.focus = focusChat
+		return m.sized(), cmd
+
 	case chatListAccounts:
 		m = m.closeChat()
 		return m.done(tuiResult{accounts: true})
@@ -454,6 +496,11 @@ func (m tuiModel) footer() string {
 		if m.twoPane() {
 			keys = append(keys, helpKey{"tab", "chats"})
 		}
+	case m.unreadOpen && m.focus == focusChat:
+		keys = m.unread.helpKeys()
+		if m.twoPane() {
+			keys = append(keys, helpKey{"tab", "chats"})
+		}
 	case m.chatOpen && m.focus == focusChat:
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
@@ -461,6 +508,9 @@ func (m tuiModel) footer() string {
 		keys = append(keys, chatListHelp...)
 		if m.searchOpen {
 			keys = append(keys, helpKey{"tab", "search"}, helpKey{"esc", "close search"})
+		}
+		if m.unreadOpen {
+			keys = append(keys, helpKey{"tab", "unread"}, helpKey{"esc", "close unread"})
 		}
 		if m.chatOpen && !m.searchOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
@@ -508,12 +558,16 @@ func (m tuiModel) render() string {
 		switch {
 		case m.searchOpen:
 			right = m.search.view(m.width-sidebarWidth, bodyHeight, !listFocused)
+		case m.unreadOpen:
+			right = m.unread.view(!listFocused)
 		case m.chatOpen:
 			right = m.chat.View()
 		}
 		body = lipgloss.JoinHorizontal(lipgloss.Top, list, right)
 	case m.searchOpen:
 		body = m.search.view(m.width, bodyHeight, true)
+	case m.unreadOpen:
+		body = m.unread.view(true)
 	case m.chatOpen:
 		body = m.chat.View()
 	default:
