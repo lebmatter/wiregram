@@ -33,7 +33,7 @@
   }
   #splash svg { width: min(420px, 80vw); height: auto; opacity: 0; animation: fade .25s ease .1s forwards; }
   #splash .tag { opacity: 0; animation: fade .25s ease .35s forwards; }
-  #splash .status { position: relative; height: 1.5em; width: 26ch; white-space: nowrap; }
+  #splash .status { position: relative; height: 1.5em; width: 38ch; max-width: 100%; white-space: nowrap; }
   #splash .status span { position: absolute; inset: 0; opacity: 0; }
   #splash .connecting { animation: show 1.05s steps(1) .55s; }
   #splash .connecting::before {
@@ -127,10 +127,20 @@
   <svg><use href="#logo"/></svg>
   <div class="tag">a minimal chat client for the terminal</div>
   <div class="status">
-    <span class="connecting">connecting 2 accounts…</span>
+    <span class="connecting">connecting 2 accounts and 3 agents…</span>
     <span class="ready">ready</span>
   </div>
 </div>
+<script>
+  // Random 1-5 accounts and agents, never the same count.
+  (() => {
+    const a = 1 + Math.floor(Math.random() * 5);
+    const b = 1 + (a + Math.floor(Math.random() * 4)) % 5;
+    const n = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+    document.querySelector('#splash .connecting').textContent =
+      `connecting ${n(a, 'account')} and ${n(b, 'agent')}…`;
+  })();
+</script>
 
 <header class="hero">
   <div class="container">
