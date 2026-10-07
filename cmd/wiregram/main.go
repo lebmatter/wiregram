@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"wiregram/internal/account"
+	"wiregram/internal/base"
 	"wiregram/internal/config"
 	"wiregram/internal/store"
 	"wiregram/internal/textfmt"
@@ -21,6 +23,7 @@ import (
 )
 
 const usageText = `Usage: wiregram
+       wiregram base [-addr :8765]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
 Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
@@ -116,6 +119,16 @@ Keyboard shortcuts:
 
   Media viewer
     Esc, Ctrl+C       Stop and return to chat
+
+Game base:
+
+  wiregram base runs a game server that lists players, passes on challenges
+  and relays moves between matched players. Games run in the players'
+  wiregram, so any base can host every game. Set WIREGRAM_BASE_TOKEN to make
+  players enter that token. On the internet, put it behind a TLS proxy and
+  connect with wss://.
+
+    -addr ADDR        Listen address (default :8765)
 `
 
 func main() {
@@ -126,6 +139,9 @@ func main() {
 }
 
 func run() (result error) {
+	if len(os.Args) > 1 && os.Args[1] == "base" {
+		return runBase(os.Args[2:])
+	}
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -180,4 +196,24 @@ func run() (result error) {
 		return err
 	}
 	return tui.RunAccounts(ctx, accounts)
+}
+
+func runBase(args []string) error {
+	flags := flag.NewFlagSet("wiregram base", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	addr := flags.String("addr", ":8765", "listen address")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(os.Stdout, usageText)
+			return nil
+		}
+		return fmt.Errorf("parse arguments: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("wiregram base does not accept positional arguments")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	logger := log.New(os.Stderr, "wiregram base: ", log.LstdFlags)
+	return base.Run(ctx, *addr, os.Getenv("WIREGRAM_BASE_TOKEN"), logger)
 }
