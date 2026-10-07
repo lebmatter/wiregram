@@ -41,8 +41,9 @@ These are project constraints, not suggestions:
 - **No new dependencies** beyond the approved set: gotd/td,
   x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow,
   modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
-  and charm.land/bubbles/v2 (its list component pulls in
-  github.com/sahilm/fuzzy, approved as a transitive dependency).
+  charm.land/bubbles/v2 (its list component pulls in
+  github.com/sahilm/fuzzy, approved as a transitive dependency), and
+  github.com/yuin/gopher-lua for the embedded game scripts.
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -111,6 +112,9 @@ internal/
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
   agent/             SQLite store for agents, providers and message history
+  game/              game protocol, base client, sandboxed Lua runtime and the
+                     embedded game scripts (scripts/*.lua)
+  base/              `wiregram base`: lobby, invites and relay for game mode
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime
   tui/               BubbleTea screens and the account/mode loop (run.go)
