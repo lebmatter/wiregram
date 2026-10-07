@@ -28,6 +28,10 @@ end
 
 function game.over() return dead end
 
+function game.result()
+  if dead then return "lose" end
+end
+
 local flaps = { space = true, up = true, w = true, k = true }
 
 function game.key(_, key)

@@ -37,6 +37,10 @@ function game.over() return winner ~= nil end
 local ups = { up = true, k = true, w = true }
 local downs = { down = true, j = true, s = true }
 
+function game.result(seat)
+  if winner then return winner == seat and "win" or "lose" end
+end
+
 function game.key(seat, key)
   if winner then return end
   local d = (ups[key] and -1) or (downs[key] and 1)

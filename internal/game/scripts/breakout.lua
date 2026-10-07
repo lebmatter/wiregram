@@ -42,6 +42,11 @@ end
 
 function game.over() return lives == 0 or left == 0 end
 
+function game.result()
+  if left == 0 then return "win" end
+  if lives == 0 then return "lose" end
+end
+
 local lefts = { left = true, a = true, h = true }
 local rights = { right = true, d = true, l = true }
 

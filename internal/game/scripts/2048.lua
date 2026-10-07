@@ -46,6 +46,11 @@ end
 
 function game.over() return won or stuck end
 
+function game.result()
+  if won then return "win" end
+  if stuck then return "lose" end
+end
+
 -- slide packs one line of values toward index 1, merging each pair once.
 local function slide(line)
   local out, gained = {}, 0

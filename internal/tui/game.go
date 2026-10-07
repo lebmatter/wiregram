@@ -77,6 +77,7 @@ type gameModeModel struct {
 	board       []string
 	status      string
 	over        bool
+	result      string // game.result for our seat once over
 
 	notice   string
 	fullHelp bool
@@ -335,7 +336,6 @@ func (m gameModeModel) challenged(env game.Envelope) gameModeModel {
 			from, s.Info.Name, s.Info.MinW+4, s.Info.MinH+6)
 	default:
 		m.invite = &env
-		m.notice = fmt.Sprintf("%s challenges you to %s — y/n", from, s.Info.Name)
 		return m
 	}
 	return m.send(game.Envelope{T: game.TDecline, ID: env.ID})
@@ -351,7 +351,7 @@ func (m gameModeModel) startMatch(env game.Envelope) (gameModeModel, tea.Cmd) {
 	}
 	m.invite, m.waiting, m.notice = nil, "", ""
 	m.matchID, m.script, m.seat, m.names = env.ID, s, env.Seat, env.Names
-	m.board, m.status, m.over = nil, "", false
+	m.board, m.status, m.over, m.result = nil, "", false, ""
 	m.screen = gamePlay
 	if m.seat == 2 {
 		m.status = "waiting for " + textfmt.Plain(m.names[0])
@@ -391,7 +391,7 @@ func (m gameModeModel) onPayload(p json.RawMessage) (gameModeModel, tea.Cmd) {
 			board[i] = textfmt.Plain(line)
 		}
 	}
-	m.board, m.status, m.over = board, textfmt.Plain(f.Status), f.Over
+	m.board, m.status, m.over, m.result = board, textfmt.Plain(f.Status), f.Over, f.Result
 	return m, nil
 }
 
@@ -408,6 +408,11 @@ func (m gameModeModel) refresh() gameModeModel {
 		return m.fail(err)
 	}
 	m.board, m.status, m.over = strings.Split(board, "\n"), status, over
+	if over {
+		if m.result, err = m.session.Result(1); err != nil {
+			return m.fail(err)
+		}
+	}
 	if info.Solo() {
 		return m
 	}
@@ -415,6 +420,12 @@ func (m gameModeModel) refresh() gameModeModel {
 	gboard, gstatus, err := m.session.View(2, info.MinW, info.MinH)
 	if err != nil {
 		return m.fail(err)
+	}
+	var gresult string
+	if over {
+		if gresult, err = m.session.Result(2); err != nil {
+			return m.fail(err)
+		}
 	}
 	lines := strings.Split(gboard, "\n")
 	diff := map[int]string{}
@@ -427,7 +438,8 @@ func (m gameModeModel) refresh() gameModeModel {
 		gstatus == m.guestStatus && over == m.guestOver {
 		return m
 	}
-	p, err := json.Marshal(game.FrameMsg{Lines: diff, Height: len(lines), Status: gstatus, Over: over})
+	p, err := json.Marshal(game.FrameMsg{Lines: diff, Height: len(lines), Status: gstatus,
+		Over: over, Result: gresult})
 	if err != nil {
 		return m.fail(fmt.Errorf("encode frame: %w", err))
 	}
@@ -449,7 +461,7 @@ func (m gameModeModel) endMatch() gameModeModel {
 	if m.session != nil {
 		m.session.Close()
 	}
-	m.session, m.matchID, m.board, m.guestSent = nil, "", nil, nil
+	m.session, m.matchID, m.board, m.guestSent, m.result = nil, "", nil, nil, ""
 	if m.screen == gamePlay {
 		m.screen = gameLobby
 	}
@@ -467,6 +479,9 @@ func (m gameModeModel) opponent() string {
 
 func (m gameModeModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
+	if m.invite != nil {
+		return m.inviteKey(k)
+	}
 	if m.screen != gamePlay {
 		if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
 			if i := int(k[4] - '1'); i < len(m.mgr.Accounts) {
@@ -548,15 +563,6 @@ func (m gameModeModel) connect() (tea.Model, tea.Cmd) {
 }
 
 func (m gameModeModel) lobbyKey(k string) (tea.Model, tea.Cmd) {
-	if m.invite != nil && (k == "y" || k == "n") {
-		t := game.TDecline
-		if k == "y" {
-			t = game.TAccept
-		}
-		id := m.invite.ID
-		m.invite, m.notice = nil, ""
-		return m.send(game.Envelope{T: t, ID: id}), nil
-	}
 	m.notice = ""
 	switch k {
 	case "esc":
@@ -602,6 +608,21 @@ func (m gameModeModel) lobbyKey(k string) (tea.Model, tea.Cmd) {
 		return m, m.inputs[m.field].Focus()
 	}
 	return m, nil
+}
+
+// inviteKey answers the challenge modal; it swallows every other key.
+func (m gameModeModel) inviteKey(k string) (tea.Model, tea.Cmd) {
+	t := game.TDecline
+	switch k {
+	case "y", "enter":
+		t = game.TAccept
+	case "n", "esc":
+	default:
+		return m, nil
+	}
+	id := m.invite.ID
+	m.invite, m.notice = nil, ""
+	return m.send(game.Envelope{T: t, ID: id}), nil
 }
 
 func (m gameModeModel) challenge() (tea.Model, tea.Cmd) {
@@ -655,7 +676,7 @@ func (m gameModeModel) startSolo(s game.Script) (tea.Model, tea.Cmd) {
 	m.soloRuns++
 	m.matchID = fmt.Sprintf("solo-%d", m.soloRuns)
 	m.script, m.seat, m.names, m.session = s, 1, []string{name}, sess
-	m.board, m.status, m.over, m.notice = nil, "", false, ""
+	m.board, m.status, m.over, m.result, m.notice = nil, "", false, "", ""
 	m.screen = gamePlay
 	m = m.refresh()
 	return m, m.tick()
@@ -726,7 +747,53 @@ func (m gameModeModel) render() string {
 	default:
 		body = renderBox("Games", m.gameLines(m.width-4, bodyHeight-2), m.width, bodyHeight, colorGame)
 	}
-	return body + "\n" + footer
+	screen := body + "\n" + footer
+	switch {
+	case m.invite != nil:
+		return m.inviteModal(screen)
+	case m.screen == gamePlay && m.over:
+		return m.resultModal(screen)
+	}
+	return screen
+}
+
+func (m gameModeModel) inviteModal(screen string) string {
+	from := textfmt.Plain(m.invite.From)
+	body := []string{from + " challenges you to a game"}
+	if s, ok := game.Find(m.scripts, *m.invite.Game); ok {
+		body = []string{
+			from + " challenges you to " + styleGame.Render(s.Info.Name),
+			"",
+			styleSubtle.Render(s.Info.Desc),
+		}
+	}
+	body = append(body, "", styleGame.Render("y")+" accept    "+styleGame.Render("n")+" decline")
+	return renderModal(screen, "Challenge", body, m.width, m.height, colorGame)
+}
+
+// resultModal announces how the game ended, its title in a two-colour blend.
+func (m gameModeModel) resultModal(screen string) string {
+	title, from, to := "Game over", colorGame, colorQuote
+	switch m.result {
+	case "win":
+		title, from, to = "You won!", colorGreen, colorYellow
+	case "lose":
+		title, from, to = "You lost", colorRed, colorAgent
+	case "draw":
+		title, from, to = "Draw", colorYellow, colorAccent
+	}
+	letters := []rune(strings.ToUpper(title))
+	blend := lipgloss.Blend1D(len(letters), from, to)
+	var b strings.Builder
+	for i, r := range letters {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(blend[i]).Render(string(r) + " "))
+	}
+	keys := styleGame.Render("esc") + " lobby"
+	if m.script.Info.Solo() {
+		keys = styleGame.Render("⏎") + " play again    " + styleGame.Render("esc") + " games"
+	}
+	body := []string{strings.TrimSpace(b.String()), "", styleSubtle.Render(m.status), "", keys}
+	return renderModal(screen, m.script.Info.Name, body, m.width, m.height, from)
 }
 
 func (m gameModeModel) playersTitle() string {
@@ -818,12 +885,6 @@ func (m gameModeModel) playerLines(width, height int) []string {
 
 func (m gameModeModel) playLines(width, height int) []string {
 	status := m.status
-	switch {
-	case m.over && m.script.Info.Solo():
-		status += " · ⏎ play again · esc for games"
-	case m.over:
-		status += " · esc for the lobby"
-	}
 	block := append([]string{}, m.board...)
 	block = append(block, "", styleGame.Render(status))
 	if help := m.script.Info.Help; help != "" && !m.over {
@@ -833,6 +894,9 @@ func (m gameModeModel) playLines(width, height int) []string {
 }
 
 func (m gameModeModel) helpKeys() []helpKey {
+	if m.invite != nil {
+		return []helpKey{{"y", "accept"}, {"n", "decline"}}
+	}
 	switch m.screen {
 	case gameSetup:
 		return []helpKey{{"tab", "next field"}, {"⏎", "connect"}, {"esc", "back"}}
@@ -844,9 +908,6 @@ func (m gameModeModel) helpKeys() []helpKey {
 			return []helpKey{{"esc", "lobby"}}
 		}
 		return []helpKey{{"esc", "leave game"}}
-	}
-	if m.invite != nil {
-		return []helpKey{{"y", "accept"}, {"n", "decline"}}
 	}
 	enter := helpKey{"⏎", "play"}
 	if m.playersFocused {

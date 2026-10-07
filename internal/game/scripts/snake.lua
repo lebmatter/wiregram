@@ -50,6 +50,11 @@ end
 
 function game.over() return dead or won end
 
+function game.result()
+  if won then return "win" end
+  if dead then return "lose" end
+end
+
 function game.key(_, key)
   local d = dirs[key]
   if not d or game.over() then return end

@@ -127,7 +127,7 @@ Keyboard shortcuts:
                       two-player game (needs a base); play again after a game
     Tab               Switch between games and players (when on a base)
     Enter on player   Challenge them to the selected game
-    y / n             Accept / decline a challenge
+    y / n             Accept / decline a challenge (Enter / Esc also work)
     e                 Connect to a base, or change player name or token
     Esc               Leave the game, cancel a challenge, or close games
     Other keys        Go to the game; each game shows its keys under the board

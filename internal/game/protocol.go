@@ -68,9 +68,11 @@ type KeyMsg struct {
 
 // FrameMsg is the host's view for one guest. Lines holds only the lines that
 // changed since the previous frame, keyed by index; Height trims the rest.
+// Result is the guest's game.result once Over.
 type FrameMsg struct {
 	Lines  map[int]string `json:"l,omitempty"`
 	Height int            `json:"h"`
 	Status string         `json:"s"`
 	Over   bool           `json:"o,omitempty"`
+	Result string         `json:"r,omitempty"`
 }

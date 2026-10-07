@@ -64,6 +64,9 @@ These are project constraints, not suggestions:
 - The UI is a BubbleTea TUI styled with lipgloss; shared colors, boxes,
   footer and account tags live in `internal/tui/render.go`. Kitty graphics sequences are
   used only by the media viewer (mpv via `tea.Exec`).
+- Overlays are drawn by `renderModal` (`internal/tui/render.go`), a box
+  composited over the screen with lipgloss layers. Game mode uses one for
+  incoming challenges and for the game-over result.
 - Startup shows the `wiregramLogo` splash (`internal/tui/splash.go`) for about a second.
 - There is no header bar. Inside an account the screen is the body and a
   `bubbles/help` footer with the notice on the right. Help hides keys the

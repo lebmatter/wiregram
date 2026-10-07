@@ -113,6 +113,23 @@ func (s *Session) Over() (bool, error) {
 	return lua.LVAsBool(ret[0]), nil
 }
 
+// Result is how the game ended for seat: "win", "lose", "draw", or "" when
+// the script has no game.result.
+func (s *Session) Result(seat int) (string, error) {
+	if _, ok := s.game.RawGetString("result").(*lua.LFunction); !ok {
+		return "", nil
+	}
+	ret, err := s.call("result", 1, lua.LNumber(seat))
+	if err != nil {
+		return "", err
+	}
+	switch r := lua.LVAsString(ret[0]); r {
+	case "win", "lose", "draw":
+		return r, nil
+	}
+	return "", nil
+}
+
 func (s *Session) Close() { s.L.Close() }
 
 func (s *Session) call(name string, nret int, args ...lua.LValue) ([]lua.LValue, error) {

@@ -61,6 +61,11 @@ function game.key(seat, key)
   end
 end
 
+function game.result(seat)
+  if winner then return winner == seat and "win" or "lose" end
+  if full then return "draw" end
+end
+
 local marks = { [0] = " ", "X", "O" }
 
 function game.view(seat, w, h)

@@ -39,7 +39,14 @@ function game.view(seat, w, h)             -- w, h are min_w, min_h
   return board, status                     -- board is lines joined by "\n"
 end
 function game.over() return false end
+function game.result(seat)                 -- optional; once over:
+  return "win"                             -- "win", "lose" or "draw"
+end
 ```
+
+`result` picks the game-over box: "You won!", "You lost" or "Draw"
+with the status line under it; without it the box says "Game over". The host
+sends the guest its result with the last frame.
 
 Seats are 1 and 2 (only 1 in a one-player game). `view` is called for both seats after every key and tick,
 so keep it cheap. Plain text only: control characters are stripped on the

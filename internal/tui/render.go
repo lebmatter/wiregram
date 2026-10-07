@@ -188,6 +188,28 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 	return b.String()
 }
 
+// renderModal draws a titled box with centred body lines over the middle of
+// screen, a width×height frame. A terminal too small for it gets screen as is.
+func renderModal(screen, title string, body []string, width, height int,
+	accent color.Color) string {
+	widest := 0
+	for _, l := range body {
+		widest = max(widest, lipgloss.Width(l))
+	}
+	w := min(width-4, max(32, widest+6))
+	h := len(body) + 4
+	if w < 20 || h > height {
+		return screen
+	}
+	lines := []string{""}
+	for _, l := range body {
+		lines = append(lines, lipgloss.PlaceHorizontal(w-4, lipgloss.Center, l))
+	}
+	box := lipgloss.NewLayer(renderBox(title, lines, w, h, accent)).
+		X((width - w) / 2).Y((height - h) / 2).Z(1)
+	return lipgloss.NewCompositor(lipgloss.NewLayer(screen), box).Render()
+}
+
 // accountShort is the account's tag in agent mode, such as TG1: its backend
 // and its Alt+N number.
 func accountShort(mgr *account.AccountManager, key string) string {
