@@ -6,6 +6,9 @@ registering.
 
 ## How a match runs
 
+A one-player game (`players = 1`) runs in the player's own wiregram with no
+base; its only seat is 1. Two-player games need a base:
+
 - `wiregram base` lists players, passes on challenges and relays messages. It
   never runs a script.
 - The challenger hosts. Its wiregram runs the script for **both** seats.
@@ -23,7 +26,7 @@ game = {
     version = 1,             -- bump on ANY rule or view change
     desc = "Three in a row", -- one line in the lobby
     help = "arrows move · enter places your mark", -- shown under the board
-    players = 2,             -- only 2 for now
+    players = 2,             -- 1 runs locally; 2 needs a base
     min_w = 21, min_h = 11,  -- the board's size in cells
     tick_ms = 0,             -- 0 for turn-based, else 16 or more
   },
@@ -38,7 +41,7 @@ end
 function game.over() return false end
 ```
 
-Seats are 1 and 2. `view` is called for both seats after every key and tick,
+Seats are 1 and 2 (only 1 in a one-player game). `view` is called for both seats after every key and tick,
 so keep it cheap. Plain text only: control characters are stripped on the
 guest's side.
 
@@ -60,11 +63,12 @@ raises an error, ends the match with one notice line.
 ## Checking a script
 
 A script that fails validation (missing `info` fields or functions) is left
-out of the lobby, and the notice line names it. Play it against a second
-instance on a local base:
+out of the lobby, and the notice line names it. A one-player game needs no
+base: open games with Alt+G and press Enter on it. Play a two-player game
+against a second instance on a local base:
 
 ```sh
 ./wiregram base &
-./wiregram                              # Alt+G, connect to ws://localhost:8765
+./wiregram                              # Alt+G, e, connect to ws://localhost:8765
 XDG_CONFIG_HOME=/tmp/wg2 ./wiregram     # a second player
 ```

@@ -66,12 +66,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 					}
 					continue
 				}
-				if _, ok := err.(gamesRequested); ok {
-					if active, err = tuiGameMode(ctx, m); err != nil {
-						return err
-					}
-					continue
-				}
 				return err
 			}
 			if active == nil {
@@ -146,12 +140,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		if err != nil {
 			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
 				if active, err = tuiAgentMode(ctx, m); err != nil {
-					return err
-				}
-				continue
-			}
-			if _, ok := err.(gamesRequested); ok {
-				if active, err = tuiGameMode(ctx, m); err != nil {
 					return err
 				}
 				continue

@@ -94,10 +94,12 @@ These are project constraints, not suggestions:
   server URL, then the sign-in prompts) uses the same bubble style in copper.
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat.
-- Game mode (Alt+G from the chat list, `internal/tui/game.go`) uses green
-  (`colorGame`, 114). Games are versioned Lua scripts embedded from
-  `internal/game/scripts/`; only players with the same id and version are
-  matched. The challenger hosts and runs the script for both seats; the guest
+- Game mode (`internal/tui/game.go`) is an easter egg: only Alt+G from the
+  chat list opens it, and only `--help` mentions it (no menu entry, no footer
+  hint). It uses green (`colorGame`, 114). Games are versioned Lua scripts
+  embedded from `internal/game/scripts/`. One-player games run locally with
+  no base; two-player games are greyed out until a base is connected, and
+  only players with the same id and version are matched. The challenger hosts and runs the script for both seats; the guest
   sends keys and draws the changed lines it receives. `wiregram base` only
   lists players, passes on challenges and relays; it never runs game logic.
 

@@ -14,8 +14,10 @@ Done: Chat Agents — account-bound agents that answer incoming DMs only,
 built through the agent-mode wizard (Alt+A), with the event stream and an
 account-owned runtime (formerly phase 2).
 
-Done: game mode — `wiregram base` for discovery and relay, embedded Lua
-games (tic-tac-toe, pong) run by the challenger; see `docs/GAMES.md`.
+Done: game mode (Alt+G easter egg) — embedded Lua games: one-player Dino
+jump, Flappy bird, Snake, 2048 and Breakout run locally; two-player
+tic-tac-toe and pong use `wiregram base` for discovery and relay and run on
+the challenger; see `docs/GAMES.md`.
 
 ## Phase 1 — AI usage visibility and budget
 

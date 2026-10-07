@@ -122,18 +122,21 @@ Keyboard shortcuts:
     Esc, Ctrl+C       Stop and return to chat
 
   Games (green)
-    Tab               Switch between games and players
     Up/k, Down/j      Select
-    Enter             Challenge the selected player to the selected game
+    Enter             Play a one-player game, or pick a player for a
+                      two-player game (needs a base); play again after a game
+    Tab               Switch between games and players (when on a base)
+    Enter on player   Challenge them to the selected game
     y / n             Accept / decline a challenge
-    e                 Change base, player name or token
+    e                 Connect to a base, or change player name or token
     Esc               Leave the game, cancel a challenge, or close games
     Other keys        Go to the game; each game shows its keys under the board
 
 Game base:
 
-  wiregram base runs a game server that lists players, passes on challenges
-  and relays moves between matched players. Games run in the players'
+  One-player games need no base. wiregram base runs a game server for the
+  two-player games: it lists players, passes on challenges and relays moves
+  between matched players. Games run in the players'
   wiregram, so any base can host every game. Set WIREGRAM_BASE_TOKEN to make
   players enter that token. On the internet, put it behind a TLS proxy and
   connect with wss://.

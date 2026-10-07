@@ -28,6 +28,9 @@ type Info struct {
 
 func (i Info) Ref() GameRef { return GameRef{ID: i.ID, Version: i.Version} }
 
+// Solo games run locally and need no base.
+func (i Info) Solo() bool { return i.Players == 1 }
+
 // TickRate is how often Tick runs; zero for turn-based games.
 func (i Info) TickRate() time.Duration { return time.Duration(i.TickMS) * time.Millisecond }
 
@@ -92,8 +95,8 @@ func readInfo(src string) (Info, error) {
 		return Info{}, fmt.Errorf("game.info needs id and name")
 	case info.Version < 1:
 		return Info{}, fmt.Errorf("game.info.version must be 1 or more")
-	case info.Players != 2:
-		return Info{}, fmt.Errorf("game.info.players must be 2")
+	case info.Players != 1 && info.Players != 2:
+		return Info{}, fmt.Errorf("game.info.players must be 1 or 2")
 	case info.TickMS < 0 || (info.TickMS > 0 && info.TickMS < 16):
 		return Info{}, fmt.Errorf("game.info.tick_ms must be 0 or at least 16")
 	}

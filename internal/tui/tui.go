@@ -474,7 +474,6 @@ func (m tuiModel) footer() string {
 		if m.mgr != nil && m.mgr.Agents != nil {
 			keys = append(keys, helpKey{"M-a", "agents"})
 		}
-		keys = append(keys, helpKey{"M-g", "games"})
 		keys = append(keys, helpKey{"?", "more"})
 	}
 	return renderFooter(keys, m.fullHelp, notice, m.width)

@@ -20,9 +20,9 @@ import (
 	"wiregram/internal/textfmt"
 )
 
-// Game mode plays the embedded Lua games against other wiregram users on one
-// base. The challenger hosts: its wiregram runs the script for both seats and
-// sends the guest each changed line of the guest's view.
+// Game mode plays the embedded Lua games. One-player games run locally; two-
+// player games need a base, where the challenger hosts: its wiregram runs the
+// script for both seats and sends the guest each changed line of their view.
 
 type gameScreen int
 
@@ -66,6 +66,7 @@ type gameModeModel struct {
 	waiting        string         // who we challenged
 
 	matchID     string
+	soloRuns    int
 	script      game.Script
 	seat        int
 	names       []string
@@ -113,7 +114,7 @@ func tuiGameMode(ctx context.Context, mgr *account.AccountManager) (*account.Acc
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	w, h := termSize()
-	m := gameModeModel{ctx: ctx, mgr: mgr, width: w, height: h}
+	m := gameModeModel{ctx: ctx, mgr: mgr, width: w, height: h, screen: gameLobby}
 	var err error
 	if m.scripts, err = game.Catalog(); err != nil {
 		m.notice = textfmt.CleanError(err)
@@ -134,6 +135,7 @@ func tuiGameMode(ctx context.Context, mgr *account.AccountManager) (*account.Acc
 	m.inputs[2].EchoMode = textinput.EchoPassword
 	m.inputs[0].Focus()
 	m.sizeInputs()
+	m.dialing = m.baseURL != "" && m.name != ""
 
 	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil {
@@ -164,17 +166,19 @@ func (m *gameModeModel) setting(key string) string {
 }
 
 func (m gameModeModel) Init() tea.Cmd {
-	if m.baseURL != "" && m.name != "" {
+	if m.dialing {
 		return m.dial()
 	}
-	return textinput.Blink
+	return nil
 }
 
 func (m gameModeModel) dial() tea.Cmd {
 	ctx, url, name, token := m.ctx, m.baseURL, m.name, m.inputs[2].Value()
-	refs := make([]game.GameRef, len(m.scripts))
-	for i, s := range m.scripts {
-		refs[i] = s.Info.Ref()
+	var refs []game.GameRef
+	for _, s := range m.scripts {
+		if !s.Info.Solo() {
+			refs = append(refs, s.Info.Ref())
+		}
 	}
 	return func() tea.Msg {
 		c, err := game.Dial(ctx, url, name, token, refs)
@@ -191,10 +195,16 @@ func (m gameModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gameDialed:
 		m.dialing = false
 		if msg.err != nil {
-			m.screen, m.notice = gameSetup, textfmt.CleanError(msg.err)
-			return m, m.inputs[m.field].Focus()
+			m.notice = textfmt.CleanError(msg.err)
+			return m, nil
 		}
-		m.client, m.screen, m.notice = msg.c, gameLobby, ""
+		m.client = msg.c
+		if m.screen == gameSetup {
+			m.screen = gameLobby
+		}
+		if m.screen == gameLobby {
+			m.notice = ""
+		}
 		return m, listenGame(msg.c)
 	case gameEvent:
 		if msg.c != m.client {
@@ -236,18 +246,26 @@ func (m gameModeModel) tick() tea.Cmd {
 	return tea.Tick(rate, func(time.Time) tea.Msg { return gameTick{id} })
 }
 
+// disconnected drops the base; a one-player game carries on.
 func (m gameModeModel) disconnected(err error) gameModeModel {
-	m = m.endMatch()
+	if !m.solo() {
+		m = m.endMatch()
+	}
 	if m.client != nil {
 		m.client.Close()
 	}
 	m.client, m.players, m.invite, m.waiting = nil, nil, nil, ""
-	m.screen, m.notice = gameSetup, textfmt.CleanError(err)
+	m.playersFocused = false
+	m.notice = textfmt.CleanError(err)
 	if m.baseErr != "" {
 		m.notice, m.baseErr = m.baseErr, ""
 	}
-	m.inputs[m.field].Focus()
 	return m
+}
+
+// solo reports whether a one-player game is on screen.
+func (m gameModeModel) solo() bool {
+	return m.screen == gamePlay && m.script.Info.Solo()
 }
 
 func (m gameModeModel) send(env game.Envelope) gameModeModel {
@@ -310,6 +328,8 @@ func (m gameModeModel) challenged(env game.Envelope) gameModeModel {
 	switch {
 	case !ok:
 		m.notice = "Declined " + from + ": unknown game"
+	case m.solo():
+		m.notice = "Declined " + from + ": you are playing " + m.script.Info.Name
 	case m.width < s.Info.MinW+4 || m.height < s.Info.MinH+6:
 		m.notice = fmt.Sprintf("Declined %s's %s: the terminal needs %d×%d",
 			from, s.Info.Name, s.Info.MinW+4, s.Info.MinH+6)
@@ -388,6 +408,9 @@ func (m gameModeModel) refresh() gameModeModel {
 		return m.fail(err)
 	}
 	m.board, m.status, m.over = strings.Split(board, "\n"), status, over
+	if info.Solo() {
+		return m
+	}
 
 	gboard, gstatus, err := m.session.View(2, info.MinW, info.MinH)
 	if err != nil {
@@ -414,7 +437,9 @@ func (m gameModeModel) refresh() gameModeModel {
 
 // fail ends the match over a script error and tells the peer.
 func (m gameModeModel) fail(err error) gameModeModel {
-	m = m.send(game.Envelope{T: game.TLeave})
+	if !m.solo() {
+		m = m.send(game.Envelope{T: game.TLeave})
+	}
 	m = m.endMatch()
 	m.notice = textfmt.CleanError(err)
 	return m
@@ -467,11 +492,11 @@ func (m gameModeModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m gameModeModel) setupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "ctrl+c":
-		if m.client != nil {
-			m.screen, m.notice = gameLobby, ""
-			return m, nil
+		m.screen = gameLobby
+		if !m.dialing {
+			m.notice = ""
 		}
-		return m, tea.Quit
+		return m, nil
 	case "tab", "down":
 		return m.focusField(m.field + 1)
 	case "shift+tab", "up":
@@ -543,7 +568,7 @@ func (m gameModeModel) lobbyKey(k string) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c", "alt+g":
 		return m, tea.Quit
 	case "tab", "left", "right", "h", "l":
-		m.playersFocused = !m.playersFocused
+		m.playersFocused = !m.playersFocused && m.client != nil
 	case "up", "k":
 		if m.playersFocused {
 			m.psel = max(0, m.psel-1)
@@ -557,11 +582,21 @@ func (m gameModeModel) lobbyKey(k string) (tea.Model, tea.Cmd) {
 			m.gsel = clampIndex(m.gsel+1, len(m.scripts))
 		}
 	case "enter":
-		if !m.playersFocused {
-			m.playersFocused = true
+		if m.playersFocused {
+			return m.challenge()
+		}
+		if m.gsel >= len(m.scripts) {
 			return m, nil
 		}
-		return m.challenge()
+		s := m.scripts[m.gsel]
+		switch {
+		case s.Info.Solo():
+			return m.startSolo(s)
+		case m.client == nil:
+			m.screen = gameSetup
+			return m, m.inputs[m.field].Focus()
+		}
+		m.playersFocused = true
 	case "e":
 		m.screen, m.notice = gameSetup, ""
 		return m, m.inputs[m.field].Focus()
@@ -591,14 +626,54 @@ func (m gameModeModel) challenge() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m gameModeModel) startSolo(s game.Script) (tea.Model, tea.Cmd) {
+	if m.waiting != "" {
+		m.notice = "Waiting for " + textfmt.Plain(m.waiting) + "; esc cancels"
+		return m, nil
+	}
+	if m.width < s.Info.MinW+4 || m.height < s.Info.MinH+6 {
+		m.notice = fmt.Sprintf("%s needs a %d×%d terminal", s.Info.Name, s.Info.MinW+4, s.Info.MinH+6)
+		return m, nil
+	}
+	name := m.name
+	if name == "" {
+		name = "you"
+	}
+	sess, err := game.NewSession(s, []string{name})
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, nil
+	}
+	if m.invite != nil {
+		m = m.send(game.Envelope{T: game.TDecline, ID: m.invite.ID})
+		m.invite = nil
+	}
+	if m.session != nil {
+		m.session.Close()
+	}
+	// A fresh id per run drops ticks still queued for the previous one.
+	m.soloRuns++
+	m.matchID = fmt.Sprintf("solo-%d", m.soloRuns)
+	m.script, m.seat, m.names, m.session = s, 1, []string{name}, sess
+	m.board, m.status, m.over, m.notice = nil, "", false, ""
+	m.screen = gamePlay
+	m = m.refresh()
+	return m, m.tick()
+}
+
 func (m gameModeModel) playKey(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "esc", "ctrl+c":
-		// Base keeps both players busy until one leaves, even after game over.
-		m = m.send(game.Envelope{T: game.TLeave})
+		if !m.solo() {
+			// Base keeps both players busy until one leaves, even after game over.
+			m = m.send(game.Envelope{T: game.TLeave})
+		}
 		return m.endMatch(), nil
 	}
 	if m.over {
+		if m.solo() && (k == "enter" || k == "space") {
+			return m.startSolo(m.script)
+		}
 		return m, nil
 	}
 	if m.seat == 2 {
@@ -634,21 +709,31 @@ func (m gameModeModel) render() string {
 		body = renderBox("Game base", m.setupLines(m.width-4, bodyHeight-2),
 			m.width, bodyHeight, colorGame)
 	case m.screen == gamePlay:
-		title := fmt.Sprintf("%s · you vs %s", m.script.Info.Name, textfmt.Plain(m.opponent()))
+		title := m.script.Info.Name
+		if !m.script.Info.Solo() {
+			title = fmt.Sprintf("%s · you vs %s", title, textfmt.Plain(m.opponent()))
+		}
 		body = renderBox(title, m.playLines(m.width-4, bodyHeight-2), m.width, bodyHeight, colorGame)
 	case m.width >= twoPaneWidth:
 		left := renderBox("Games", m.gameLines(agentSidebarWidth-4, bodyHeight-2),
 			agentSidebarWidth, bodyHeight, gameBorderColor(!m.playersFocused))
-		right := renderBox("Players on "+m.baseURL, m.playerLines(m.width-agentSidebarWidth-4,
+		right := renderBox(m.playersTitle(), m.playerLines(m.width-agentSidebarWidth-4,
 			bodyHeight-2), m.width-agentSidebarWidth, bodyHeight, gameBorderColor(m.playersFocused))
 		body = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	case m.playersFocused:
-		body = renderBox("Players on "+m.baseURL, m.playerLines(m.width-4, bodyHeight-2),
+		body = renderBox(m.playersTitle(), m.playerLines(m.width-4, bodyHeight-2),
 			m.width, bodyHeight, colorGame)
 	default:
 		body = renderBox("Games", m.gameLines(m.width-4, bodyHeight-2), m.width, bodyHeight, colorGame)
 	}
 	return body + "\n" + footer
+}
+
+func (m gameModeModel) playersTitle() string {
+	if m.client == nil {
+		return "Players"
+	}
+	return "Players on " + m.baseURL
 }
 
 func gameBorderColor(focused bool) color.Color {
@@ -659,7 +744,7 @@ func gameBorderColor(focused bool) color.Color {
 }
 
 func (m gameModeModel) setupLines(width, height int) []string {
-	lines := []string{"", styleSubtle.Render("Play the built-in games with other wiregram users on a base."), ""}
+	lines := []string{"", styleSubtle.Render("Connect to a base to play two-player games with other wiregram users."), ""}
 	for i, label := range gameFieldLabels {
 		style := styleSubtle
 		if i == m.field {
@@ -677,18 +762,33 @@ func (m gameModeModel) gameLines(width, height int) []string {
 	}
 	var lines []string
 	for i, s := range m.scripts {
-		lines = append(lines, themedListRow(s.Info.Name, styleDim.Render(fmt.Sprintf("v%d", s.Info.Version)),
+		text, right := s.Info.Name, "1P"
+		if !s.Info.Solo() {
+			right = "2P"
+			if m.client == nil {
+				text = styleDim.Render(text)
+			}
+		}
+		lines = append(lines, themedListRow(text, styleDim.Render(right),
 			i == m.gsel, !m.playersFocused, width, colorGame))
 	}
 	if m.gsel < len(m.scripts) {
-		lines = append(lines, "", styleSubtle.Render(truncate(m.scripts[m.gsel].Info.Desc, width)))
+		info := m.scripts[m.gsel].Info
+		lines = append(lines, "", styleSubtle.Render(truncate(info.Desc, width)))
+		if !info.Solo() && m.client == nil {
+			lines = append(lines, styleDim.Render(truncate("Needs a base: press e to connect", width)))
+		}
 	}
 	return lines
 }
 
 func (m gameModeModel) playerLines(width, height int) []string {
-	if m.dialing || m.client == nil {
+	if m.dialing {
 		return centerLines(width, height, styleSubtle.Render("Connecting…"))
+	}
+	if m.client == nil {
+		return centerLines(width, height, styleSubtle.Render(
+			"Not connected to a base.\n\nPress e to connect for two-player games."))
 	}
 	if len(m.players) == 0 {
 		return centerLines(width, height, styleSubtle.Render(
@@ -718,7 +818,10 @@ func (m gameModeModel) playerLines(width, height int) []string {
 
 func (m gameModeModel) playLines(width, height int) []string {
 	status := m.status
-	if m.over {
+	switch {
+	case m.over && m.script.Info.Solo():
+		status += " · ⏎ play again · esc for games"
+	case m.over:
 		status += " · esc for the lobby"
 	}
 	block := append([]string{}, m.board...)
@@ -732,13 +835,12 @@ func (m gameModeModel) playLines(width, height int) []string {
 func (m gameModeModel) helpKeys() []helpKey {
 	switch m.screen {
 	case gameSetup:
-		keys := []helpKey{{"tab", "next field"}, {"⏎", "connect"}}
-		if m.client != nil {
-			return append(keys, helpKey{"esc", "back"})
-		}
-		return append(keys, helpKey{"esc", "close"})
+		return []helpKey{{"tab", "next field"}, {"⏎", "connect"}, {"esc", "back"}}
 	case gamePlay:
-		if m.over {
+		switch {
+		case m.over && m.script.Info.Solo():
+			return []helpKey{{"⏎", "play again"}, {"esc", "games"}}
+		case m.over:
 			return []helpKey{{"esc", "lobby"}}
 		}
 		return []helpKey{{"esc", "leave game"}}
@@ -746,12 +848,13 @@ func (m gameModeModel) helpKeys() []helpKey {
 	if m.invite != nil {
 		return []helpKey{{"y", "accept"}, {"n", "decline"}}
 	}
-	return []helpKey{
-		{"↑↓", "select"},
-		{"tab", "games/players"},
-		{"⏎", "challenge"},
-		{"e", "base"},
-		{"esc", "close"},
-		{"?", "more"},
+	enter := helpKey{"⏎", "play"}
+	if m.playersFocused {
+		enter.desc = "challenge"
 	}
+	keys := []helpKey{{"↑↓", "select"}, enter}
+	if m.client != nil {
+		keys = append(keys, helpKey{"tab", "games/players"})
+	}
+	return append(keys, helpKey{"e", "base"}, helpKey{"esc", "close"}, helpKey{"?", "more"})
 }
