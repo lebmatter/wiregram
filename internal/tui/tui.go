@@ -24,6 +24,7 @@ const (
 type tuiResult struct {
 	accounts bool
 	agents   bool
+	games    bool
 	switchTo *account.Account
 }
 
@@ -334,6 +335,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m.done(tuiResult{agents: true})
 	}
+	// Inside a chat Alt+G jumps to the quoted message.
+	if k == "alt+g" && !paneFocused && m.mgr != nil {
+		m = m.closeChat()
+		return m.done(tuiResult{games: true})
+	}
 	switch {
 	case k == "tab" && m.twoPane() && m.paneOpen() && (!chatFocused || m.chat.subMode == chatSubNone):
 		if paneFocused {
@@ -468,6 +474,7 @@ func (m tuiModel) footer() string {
 		if m.mgr != nil && m.mgr.Agents != nil {
 			keys = append(keys, helpKey{"M-a", "agents"})
 		}
+		keys = append(keys, helpKey{"M-g", "games"})
 		keys = append(keys, helpKey{"?", "more"})
 	}
 	return renderFooter(keys, m.fullHelp, notice, m.width)
@@ -549,6 +556,8 @@ func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *acc
 		return accountsRequested{}
 	case final.result.agents:
 		return agentsRequested{}
+	case final.result.games:
+		return gamesRequested{}
 	}
 	return nil
 }

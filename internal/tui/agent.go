@@ -855,9 +855,13 @@ func window(sel, rows int) int {
 }
 
 func listRow(text, right string, selected, focused bool, width int) string {
+	return themedListRow(text, right, selected, focused, width, colorAgent)
+}
+
+func themedListRow(text, right string, selected, focused bool, width int, accent color.Color) string {
 	marker := "  "
 	if selected {
-		marker = styleAgent.Render(">") + " "
+		marker = lipgloss.NewStyle().Foreground(accent).Render(">") + " "
 	}
 	room := max(1, width-2-textfmt.DisplayWidth(right)-1)
 	row := marker + truncate(text, room)

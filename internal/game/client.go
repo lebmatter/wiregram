@@ -23,6 +23,7 @@ type Client struct {
 	conn   *websocket.Conn
 	ctx    context.Context
 	cancel context.CancelFunc
+	out    chan []byte
 	Events chan Event
 }
 
@@ -49,12 +50,14 @@ func Dial(ctx context.Context, url, name, token string, games []GameRef) (*Clien
 	}
 	conn.SetReadLimit(ReadLimit)
 	cctx, cancel := context.WithCancel(ctx)
-	c := &Client{conn: conn, ctx: cctx, cancel: cancel, Events: make(chan Event, 32)}
+	c := &Client{conn: conn, ctx: cctx, cancel: cancel, out: make(chan []byte, 256),
+		Events: make(chan Event, 32)}
 	if err := c.Send(Envelope{T: THello, Name: name, Token: token, Games: games}); err != nil {
 		c.Close()
 		return nil, err
 	}
 	go c.readLoop()
+	go c.writeLoop()
 	return c, nil
 }
 
@@ -64,7 +67,10 @@ func (c *Client) readLoop() {
 		_, data, err := c.conn.Read(c.ctx)
 		if err != nil {
 			if c.ctx.Err() == nil {
-				c.Events <- Event{Err: errors.New("lost the connection to base")}
+				select {
+				case c.Events <- Event{Err: errors.New("lost the connection to base")}:
+				case <-c.ctx.Done():
+				}
 			}
 			return
 		}
@@ -80,21 +86,41 @@ func (c *Client) readLoop() {
 	}
 }
 
-// Send writes one envelope. It is safe to call from several goroutines.
+// Send queues one envelope without blocking. Envelopes go out in the order
+// they were queued, which frame diffs rely on.
 func (c *Client) Send(env Envelope) error {
 	data, err := json.Marshal(env)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", env.T, err)
 	}
-	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	defer cancel()
-	if err := c.conn.Write(ctx, websocket.MessageText, data); err != nil {
-		return fmt.Errorf("send to base: %w", err)
+	select {
+	case c.out <- data:
+		return nil
+	default:
+		return errors.New("the connection to base is too slow")
 	}
-	return nil
 }
 
+func (c *Client) writeLoop() {
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case data := <-c.out:
+			ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+			err := c.conn.Write(ctx, websocket.MessageText, data)
+			cancel()
+			if err != nil {
+				// readLoop sees the closed connection and reports it.
+				c.conn.Close(websocket.StatusGoingAway, "")
+				return
+			}
+		}
+	}
+}
+
+// Close disconnects without waiting for the close handshake.
 func (c *Client) Close() {
 	c.cancel()
-	c.conn.Close(websocket.StatusNormalClosure, "")
+	go c.conn.Close(websocket.StatusNormalClosure, "")
 }

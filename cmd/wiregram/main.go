@@ -46,6 +46,7 @@ Keyboard shortcuts:
   Anywhere
     Alt+1..9          Switch to account N
     Alt+A             Chat Agents (from the chat list)
+    Alt+G             Games (from the chat list)
     Tab               Move between chat list and chat (wide terminals)
     ?                 Show all shortcuts
 
@@ -119,6 +120,15 @@ Keyboard shortcuts:
 
   Media viewer
     Esc, Ctrl+C       Stop and return to chat
+
+  Games (green)
+    Tab               Switch between games and players
+    Up/k, Down/j      Select
+    Enter             Challenge the selected player to the selected game
+    y / n             Accept / decline a challenge
+    e                 Change base, player name or token
+    Esc               Leave the game, cancel a challenge, or close games
+    Other keys        Go to the game; each game shows its keys under the board
 
 Game base:
 

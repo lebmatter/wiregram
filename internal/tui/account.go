@@ -20,6 +20,7 @@ type accountChoice struct {
 	index  int
 	add    bool
 	agents bool
+	games  bool
 	quit   bool
 }
 
@@ -63,7 +64,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 	}
 }
 
-func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
+func (m accountListModel) maxIndex() int { return len(m.accounts) + 3 }
 
 func (m accountListModel) Init() tea.Cmd {
 	return listenAccounts(m.mgr)
@@ -104,12 +105,16 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mgr.Start(m.ctx, m.accounts[m.selected], nil)
 			}
 		case "enter":
-			if m.selected == len(m.accounts)+2 {
+			if m.selected == len(m.accounts)+3 {
 				m.result = &accountChoice{quit: true}
 				return m, tea.Quit
 			}
-			if m.selected == len(m.accounts)+1 {
+			if m.selected == len(m.accounts)+2 {
 				m.result = &accountChoice{add: true}
+				return m, tea.Quit
+			}
+			if m.selected == len(m.accounts)+1 {
+				m.result = &accountChoice{games: true}
 				return m, tea.Quit
 			}
 			if m.selected == len(m.accounts) {
@@ -154,7 +159,7 @@ func (m accountListModel) View() tea.View {
 		rows = append(rows, row)
 	}
 	rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
-	for i, label := range []string{"Chat Agents…", "Add account…", "Quit"} {
+	for i, label := range []string{"Chat Agents…", "Games…", "Add account…", "Quit"} {
 		index := len(m.accounts) + i
 		if index == m.selected {
 			rows = append(rows, styleSelectedRow.Render(styleAccent.Render("> ")+label))
@@ -213,6 +218,9 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 	}
 	if final.result.agents {
 		return nil, agentsRequested{}
+	}
+	if final.result.games {
+		return nil, gamesRequested{}
 	}
 	if final.result.add {
 		return tuiPickAndAdd(ctx, mgr)

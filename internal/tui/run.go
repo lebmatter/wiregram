@@ -21,6 +21,10 @@ type agentsRequested struct{}
 
 func (agentsRequested) Error() string { return "open agents" }
 
+type gamesRequested struct{}
+
+func (gamesRequested) Error() string { return "open games" }
+
 func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 	defer m.Close()
 
@@ -58,6 +62,12 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			if err != nil {
 				if _, ok := err.(agentsRequested); ok && m.Agents != nil {
 					if active, err = tuiAgentMode(ctx, m); err != nil {
+						return err
+					}
+					continue
+				}
+				if _, ok := err.(gamesRequested); ok {
+					if active, err = tuiGameMode(ctx, m); err != nil {
 						return err
 					}
 					continue
@@ -112,6 +122,16 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 				}
 				continue
 			}
+			if _, ok := err.(gamesRequested); ok {
+				to, err := tuiGameMode(ctx, m)
+				if err != nil {
+					return err
+				}
+				if to != nil {
+					active = to
+				}
+				continue
+			}
 			var sw accountSwitch
 			if errors.As(err, &sw) {
 				active = sw.to
@@ -126,6 +146,12 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		if err != nil {
 			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
 				if active, err = tuiAgentMode(ctx, m); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, ok := err.(gamesRequested); ok {
+				if active, err = tuiGameMode(ctx, m); err != nil {
 					return err
 				}
 				continue

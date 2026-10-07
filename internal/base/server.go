@@ -26,7 +26,7 @@ import (
 const (
 	maxPlayers   = 1000
 	maxNameLen   = 32
-	maxPerSecond = 60
+	maxPerSecond = 120
 	outBuffer    = 64
 	pingEvery    = 20 * time.Second
 	writeTimeout = 10 * time.Second

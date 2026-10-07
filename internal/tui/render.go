@@ -42,6 +42,8 @@ var (
 	colorBadge  = lipgloss.Color("16")
 	// colorAgent replaces colorAccent throughout agent mode.
 	colorAgent = lipgloss.Color("141")
+	// colorGame replaces colorAccent throughout game mode.
+	colorGame = lipgloss.Color("114")
 )
 
 var (
@@ -57,6 +59,7 @@ var (
 	styleBadge       = lipgloss.NewStyle().Bold(true).Background(colorAccent).Foreground(colorBadge)
 	styleSelectedRow = lipgloss.NewStyle().Bold(true).Background(colorSelBg)
 	styleAgent       = lipgloss.NewStyle().Foreground(colorAgent)
+	styleGame        = lipgloss.NewStyle().Foreground(colorGame)
 )
 
 type helpKey struct {

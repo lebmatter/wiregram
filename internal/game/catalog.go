@@ -18,6 +18,7 @@ type Info struct {
 	ID      string
 	Name    string
 	Desc    string
+	Help    string // one line of in-game keys
 	Version int
 	Players int
 	MinW    int
@@ -82,7 +83,8 @@ func readInfo(src string) (Info, error) {
 	str := func(k string) string { return lua.LVAsString(t.RawGetString(k)) }
 	num := func(k string) int { return int(lua.LVAsNumber(t.RawGetString(k))) }
 	info := Info{
-		ID: str("id"), Name: str("name"), Desc: str("desc"), Version: num("version"),
+		ID: str("id"), Name: str("name"), Desc: str("desc"), Help: str("help"),
+		Version: num("version"),
 		Players: num("players"), MinW: num("min_w"), MinH: num("min_h"), TickMS: num("tick_ms"),
 	}
 	switch {
