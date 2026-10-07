@@ -269,6 +269,26 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 	return m, nil
 }
 
+// HasTelegramCredentials reports whether Telegram API credentials are configured.
+func (m *AccountManager) HasTelegramCredentials() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.APIID > 0
+}
+
+// SetTelegramCredentials saves the API credentials the first Telegram account needs.
+func (m *AccountManager) SetTelegramCredentials(id int, hash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg := m.cfg
+	cfg.APIID, cfg.APIHash = id, hash
+	if err := config.Save(m.Store, cfg); err != nil {
+		return fmt.Errorf("save Telegram API credentials: %w", err)
+	}
+	m.cfg = cfg
+	return nil
+}
+
 func (m *AccountManager) AddTelegram() (*Account, error) {
 	root := filepath.Join(m.Dir, "accounts")
 	if err := os.MkdirAll(root, 0700); err != nil {
@@ -372,6 +392,33 @@ func (m *AccountManager) Discard(a *Account) {
 			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 		}
 	}
+	if a.BackendType == "telegram" {
+		if err := m.forgetUnprovenCredentials(); err != nil {
+			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
+		}
+	}
+}
+
+// forgetUnprovenCredentials clears the saved Telegram API credentials while no
+// Telegram account has signed in with them, so a mistyped ID or hash is asked
+// for again next time. Credentials embedded in the build come back on reload.
+func (m *AccountManager) forgetUnprovenCredentials() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, x := range m.Accounts {
+		if x.BackendType == "telegram" && !x.NeverAuthenticated() {
+			return nil
+		}
+	}
+	if err := config.Save(m.Store, config.Config{AutoLock: m.cfg.AutoLock}); err != nil {
+		return fmt.Errorf("clear Telegram API credentials: %w", err)
+	}
+	cfg, err := config.LoadConfig(m.Store)
+	if err != nil {
+		return err
+	}
+	m.cfg = cfg
+	return nil
 }
 
 func (a *Account) NeverAuthenticated() bool {
@@ -460,7 +507,10 @@ func (m *AccountManager) Start(parent context.Context, a *Account, prompt config
 				startupTimer = time.AfterFunc(30*time.Second, stopAttempt)
 			}
 			started := false
-			c, err := telegram.NewClient(m.cfg, m.Store, m.AccountKey(a), func(err error) {
+			m.mu.Lock()
+			cfg := m.cfg
+			m.mu.Unlock()
+			c, err := telegram.NewClient(cfg, m.Store, m.AccountKey(a), func(err error) {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			})
 			if err == nil {

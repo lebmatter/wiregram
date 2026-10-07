@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -248,10 +249,12 @@ var addAccountOptions = []struct {
 	{"whatsapp", "WhatsApp"},
 }
 
-func addAccountSteps() []wizardStep {
+// addAccountSteps asks for Telegram API credentials only when none are configured.
+func addAccountSteps(needsAPI bool) []wizardStep {
 	needsServer := func(a wizardAnswers) bool {
 		return a["network"] == "mattermost" || a["network"] == "matrix"
 	}
+	skipAPI := func(a wizardAnswers) bool { return !needsAPI || a["network"] != "telegram" }
 	return []wizardStep{
 		{
 			key:  "network",
@@ -291,6 +294,25 @@ func addAccountSteps() []wizardStep {
 				return nil
 			},
 		},
+		{
+			key:  "api_id",
+			kind: wizText,
+			ask: say("Telegram needs an API ID and hash from https://my.telegram.org/apps. " +
+				"What's your API ID?"),
+			skip: skipAPI,
+			validate: func(v string, _ wizardAnswers) error {
+				if id, err := strconv.Atoi(v); err != nil || id <= 0 {
+					return errors.New("The API ID is a positive number.")
+				}
+				return nil
+			},
+		},
+		{
+			key:  "api_hash",
+			kind: wizText,
+			ask:  say("And the API hash?"),
+			skip: skipAPI,
+		},
 	}
 }
 
@@ -302,10 +324,10 @@ func withScheme(s string) string {
 	return "https://" + s
 }
 
-func newAddAccountModel() addAccountModel {
+func newAddAccountModel(needsAPI bool) addAccountModel {
 	w, h := termSize()
 	return addAccountModel{
-		wiz:    newWizard("Add account", colorAccent, addAccountSteps(), nil),
+		wiz:    newWizard("Add account", colorAccent, addAccountSteps(needsAPI), nil),
 		width:  w,
 		height: h,
 	}
@@ -340,7 +362,7 @@ func (m addAccountModel) View() tea.View {
 }
 
 func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.Account, error) {
-	m := newAddAccountModel()
+	m := newAddAccountModel(!mgr.HasTelegramCredentials())
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	result, err := p.Run()
 	if err != nil {
@@ -349,6 +371,12 @@ func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.A
 	answers := result.(addAccountModel).answers
 	switch answers["network"] {
 	case "telegram":
+		if v := answers["api_id"]; v != "" {
+			id, _ := strconv.Atoi(strings.TrimSpace(v)) // validated by the wizard
+			if err := mgr.SetTelegramCredentials(id, strings.TrimSpace(answers["api_hash"])); err != nil {
+				return nil, err
+			}
+		}
 		return mgr.AddTelegram()
 	case "mattermost":
 		return mgr.AddMattermost(withScheme(answers["server"]))

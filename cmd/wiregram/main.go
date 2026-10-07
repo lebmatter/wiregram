@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -29,8 +28,9 @@ A minimal multi-backend chat client for the terminal. Supports Telegram,
 Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
 audio playback via mpv.
 
-First launch asks for API credentials (or use -ldflags to embed them),
-then your phone number, login code, and optional 2FA password.
+First launch opens Add account. Telegram asks for API credentials from
+https://my.telegram.org/apps (unless embedded with -ldflags), then your
+phone number, login code, and optional 2FA password.
 Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
@@ -169,22 +169,6 @@ func run() (result error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return fmt.Errorf("wiregram needs an interactive terminal")
 	}
-	prompt := func(label string, masked bool) (string, error) {
-		fmt.Fprint(os.Stdout, label)
-		if masked {
-			pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stdout)
-			return string(pw), err
-		}
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return "", err
-			}
-			return "", context.Canceled
-		}
-		return scanner.Text(), nil
-	}
 	dir, err := config.Dir()
 	if err != nil {
 		return err
@@ -197,7 +181,7 @@ func run() (result error) {
 	if err := account.ImportLegacy(db, dir); err != nil {
 		return err
 	}
-	cfg, err := config.LoadConfig(db, prompt, os.Stdout)
+	cfg, err := config.LoadConfig(db)
 	if err != nil {
 		return err
 	}

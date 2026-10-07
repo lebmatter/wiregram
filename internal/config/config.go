@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,7 +36,9 @@ func Dir() (string, error) {
 	return dir, nil
 }
 
-func LoadConfig(db *store.DB, prompt PromptFunc, out io.Writer) (Config, error) {
+// LoadConfig reads the saved settings. Telegram API credentials come from the
+// settings, else from the build, else stay empty until a Telegram account is added.
+func LoadConfig(db *store.DB) (Config, error) {
 	cfg := Config{AutoLock: 1}
 	id, err := db.Setting("api_id")
 	if err == nil {
@@ -61,40 +62,15 @@ func LoadConfig(db *store.DB, prompt PromptFunc, out io.Writer) (Config, error) 
 		if err != nil || (cfg.AutoLock != 0 && cfg.AutoLock != 1) {
 			return cfg, fmt.Errorf("configuration autolock must be 0 or 1")
 		}
-		return cfg, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
+	} else if !errors.Is(err, store.ErrNotFound) {
 		return cfg, err
 	}
-	if buildAPIID != "" || buildAPIHash != "" {
+	if cfg.APIID == 0 && (buildAPIID != "" || buildAPIHash != "") {
 		id, err := strconv.Atoi(buildAPIID)
 		if err != nil || id <= 0 || strings.TrimSpace(buildAPIHash) == "" {
 			return cfg, fmt.Errorf("this build has incomplete or invalid Telegram API credentials; rebuild with both API ID and API hash")
 		}
 		cfg.APIID, cfg.APIHash = id, strings.TrimSpace(buildAPIHash)
-		return cfg, nil
-	}
-	fmt.Fprintln(out, "wiregram: no config found.\nGet your API credentials at https://my.telegram.org/apps")
-	for {
-		value, err := prompt("Enter API ID: ", false)
-		if err != nil {
-			return cfg, fmt.Errorf("read API ID: %w", err)
-		}
-		cfg.APIID, err = strconv.Atoi(strings.TrimSpace(value))
-		if err == nil && cfg.APIID > 0 {
-			break
-		}
-		fmt.Fprintln(os.Stderr, "Enter a positive numeric API ID.")
-	}
-	for cfg.APIHash == "" {
-		value, err := prompt("Enter API Hash: ", false)
-		if err != nil {
-			return cfg, fmt.Errorf("read API hash: %w", err)
-		}
-		cfg.APIHash = strings.TrimSpace(value)
-	}
-	if err := Save(db, cfg); err != nil {
-		return cfg, err
 	}
 	return cfg, nil
 }
