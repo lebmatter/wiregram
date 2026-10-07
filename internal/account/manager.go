@@ -21,6 +21,7 @@ import (
 	"wiregram/internal/config"
 	"wiregram/internal/matrix"
 	"wiregram/internal/mattermost"
+	"wiregram/internal/store"
 	"wiregram/internal/telegram"
 	"wiregram/internal/textfmt"
 	"wiregram/internal/whatsapp"
@@ -82,7 +83,7 @@ func (a *Account) Label() string {
 type AccountManager struct {
 	cfg      config.Config
 	Dir      string
-	creds    config.CredStore
+	Store    *store.DB
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
 	Changed  chan struct{}
@@ -122,10 +123,38 @@ func (m *AccountManager) List() []*Account {
 // AccountKey is the account's stable agent-binding key: its directory name,
 // or "primary" for the session stored in the config directory itself.
 func (m *AccountManager) AccountKey(a *Account) string {
-	if filepath.Clean(a.Dir) == filepath.Clean(m.Dir) {
+	return m.keyOf(a.Dir)
+}
+
+// keyOf is also the account's key in wiregram.db.
+func (m *AccountManager) keyOf(dir string) string {
+	if filepath.Clean(dir) == filepath.Clean(m.Dir) {
 		return agent.PrimaryAccountKey
 	}
-	return filepath.Base(a.Dir)
+	return filepath.Base(dir)
+}
+
+// identity decodes the account's saved identity; ok is false when there is none.
+func (m *AccountManager) identity(dir string, v any) (bool, error) {
+	data, err := m.Store.Get(m.keyOf(dir), store.Identity)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return false, fmt.Errorf("read account identity: %w", err)
+	}
+	return true, nil
+}
+
+func (m *AccountManager) saveIdentity(dir string, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encode account identity: %w", err)
+	}
+	return m.Store.Put(m.keyOf(dir), store.Identity, data)
 }
 
 func (a *Account) set(m *AccountManager, update func(*AccountState)) {
@@ -135,22 +164,17 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 	m.notify()
 }
 
-func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*AccountManager, error) {
-	m := &AccountManager{cfg: cfg, Dir: dir, creds: creds, Changed: make(chan struct{}, 1), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
+func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager, error) {
+	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, Changed: make(chan struct{}, 1), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
 	add := func(path string, requireIdentity bool) error {
 		a := &Account{Dir: path, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 		a.state.Status = "offline"
-		data, err := os.ReadFile(filepath.Join(path, "account.json"))
-		if err == nil {
-			if err := json.Unmarshal(data, &a.state.Identity); err != nil {
-				return fmt.Errorf("read account identity: %w", err)
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read account identity: %w", err)
+		if _, err := m.identity(path, &a.state.Identity); err != nil {
+			return err
 		}
 		if requireIdentity && a.state.Identity.ID == 0 {
 			os.RemoveAll(path)
-			return nil
+			return db.DeleteAccount(m.keyOf(path))
 		}
 		if a.state.Identity.ID != 0 {
 			if m.owners[a.state.Identity.ID] != nil {
@@ -162,32 +186,25 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 		return nil
 	}
 	// The original session stays in place; existing users need no migration or login.
-	if _, err := os.Stat(filepath.Join(dir, "session", "session.json")); err == nil {
+	if _, err := db.Get(agent.PrimaryAccountKey, store.TelegramSession); err == nil {
 		if err := add(dir, false); err != nil {
 			return nil, err
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("inspect original session: %w", err)
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "accounts"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
-	mmSeen := make(map[string]bool)
-	mxSeen := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "whatsapp-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
-			data, err := os.ReadFile(filepath.Join(path, "account.json"))
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					continue
-				}
-				return nil, fmt.Errorf("read whatsapp account: %w", err)
-			}
 			var identity waAccountIdentity
-			if err := json.Unmarshal(data, &identity); err != nil {
-				return nil, fmt.Errorf("parse whatsapp account: %w", err)
+			if ok, err := m.identity(path, &identity); err != nil {
+				return nil, fmt.Errorf("read whatsapp account: %w", err)
+			} else if !ok {
+				continue
 			}
 			wb := whatsapp.NewWABackend(path)
 			wb.Jid = identity.JID
@@ -202,26 +219,17 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 			m.addAccount(a)
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "matrix-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
-			data, err := os.ReadFile(filepath.Join(path, "account.json"))
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					continue
-				}
-				return nil, fmt.Errorf("read matrix account: %w", err)
-			}
 			var identity mxAccountIdentity
-			if err := json.Unmarshal(data, &identity); err != nil {
-				return nil, fmt.Errorf("parse matrix account: %w", err)
+			if ok, err := m.identity(path, &identity); err != nil {
+				return nil, fmt.Errorf("read matrix account: %w", err)
+			} else if !ok {
+				continue
 			}
 			mb := matrix.NewMXBackend(identity.Homeserver)
 			mb.UserID = identity.UserID
 			mb.DeviceID = identity.DeviceID
-			mb.ConfigDir = path
-			if tok, err := creds.Get(mxKeyringKey(identity.Homeserver, identity.UserID)); err == nil && tok != "" {
-				mb.AccessToken = tok
-			} else {
-				mb.AccessToken = identity.Token
-			}
+			mb.Store, mb.StoreKey = db, m.keyOf(path)
+			mb.AccessToken = identity.Token
 			a := &Account{
 				Dir:         path,
 				BackendType: "matrix",
@@ -231,28 +239,18 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.AccessToken == ""
 			m.addAccount(a)
-			mxSeen[identity.Homeserver+"\x00"+identity.UserID] = true
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "mattermost-") {
 			path := filepath.Join(dir, "accounts", entry.Name())
-			data, err := os.ReadFile(filepath.Join(path, "account.json"))
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					continue
-				}
-				return nil, fmt.Errorf("read mattermost account: %w", err)
-			}
 			var identity mmAccountIdentity
-			if err := json.Unmarshal(data, &identity); err != nil {
-				return nil, fmt.Errorf("parse mattermost account: %w", err)
+			if ok, err := m.identity(path, &identity); err != nil {
+				return nil, fmt.Errorf("read mattermost account: %w", err)
+			} else if !ok {
+				continue
 			}
 			mb := mattermost.NewMMBackend(identity.ServerURL)
 			mb.UserID = identity.UserID
 			mb.Username = identity.Username
-			if tok, err := creds.Get(mmKeyringKey(identity.ServerURL)); err == nil && tok != "" {
-				mb.Token = tok
-			} else {
-				mb.Token = identity.Token
-			}
+			mb.Token = identity.Token
 			a := &Account{
 				Dir:         path,
 				BackendType: "mattermost",
@@ -262,48 +260,11 @@ func LoadAccounts(cfg config.Config, dir string, creds config.CredStore) (*Accou
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.Token == ""
 			m.addAccount(a)
-			mmSeen[identity.ServerURL] = true
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
 			if err := add(filepath.Join(dir, "accounts", entry.Name()), true); err != nil {
 				return nil, err
 			}
 		}
-	}
-	for _, mms := range cfg.Mattermost {
-		if mmSeen[mms.URL] {
-			continue
-		}
-		mb := mattermost.NewMMBackend(mms.URL)
-		if tok, err := creds.Get(mmKeyringKey(mms.URL)); err == nil && tok != "" {
-			mb.Token = tok
-		} else if mms.Token != "" {
-			mb.Token = mms.Token
-		}
-		a := &Account{
-			BackendType: "mattermost",
-			mmBackend:   mb,
-			Histories:   make(map[backend.ChatID][]string),
-		}
-		a.state.Status = "offline"
-		a.state.NeedsLogin = mb.Token == ""
-		m.addAccount(a)
-	}
-	for _, mxs := range cfg.Matrix {
-		if mxSeen[mxs.Homeserver+"\x00"] {
-			continue
-		}
-		mb := matrix.NewMXBackend(mxs.Homeserver)
-		if tok, err := creds.Get(mxKeyringKey(mxs.Homeserver, "")); err == nil && tok != "" {
-			mb.AccessToken = tok
-		}
-		a := &Account{
-			BackendType: "matrix",
-			mxBackend:   mb,
-			Histories:   make(map[backend.ChatID][]string),
-		}
-		a.state.Status = "offline"
-		a.state.NeedsLogin = mb.AccessToken == ""
-		m.addAccount(a)
 	}
 	return m, nil
 }
@@ -354,7 +315,7 @@ func (m *AccountManager) AddMatrix(homeserver string) (*Account, error) {
 		return nil, fmt.Errorf("create account directory: %w", err)
 	}
 	mb := matrix.NewMXBackend(homeserver)
-	mb.ConfigDir = dir
+	mb.Store, mb.StoreKey = m.Store, m.keyOf(dir)
 	a := &Account{
 		Dir:         dir,
 		BackendType: "matrix",
@@ -394,12 +355,6 @@ func (m *AccountManager) Discard(a *Account) {
 	if a.Done != nil {
 		<-a.Done
 	}
-	if a.BackendType == "mattermost" && a.mmBackend != nil {
-		m.creds.Delete(mmKeyringKey(a.mmBackend.ServerURL))
-	}
-	if a.BackendType == "matrix" && a.mxBackend != nil {
-		m.creds.Delete(mxKeyringKey(a.mxBackend.Homeserver, a.mxBackend.UserID))
-	}
 	if a.BackendType == "whatsapp" && a.waBackend != nil && a.waBackend.Client != nil {
 		a.waBackend.Client.Disconnect()
 	}
@@ -413,6 +368,9 @@ func (m *AccountManager) Discard(a *Account) {
 	m.mu.Unlock()
 	if a.Dir != "" {
 		os.RemoveAll(a.Dir)
+		if err := m.Store.DeleteAccount(m.keyOf(a.Dir)); err != nil {
+			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
+		}
 	}
 }
 
@@ -436,146 +394,28 @@ type mmAccountIdentity struct {
 	Username  string `json:"username"`
 }
 
-func mmKeyringKey(serverURL string) string { return "mm-token:" + serverURL }
-
 type mxAccountIdentity struct {
 	Homeserver string `json:"homeserver"`
-	Token      string `json:"token,omitempty"`
+	Token      string `json:"token"`
 	UserID     string `json:"user_id"`
 	DeviceID   string `json:"device_id"`
 }
-
-func mxKeyringKey(homeserver, userID string) string { return "mx-token:" + homeserver + "/" + userID }
 
 type waAccountIdentity struct {
 	JID      types.JID `json:"jid"`
 	PushName string    `json:"push_name"`
 }
 
-func saveMXAccount(dir string, mx *matrix.MxBackend, creds config.CredStore) error {
-	if err := creds.Set(mxKeyringKey(mx.Homeserver, mx.UserID), mx.AccessToken); err == nil {
-		return saveMXAccountJSON(dir, mxAccountIdentity{
-			Homeserver: mx.Homeserver,
-			UserID:     mx.UserID,
-			DeviceID:   mx.DeviceID,
-		})
-	}
-	return saveMXAccountJSON(dir, mxAccountIdentity{
-		Homeserver: mx.Homeserver,
-		Token:      mx.AccessToken,
-		UserID:     mx.UserID,
-		DeviceID:   mx.DeviceID,
+func (m *AccountManager) saveMXAccount(dir string, mx *matrix.MxBackend) error {
+	return m.saveIdentity(dir, mxAccountIdentity{
+		Homeserver: mx.Homeserver, Token: mx.AccessToken, UserID: mx.UserID, DeviceID: mx.DeviceID,
 	})
 }
 
-func saveMXAccountJSON(dir string, identity mxAccountIdentity) error {
-	data, err := json.MarshalIndent(identity, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode matrix account: %w", err)
-	}
-	f, err := os.CreateTemp(dir, ".mx-account-*")
-	if err != nil {
-		return fmt.Errorf("create matrix account file: %w", err)
-	}
-	defer os.Remove(f.Name())
-	_, writeErr := f.Write(append(data, '\n'))
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		return fmt.Errorf("write matrix account: %w", err)
-	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
-		return fmt.Errorf("save matrix account: %w", err)
-	}
-	return nil
-}
-
-func saveWAAccount(dir string, wb *whatsapp.WaBackend) error {
-	identity := waAccountIdentity{
-		JID:      wb.Jid,
-		PushName: wb.PushName,
-	}
-	data, err := json.MarshalIndent(identity, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode whatsapp account: %w", err)
-	}
-	f, err := os.CreateTemp(dir, ".wa-account-*")
-	if err != nil {
-		return fmt.Errorf("create whatsapp account file: %w", err)
-	}
-	defer os.Remove(f.Name())
-	_, writeErr := f.Write(append(data, '\n'))
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		return fmt.Errorf("write whatsapp account: %w", err)
-	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
-		return fmt.Errorf("save whatsapp account: %w", err)
-	}
-	return nil
-}
-
-func saveMMAccount(dir string, mb *mattermost.MmBackend, creds config.CredStore) error {
-	if err := creds.Set(mmKeyringKey(mb.ServerURL), mb.Token); err == nil {
-		// Token is in the keyring; keep it out of the JSON file.
-		return saveMMAccountJSON(dir, mmAccountIdentity{
-			ServerURL: mb.ServerURL,
-			UserID:    mb.UserID,
-			Username:  mb.Username,
-		})
-	}
-	// Keyring unavailable (--insecure); fall back to plain JSON.
-	return saveMMAccountJSON(dir, mmAccountIdentity{
-		ServerURL: mb.ServerURL,
-		Token:     mb.Token,
-		UserID:    mb.UserID,
-		Username:  mb.Username,
+func (m *AccountManager) saveMMAccount(dir string, mb *mattermost.MmBackend) error {
+	return m.saveIdentity(dir, mmAccountIdentity{
+		ServerURL: mb.ServerURL, Token: mb.Token, UserID: mb.UserID, Username: mb.Username,
 	})
-}
-
-func saveMMAccountJSON(dir string, identity mmAccountIdentity) error {
-	data, err := json.MarshalIndent(identity, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode mattermost account: %w", err)
-	}
-	f, err := os.CreateTemp(dir, ".mm-account-*")
-	if err != nil {
-		return fmt.Errorf("create mattermost account file: %w", err)
-	}
-	defer os.Remove(f.Name())
-	_, writeErr := f.Write(append(data, '\n'))
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		return fmt.Errorf("write mattermost account: %w", err)
-	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
-		return fmt.Errorf("save mattermost account: %w", err)
-	}
-	return nil
-}
-
-func saveAccount(dir string, identity backend.AccountIdentity) error {
-	data, err := json.MarshalIndent(identity, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode account identity: %w", err)
-	}
-	f, err := os.CreateTemp(dir, ".account-*")
-	if err != nil {
-		return fmt.Errorf("create account identity: %w", err)
-	}
-	defer os.Remove(f.Name())
-	_, writeErr := f.Write(append(data, '\n'))
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		return fmt.Errorf("write account identity: %w", err)
-	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, "account.json")); err != nil {
-		return fmt.Errorf("save account identity: %w", err)
-	}
-	return nil
 }
 
 // A supervisor owns one connection lifetime. Switching the UI never stops it.
@@ -620,7 +460,7 @@ func (m *AccountManager) Start(parent context.Context, a *Account, prompt config
 				startupTimer = time.AfterFunc(30*time.Second, stopAttempt)
 			}
 			started := false
-			c, err := telegram.NewClient(m.cfg, a.Dir, func(err error) {
+			c, err := telegram.NewClient(m.cfg, m.Store, m.AccountKey(a), func(err error) {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			})
 			if err == nil {
@@ -653,7 +493,7 @@ func (m *AccountManager) Start(parent context.Context, a *Account, prompt config
 					}
 					m.owners[self.ID] = a
 					m.mu.Unlock()
-					if err := saveAccount(a.Dir, identity); err != nil {
+					if err := m.saveIdentity(a.Dir, identity); err != nil {
 						return err
 					}
 					prompt = nil // Reconnects must never read from an abandoned login UI.
@@ -734,7 +574,7 @@ func (m *AccountManager) startMatrix(parent context.Context, a *Account, prompt 
 			return
 		}
 		if a.Dir != "" {
-			if err := saveMXAccount(a.Dir, mb, m.creds); err != nil {
+			if err := m.saveMXAccount(a.Dir, mb); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
@@ -797,7 +637,7 @@ func (m *AccountManager) startMattermost(parent context.Context, a *Account, pro
 			return
 		}
 		if a.Dir != "" {
-			if err := saveMMAccount(a.Dir, mb, m.creds); err != nil {
+			if err := m.saveMMAccount(a.Dir, mb); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
@@ -837,7 +677,7 @@ func (m *AccountManager) startWhatsApp(parent context.Context, a *Account, promp
 			return
 		}
 		if a.Dir != "" {
-			if err := saveWAAccount(a.Dir, wb); err != nil {
+			if err := m.saveIdentity(a.Dir, waAccountIdentity{JID: wb.Jid, PushName: wb.PushName}); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}

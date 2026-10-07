@@ -20,6 +20,7 @@ import (
 
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
+	"wiregram/internal/store"
 	"wiregram/internal/textfmt"
 )
 
@@ -28,7 +29,9 @@ type MxBackend struct {
 	AccessToken string
 	UserID      string
 	DeviceID    string
-	ConfigDir   string
+	// Store and StoreKey persist the sync token; a nil Store keeps it in memory.
+	Store    *store.DB
+	StoreKey string
 
 	syncToken string
 
@@ -578,10 +581,10 @@ func (mx *MxBackend) processTypingEvent(roomID string, ev mxTimelineEvent, subsc
 }
 
 func (mx *MxBackend) loadSyncToken() {
-	if mx.ConfigDir == "" {
+	if mx.Store == nil {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(mx.ConfigDir, "sync_token"))
+	data, err := mx.Store.Get(mx.StoreKey, store.SyncToken)
 	if err != nil {
 		return
 	}
@@ -589,10 +592,10 @@ func (mx *MxBackend) loadSyncToken() {
 }
 
 func (mx *MxBackend) saveSyncToken() {
-	if mx.ConfigDir == "" {
+	if mx.Store == nil {
 		return
 	}
-	os.WriteFile(filepath.Join(mx.ConfigDir, "sync_token"), []byte(mx.syncToken+"\n"), 0600)
+	mx.Store.Put(mx.StoreKey, store.SyncToken, []byte(mx.syncToken))
 }
 
 // Room display helpers.

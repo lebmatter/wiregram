@@ -95,10 +95,12 @@ These are project constraints, not suggestions:
 ## Architecture
 
 ```
-cmd/wiregram/        main(): flags, keyring choice, config load, hands off to tui
+cmd/wiregram/        main(): flags, database and config load, hands off to tui
 internal/
   textfmt/           pure text helpers: plain(), wrapping, cell widths, nick colours
-  config/            config.json loading, keyring / insecure credential stores
+  store/             wiregram.db: settings and per-account data (identity,
+                     Telegram session, Matrix sync token)
+  config/            settings loading
   backend/           the Backend interface and shared types (ChatEntry, Message,
                      events, capabilities, emoji catalog, upload classification,
                      the mpv command)
@@ -139,15 +141,17 @@ lowest package that needs them rather than importing sideways.
 ### Config and session paths
 
 `os.UserConfigDir()/wiregram/` (typically `~/.config/wiregram/`):
-- `config.json` — API credentials and autolock
-- `wiregram.db` — SQLite database for Chat Agents: providers, agents, account
-  bindings, knowledge paths and message history
-- `session/session.json` — primary account session
-- `accounts/account-*/` — additional account sessions and identity files
+- `wiregram.db` — the single SQLite database (`internal/store`): `settings`
+  (API credentials, autolock), `account_data` (identity, Telegram session and
+  Matrix sync token per account key) and the Chat Agent tables
+- `accounts/<backend>-*/` — one directory per added account; its name is the
+  account key (`primary` for the original Telegram account). WhatsApp keeps
+  whatsmeow's own `whatsapp.db` here.
 
-Directories are `0700`; credential and session files are `0600`. Config
-writes are atomic (temp file in the same directory, then rename) and must
-preserve fields the struct does not know about.
+Directories are `0700`; `wiregram.db` is `0600`. Wiregram writes no JSON files.
+`account.ImportLegacy` imports the files older versions wrote (`config.json`,
+`account.json`, `session/session.json`, `sync_token`) once at startup and
+renames each to `*.bak`.
 
 ## Planned work
 

@@ -140,7 +140,6 @@ func (rt *agentRuntime) Stop() {
 	rt.subscribed = make(map[*Account]*binding)
 	rt.mu.Unlock()
 	rt.wg.Wait()
-	rt.Db.Close()
 }
 
 // Changed signals the UI when suggestions or agent problems change.

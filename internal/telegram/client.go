@@ -2,9 +2,8 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 
@@ -18,6 +17,7 @@ import (
 
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
+	"wiregram/internal/store"
 )
 
 type peerKey struct {
@@ -61,11 +61,25 @@ type Client struct {
 	Report         func(error)
 }
 
-func NewClient(cfg config.Config, dir string, report func(error)) (*Client, error) {
-	dir = filepath.Join(dir, "session")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("create session directory: %w", err)
+// sessionStorage keeps the MTProto session in wiregram.db.
+type sessionStorage struct {
+	db      *store.DB
+	account string
+}
+
+func (s sessionStorage) LoadSession(context.Context) ([]byte, error) {
+	data, err := s.db.Get(s.account, store.TelegramSession)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, session.ErrNotFound
 	}
+	return data, err
+}
+
+func (s sessionStorage) StoreSession(_ context.Context, data []byte) error {
+	return s.db.Put(s.account, store.TelegramSession, data)
+}
+
+func NewClient(cfg config.Config, db *store.DB, account string, report func(error)) (*Client, error) {
 	c := &Client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
 		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
@@ -88,7 +102,7 @@ func NewClient(cfg config.Config, dir string, report func(error)) (*Client, erro
 	})
 	c.Updates = updates.New(updates.Config{Handler: telegram.UpdateHandlerFunc(c.handleUpdates)})
 	c.Telegram = telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
-		SessionStorage: &session.FileStorage{Path: filepath.Join(dir, "session.json")},
+		SessionStorage: sessionStorage{db: db, account: account},
 		UpdateHandler:  c.Updates,
 		Middlewares:    []telegram.Middleware{middleware, hook.UpdateHook(c.Updates.Handle)},
 	})

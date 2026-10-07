@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"wiregram/internal/backend"
 )
 
@@ -63,25 +61,15 @@ type AgentDB struct {
 	db *sql.DB
 }
 
-func OpenAgentDB(dir string) (*AgentDB, error) {
-	path := filepath.Join(dir, "wiregram.db")
-	dsn := "file:" + path +
-		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open agent database: %w", err)
-	}
+// OpenAgentDB adds the agent tables to the shared wiregram.db handle, which
+// its owner closes.
+func OpenAgentDB(db *sql.DB, dir string) (*AgentDB, error) {
 	d := &AgentDB{db: db}
 	// Before v2 the primary account was keyed by the config directory's name.
 	if err := d.migrate(filepath.Base(dir)); err != nil {
-		db.Close()
 		return nil, fmt.Errorf("migrate agent database: %w", err)
 	}
 	return d, nil
-}
-
-func (d *AgentDB) Close() error {
-	return d.db.Close()
 }
 
 func (d *AgentDB) migrate(oldPrimaryKey string) error {

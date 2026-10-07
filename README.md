@@ -36,13 +36,11 @@ make
 
 - **Telegram** asks for an API ID and hash on first launch. Register an app at
   [my.telegram.org/apps](https://my.telegram.org/apps).
-- **Matrix and Mattermost** servers go in `~/.config/wiregram/config.json`; Wiregram asks
-  you to log in on first use.
+- **Matrix and Mattermost** are added from the account picker with the server address;
+  Wiregram asks you to log in.
 - **WhatsApp** needs no config. Add it from the account picker and pair with a code.
   WhatsApp may ban numbers that use unofficial clients.
 - **Media** opens in `mpv`. Run Wiregram inside Kitty to see images inline.
-
-Credentials go to the OS keyring (`--insecure` stores them in plain files instead).
 
 ## Chat Agents
 

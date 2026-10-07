@@ -15,11 +15,12 @@ import (
 
 	"wiregram/internal/account"
 	"wiregram/internal/config"
+	"wiregram/internal/store"
 	"wiregram/internal/textfmt"
 	"wiregram/internal/tui"
 )
 
-const usageText = `Usage: wiregram [--insecure]
+const usageText = `Usage: wiregram
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
 Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
@@ -28,9 +29,6 @@ audio playback via mpv.
 First launch asks for API credentials (or use -ldflags to embed them),
 then your phone number, login code, and optional 2FA password.
 Config and sessions are stored in ~/.config/wiregram/.
-
-Credentials are stored in the OS keyring by default (secret-tool on Linux,
-Keychain on macOS). Use --insecure to store them in plain JSON files instead.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
@@ -126,7 +124,6 @@ func main() {
 func run() (result error) {
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	insecure := flags.Bool("insecure", false, "store credentials in plain JSON instead of the OS keyring")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(os.Stdout, usageText)
@@ -136,16 +133,6 @@ func run() (result error) {
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("wiregram does not accept positional arguments")
-	}
-	var creds config.CredStore
-	if *insecure {
-		creds = &config.InsecureStore{}
-	} else {
-		kr, err := config.NewOSKeyring()
-		if err != nil {
-			return err
-		}
-		creds = kr
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -168,11 +155,23 @@ func run() (result error) {
 		}
 		return scanner.Text(), nil
 	}
-	cfg, dir, err := config.LoadConfig(prompt, os.Stdout)
+	dir, err := config.Dir()
 	if err != nil {
 		return err
 	}
-	accounts, err := account.LoadAccounts(cfg, dir, creds)
+	db, err := store.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := account.ImportLegacy(db, dir); err != nil {
+		return err
+	}
+	cfg, err := config.LoadConfig(db, prompt, os.Stdout)
+	if err != nil {
+		return err
+	}
+	accounts, err := account.LoadAccounts(cfg, dir, db)
 	if err != nil {
 		return err
 	}

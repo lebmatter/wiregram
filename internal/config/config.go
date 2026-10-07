@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"wiregram/internal/store"
 )
 
 // Set by the Go linker for distributed builds; never changed at runtime.
@@ -16,64 +17,68 @@ var buildAPIID string
 var buildAPIHash string
 
 type Config struct {
-	APIID      int              `json:"api_id"`
-	APIHash    string           `json:"api_hash"`
-	AutoLock   int              `json:"autolock"`
-	Mattermost []mmServerConfig `json:"mattermost,omitempty"`
-	Matrix     []mxServerConfig `json:"matrix,omitempty"`
-}
-
-type mmServerConfig struct {
-	URL   string `json:"url"`
-	Token string `json:"token,omitempty"`
-}
-
-type mxServerConfig struct {
-	Homeserver string `json:"homeserver"`
+	APIID    int
+	APIHash  string
+	AutoLock int
 }
 
 type PromptFunc func(string, bool) (string, error)
 
-func LoadConfig(prompt PromptFunc, out io.Writer) (Config, string, error) {
+// Dir returns the configuration directory, creating it if needed.
+func Dir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return Config{}, "", fmt.Errorf("locate configuration directory: %w", err)
+		return "", fmt.Errorf("locate configuration directory: %w", err)
 	}
 	dir := filepath.Join(base, "wiregram")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return Config{}, "", fmt.Errorf("create configuration directory: %w", err)
+		return "", fmt.Errorf("create configuration directory: %w", err)
 	}
-	path := filepath.Join(dir, "config.json")
-	data, err := os.ReadFile(path)
+	return dir, nil
+}
+
+func LoadConfig(db *store.DB, prompt PromptFunc, out io.Writer) (Config, error) {
+	cfg := Config{AutoLock: 1}
+	id, err := db.Setting("api_id")
 	if err == nil {
-		cfg := Config{AutoLock: 1}
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return cfg, dir, fmt.Errorf("read configuration: %w", err)
+		// An API ID of 0 comes from configurations without Telegram.
+		cfg.APIID, err = strconv.Atoi(id)
+		if err != nil || cfg.APIID < 0 {
+			return cfg, fmt.Errorf("configuration API ID must be a non-negative number")
 		}
-		if (cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "") && len(cfg.Mattermost) == 0 && len(cfg.Matrix) == 0 {
-			return cfg, dir, fmt.Errorf("configuration needs a positive API ID and an API hash (or a mattermost/matrix/whatsapp section)")
+		if cfg.APIHash, err = db.Setting("api_hash"); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return cfg, err
 		}
-		if cfg.AutoLock != 0 && cfg.AutoLock != 1 {
-			return cfg, dir, fmt.Errorf("configuration autolock must be 0 or 1")
+		if cfg.APIID > 0 && strings.TrimSpace(cfg.APIHash) == "" {
+			return cfg, fmt.Errorf("configuration needs an API hash")
 		}
-		return cfg, dir, nil
+		lock, err := db.Setting("autolock")
+		if err == nil {
+			cfg.AutoLock, err = strconv.Atoi(lock)
+		} else if errors.Is(err, store.ErrNotFound) {
+			err = nil
+		}
+		if err != nil || (cfg.AutoLock != 0 && cfg.AutoLock != 1) {
+			return cfg, fmt.Errorf("configuration autolock must be 0 or 1")
+		}
+		return cfg, nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return Config{}, dir, fmt.Errorf("open configuration: %w", err)
+	if !errors.Is(err, store.ErrNotFound) {
+		return cfg, err
 	}
 	if buildAPIID != "" || buildAPIHash != "" {
 		id, err := strconv.Atoi(buildAPIID)
 		if err != nil || id <= 0 || strings.TrimSpace(buildAPIHash) == "" {
-			return Config{}, dir, fmt.Errorf("this build has incomplete or invalid Telegram API credentials; rebuild with both API ID and API hash")
+			return cfg, fmt.Errorf("this build has incomplete or invalid Telegram API credentials; rebuild with both API ID and API hash")
 		}
-		return Config{APIID: id, APIHash: strings.TrimSpace(buildAPIHash), AutoLock: 1}, dir, nil
+		cfg.APIID, cfg.APIHash = id, strings.TrimSpace(buildAPIHash)
+		return cfg, nil
 	}
 	fmt.Fprintln(out, "wiregram: no config found.\nGet your API credentials at https://my.telegram.org/apps")
-	cfg := Config{AutoLock: 1}
 	for {
 		value, err := prompt("Enter API ID: ", false)
 		if err != nil {
-			return cfg, dir, fmt.Errorf("read API ID: %w", err)
+			return cfg, fmt.Errorf("read API ID: %w", err)
 		}
 		cfg.APIID, err = strconv.Atoi(strings.TrimSpace(value))
 		if err == nil && cfg.APIID > 0 {
@@ -84,22 +89,24 @@ func LoadConfig(prompt PromptFunc, out io.Writer) (Config, string, error) {
 	for cfg.APIHash == "" {
 		value, err := prompt("Enter API Hash: ", false)
 		if err != nil {
-			return cfg, dir, fmt.Errorf("read API hash: %w", err)
+			return cfg, fmt.Errorf("read API hash: %w", err)
 		}
 		cfg.APIHash = strings.TrimSpace(value)
 	}
-	data, err = json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return cfg, dir, fmt.Errorf("encode configuration: %w", err)
+	if err := Save(db, cfg); err != nil {
+		return cfg, err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return cfg, dir, fmt.Errorf("create configuration: %w", err)
+	return cfg, nil
+}
+
+// Save writes every setting; the API ID goes last because its presence is
+// what marks the configuration as complete.
+func Save(db *store.DB, cfg Config) error {
+	if err := db.SetSetting("api_hash", cfg.APIHash); err != nil {
+		return err
 	}
-	_, writeErr := file.Write(append(data, '\n'))
-	closeErr := file.Close()
-	if err := errors.Join(writeErr, closeErr); err != nil {
-		return cfg, dir, fmt.Errorf("save configuration: %w", err)
+	if err := db.SetSetting("autolock", strconv.Itoa(cfg.AutoLock)); err != nil {
+		return err
 	}
-	return cfg, dir, nil
+	return db.SetSetting("api_id", strconv.Itoa(cfg.APIID))
 }

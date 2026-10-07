@@ -24,7 +24,7 @@ func (agentsRequested) Error() string { return "open agents" }
 func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 	defer m.Close()
 
-	db, err := agent.OpenAgentDB(m.Dir)
+	db, err := agent.OpenAgentDB(m.Store.SQL(), m.Dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wiregram: agents disabled — %s\n", textfmt.CleanError(err))
 	} else {

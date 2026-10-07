@@ -213,6 +213,10 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 		mb.Token = ""
 	}
 
+	if prompt == nil {
+		return fmt.Errorf("Mattermost account needs authentication")
+	}
+
 	email, err := prompt("Email or username: ", false)
 	if err != nil {
 		return fmt.Errorf("read email: %w", err)
