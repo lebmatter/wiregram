@@ -149,6 +149,11 @@ func (m accountListModel) View() tea.View {
 		}
 		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, accountGlyph(s), label,
 			styleDim.Render(backendTag(a.BackendType)), styleSubtle.Render(status))
+		if m.mgr.Agents != nil {
+			if name := m.mgr.Agents.AgentName(a); name != "" {
+				row += "  " + styleAgent.Render("agent: "+textfmt.Plain(name))
+			}
+		}
 		if i == m.selected {
 			row = styleSelectedRow.Render(row)
 		}

@@ -149,6 +149,17 @@ func (rt *agentRuntime) Count() int {
 	return len(rt.agents)
 }
 
+// AgentName is the name of the enabled agent bound to the account, or "".
+func (rt *agentRuntime) AgentName(a *Account) string {
+	key := rt.mgr.AccountKey(a)
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if ag := rt.agents[rt.bindings[key]]; ag != nil {
+		return ag.record.Name
+	}
+	return ""
+}
+
 // Changed signals the UI when suggestions or agent problems change.
 func (rt *agentRuntime) Changed() <-chan struct{} { return rt.changed }
 
