@@ -11,7 +11,7 @@ Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo.
 is the left click and the wheel. The wheel moves the selection of the list under the pointer
 as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter. A click on
 a chat message selects it and opens any attachment with `xdg-open`. The login and connecting
-screens leave the mouse to the terminal, and games themselves take keys only. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
+screens leave the mouse to the terminal. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 
@@ -52,7 +52,6 @@ These are project constraints, not suggestions:
   github.com/charmbracelet/x/ansi (already pulled in by bubbletea;
   textfmt measures cell widths with its `WcWidth` so padding matches the
   renderer), and
-  github.com/yuin/gopher-lua for the embedded game scripts,
   golang.org/x/image for scaling and WebP decoding of inline images, and
   for the email backend github.com/emersion/go-imap/v2 (pinned beta, with
   its go-message and go-sasl) and golang.org/x/oauth2 for Google sign-in.
@@ -76,9 +75,6 @@ These are project constraints, not suggestions:
 - The UI is a BubbleTea TUI styled with lipgloss; shared colors, boxes,
   footer and account tags live in `internal/tui/render.go`. Kitty graphics sequences are
   used only by the media viewer (mpv via `tea.Exec`).
-- Overlays are drawn by `renderModal` (`internal/tui/render.go`), a box
-  composited over the screen with lipgloss layers. Game mode uses one for
-  incoming challenges and for the game-over result.
 - Startup shows the `wiregramLogo` splash (`internal/tui/splash.go`) for about a second.
 - There is no header bar. Inside an account the screen is the body and a
   `bubbles/help` footer with the notice on the right. Help hides keys the
@@ -148,14 +144,6 @@ These are project constraints, not suggestions:
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat. Email publishes no DM events,
   so agents never answer mail.
-- Game mode (`internal/tui/game.go`) is an easter egg: only Alt+G from the
-  chat list opens it, and only `--help` mentions it (no menu entry, no footer
-  hint). It uses green (`colorGame`, 114). Games are versioned Lua scripts
-  embedded from `internal/game/scripts/`. One-player games run locally with
-  no base; two-player games are greyed out until a base is connected, and
-  only players with the same id and version are matched. The challenger hosts and runs the script for both seats; the guest
-  sends keys and draws the changed lines it receives. `wiregram base` only
-  lists players, passes on challenges and relays; it never runs game logic.
 
 ## Architecture
 
@@ -176,9 +164,6 @@ internal/
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache tables
   agent/             SQLite store for agents, providers and message history
-  game/              game protocol, base client, sandboxed Lua runtime and the
-                     embedded game scripts (scripts/*.lua)
-  base/              `wiregram base`: lobby, invites and relay for game mode
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime
   tui/               BubbleTea screens and the account/mode loop (run.go)

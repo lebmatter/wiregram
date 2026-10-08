@@ -10,7 +10,6 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/gotd/td v0.100.0
-	github.com/yuin/gopher-lua v1.1.1
 	go.mau.fi/whatsmeow v0.0.0-20260929112325-8b41cfe6d9c4
 	golang.org/x/image v0.46.0
 	golang.org/x/oauth2 v0.37.0

@@ -44,8 +44,6 @@ var (
 	colorBadge  = lipgloss.Color("16")
 	// colorAgent replaces colorAccent throughout agent mode.
 	colorAgent = lipgloss.Color("141")
-	// colorGame replaces colorAccent throughout game mode.
-	colorGame = lipgloss.Color("114")
 )
 
 var (
@@ -61,7 +59,6 @@ var (
 	styleBadge       = lipgloss.NewStyle().Bold(true).Background(colorAccent).Foreground(colorBadge)
 	styleSelectedRow = lipgloss.NewStyle().Bold(true).Background(colorSelBg)
 	styleAgent       = lipgloss.NewStyle().Foreground(colorAgent)
-	styleGame        = lipgloss.NewStyle().Foreground(colorGame)
 )
 
 type helpKey struct {
@@ -190,69 +187,6 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 	}
 	b.WriteString("\n" + bs.Render("╰"+strings.Repeat("─", width-2)+"╯"))
 	return b.String()
-}
-
-// renderModal draws a titled box with centred body lines over the middle of
-// screen, a width×height frame. A terminal too small for it gets screen as is.
-func renderModal(screen, title string, body []string, width, height int,
-	accent color.Color) string {
-	x, y, w, h, ok := modalRect(body, width, height)
-	if !ok {
-		return screen
-	}
-	lines := []string{""}
-	for _, l := range body {
-		lines = append(lines, lipgloss.PlaceHorizontal(w-4, lipgloss.Center, l))
-	}
-	box := lipgloss.NewLayer(renderBox(title, lines, w, h, accent)).
-		X(x).Y(y).Z(1)
-	return lipgloss.NewCompositor(lipgloss.NewLayer(screen), box).Render()
-}
-
-// modalRect is where renderModal puts a modal with these body lines;
-// ok is false when renderModal would draw none. Body line i is at row y+2+i.
-func modalRect(body []string, width, height int) (x, y, w, h int, ok bool) {
-	widest := 0
-	for _, l := range body {
-		widest = max(widest, lipgloss.Width(l))
-	}
-	w = min(width-4, max(32, widest+6))
-	h = len(body) + 4
-	if w < 20 || h > height {
-		return 0, 0, 0, 0, false
-	}
-	return (width - w) / 2, (height - h) / 2, w, h, true
-}
-
-// modalKey is one key shown on a modal's hint line: what it shows, what it
-// does, and the key a click on it presses.
-type modalKey struct{ shown, label, press string }
-
-func modalHint(keys []modalKey, style lipgloss.Style) string {
-	var parts []string
-	for _, k := range keys {
-		parts = append(parts, style.Render(k.shown)+" "+k.label)
-	}
-	return strings.Join(parts, "    ")
-}
-
-// modalKeyAt is the key whose hint renderModal drew at (x, y), when body ends
-// with modalHint(keys).
-func modalKeyAt(body []string, keys []modalKey, width, height, x, y int) (string, bool) {
-	bx, by, w, _, ok := modalRect(body, width, height)
-	if !ok || y != by+2+len(body)-1 {
-		return "", false
-	}
-	hint := lipgloss.Width(body[len(body)-1])
-	col := x - (bx + 2 + (w-4-hint)/2)
-	for _, k := range keys {
-		size := lipgloss.Width(k.shown + " " + k.label)
-		if col >= 0 && col < size {
-			return k.press, true
-		}
-		col -= size + 4
-	}
-	return "", false
 }
 
 // keyPress is a synthetic key press, so mouse input can reuse key handlers.

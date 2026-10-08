@@ -25,10 +25,6 @@ type agentsRequested struct{}
 
 func (agentsRequested) Error() string { return "open agents" }
 
-type gamesRequested struct{}
-
-func (gamesRequested) Error() string { return "open games" }
-
 func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 	defer m.Close()
 
@@ -112,16 +108,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
 				// Agent mode returns to this account unless it picked another.
 				to, err := tuiAgentMode(ctx, m)
-				if err != nil {
-					return err
-				}
-				if to != nil {
-					active = to
-				}
-				continue
-			}
-			if _, ok := err.(gamesRequested); ok {
-				to, err := tuiGameMode(ctx, m)
 				if err != nil {
 					return err
 				}
