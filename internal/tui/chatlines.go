@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
 )
@@ -97,7 +99,9 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 // Generic selected lines rendering.
 // genericSelectedLines also returns, for each line, the index of the message
 // it belongs to (-1 for none) so mouse clicks can find their message.
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, width, height int) ([]string, []int) {
+// Day and unread dividers sit above the message they introduce; firstUnread
+// is the ID of the oldest message unread when the chat opened ("" for none).
+func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, firstUnread string, width, height int) ([]string, []int) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -128,6 +132,8 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		}
 		return lines, owners
 	}
+	now := time.Now()
+	dividers := make(map[int]int) // divider lines at the top of each block
 	blocks := make(map[int][]string)
 	block := func(i int) []string {
 		if lines := blocks[i]; lines != nil {
@@ -139,6 +145,16 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 				lines[j] = shadeLine(lines[j], lineWidth)
 			}
 		}
+		var top []string
+		day := messages[i].Timestamp
+		if i == 0 || !sameDay(messages[i-1].Timestamp, day) {
+			top = append(top, dividerLine(dayLabel(day, now), styleSubtle, lineWidth))
+		}
+		if firstUnread != "" && messages[i].ID == firstUnread {
+			top = append(top, dividerLine("unread", styleAccent, lineWidth))
+		}
+		dividers[i] = len(top)
+		lines = append(top, lines...)
 		blocks[i] = lines
 		return lines
 	}
@@ -171,8 +187,12 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			visible = selectedBlock
 		}
 		lines = append(lines, visible...)
-		for range visible {
-			owners = append(owners, i)
+		for j := range visible {
+			if j < dividers[i] {
+				owners = append(owners, -1)
+			} else {
+				owners = append(owners, i)
+			}
 		}
 	}
 	if replying != nil {
@@ -184,6 +204,43 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		owners = append(owners, -1)
 	}
 	return lines, owners
+}
+
+// dividerLine centres label in a rule across the chat, like ── yesterday ──.
+func dividerLine(label string, style lipgloss.Style, width int) string {
+	label = " " + label + " "
+	side := max(2, (width-textfmt.DisplayWidth(label))/2)
+	rule := strings.Repeat("─", side)
+	return textfmt.ClipLine(styleDim.Render(rule)+style.Render(label)+styleDim.Render(rule), width)
+}
+
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Local().Date()
+	by, bm, bd := b.Local().Date()
+	return ay == by && am == bm && ad == bd
+}
+
+// dayLabel names t's day relative to now: today, yesterday, N days ago within
+// a week, then the date.
+func dayLabel(t, now time.Time) string {
+	t, now = t.Local(), now.Local()
+	day := func(t time.Time) time.Time {
+		y, m, d := t.Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+	}
+	days := int(day(now).Sub(day(t)).Hours()/24 + 0.5)
+	switch {
+	case days <= 0:
+		return "today"
+	case days == 1:
+		return "yesterday"
+	case days < 7:
+		return fmt.Sprintf("%d days ago", days)
+	case t.Year() == now.Year():
+		return t.Format("Mon 2 Jan")
+	default:
+		return t.Format("2 Jan 2006")
+	}
 }
 
 // messageBlock lays out one message in the shared block format: a fixed
