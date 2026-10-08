@@ -287,6 +287,27 @@ func (m userSearchModel) edited(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	return m, cmd
 }
 
+// click opens the person at row y of the pane. The list keeps its layout
+// private, so rows count from the selected item, whose title has the border.
+func (m userSearchModel) click(y int) (userSearchModel, tea.Cmd) {
+	row := y - 1 - searchBoxHeight
+	cur, ok := cursorRow(m.list.View(), "│")
+	if !ok || row < 0 {
+		return m, nil
+	}
+	const delegate = 3 // two lines per person and a blank between
+	offset := row - cur
+	line := (offset%delegate + delegate) % delegate
+	i := m.list.Index() + (offset-line)/delegate
+	first := m.list.Paginator.Page * m.list.Paginator.PerPage
+	if line == 2 || i < first ||
+		i >= first+m.list.Paginator.ItemsOnPage(len(m.list.VisibleItems())) {
+		return m, nil
+	}
+	m.list.Select(i)
+	return m.handleKey(keyPress(tea.KeyEnter))
+}
+
 func (m userSearchModel) view(width, height int, focused bool) string {
 	body := composerBox("", nil, "@ ", m.input, width-4, boxBorder(focused))
 	body = append(body, "")

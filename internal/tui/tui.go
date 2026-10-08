@@ -204,27 +204,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, chipsTick()
 
 	case tea.MouseClickMsg:
-		mouse := msg.Mouse()
-		left := 0
-		if m.twoPane() {
-			left = sidebarWidth
-		}
-		if mouse.Button == tea.MouseLeft && m.unreadOpen && mouse.X >= left &&
-			mouse.Y < m.bodyHeight() {
-			m.focus = focusChat
-			if i, ok := m.unread.cardAt(mouse.Y); ok {
-				return m.openChat(m.unread.cards[i].entry)
-			}
-			return m, nil
-		}
-		if mouse.Button != tea.MouseLeft || !m.chatOpen || m.chat.locked || m.searchOpen ||
-			mouse.X < left || mouse.Y >= m.bodyHeight() {
-			return m, nil
-		}
-		m.focus = focusChat
-		var cmd tea.Cmd
-		m.chat, cmd = m.chat.Update(chatClick{mouse.X - left, mouse.Y})
-		return m, cmd
+		return m.handleClick(msg.Mouse())
+
+	case tea.MouseWheelMsg:
+		return m.handleWheel(msg)
 
 	case busEvent:
 		// The root owns the account's only UI subscription and routes events
@@ -332,6 +315,89 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 	}
 	return m, tea.Batch(searchCmd, chatCmd, inputCmd)
+}
+
+// overList reports whether column x of the body shows the chat list.
+func (m tuiModel) overList(x int) bool {
+	if m.twoPane() {
+		return x < sidebarWidth
+	}
+	return !m.paneOpen()
+}
+
+// handleClick makes a left click on a row act like selecting it and pressing
+// Enter; a click on a message selects it and opens its media.
+func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
+	if mouse.Button != tea.MouseLeft || mouse.Y >= m.bodyHeight() {
+		return m, nil
+	}
+	if m.chatOpen && m.chat.locked {
+		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
+	}
+	var cmd tea.Cmd
+	if m.overList(mouse.X) {
+		if m.loadErr != nil || m.list.confirm != nil {
+			return m, nil
+		}
+		m.focus = focusList
+		i, ok := m.list.itemAt(mouse.Y - 1)
+		if !ok || mouse.Y < 1 || mouse.Y > m.list.height {
+			return m, nil
+		}
+		m.list.selected = i
+		m.list, cmd = m.list.Update(keyPress(tea.KeyEnter))
+		return m, cmd
+	}
+	if !m.paneOpen() {
+		return m, nil
+	}
+	m.focus = focusChat
+	x := mouse.X
+	if m.twoPane() {
+		x -= sidebarWidth
+	}
+	switch {
+	case m.unreadOpen:
+		if i, ok := m.unread.cardAt(mouse.Y); ok {
+			return m.openChat(m.unread.cards[i].entry)
+		}
+	case m.searchOpen:
+		if m.forwarding() {
+			m.chat = m.chat.resetLock()
+		}
+		m.search, cmd = m.search.click(mouse.Y)
+	default:
+		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y})
+	}
+	return m, cmd
+}
+
+// handleWheel scrolls whichever list is under the pointer, as its up and
+// down keys would, without moving the focus.
+func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
+	k, ok := wheelKey(msg)
+	mouse := msg.Mouse()
+	if !ok || mouse.Y >= m.bodyHeight() || (m.chatOpen && m.chat.locked) {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	switch {
+	case m.overList(mouse.X):
+		if m.loadErr == nil && m.list.confirm == nil {
+			m.list, cmd = m.list.Update(k)
+		}
+	case m.unreadOpen:
+		m.unread, cmd = m.unread.Update(k)
+	case m.searchOpen:
+		m.search, cmd = m.search.Update(k)
+	case m.chatOpen:
+		switch m.chat.subMode {
+		case chatSubNone, chatSubThread, chatSubEmoji, chatSubSearch, chatSubUpload:
+			// Other submodes are prompts that any key would answer.
+			m.chat, cmd = m.chat.Update(k)
+		}
+	}
+	return m, cmd
 }
 
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
@@ -534,8 +600,8 @@ func (m tuiModel) footer() string {
 func (m tuiModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	// Clicks open media; this takes over native selection (Shift+drag in most
-	// terminals).
+	// The mouse clicks and scrolls; this takes over native selection
+	// (Shift+drag in most terminals).
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

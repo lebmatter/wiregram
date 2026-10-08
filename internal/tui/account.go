@@ -82,6 +82,17 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, listenAccounts(m.mgr)
 
+	case tea.MouseWheelMsg:
+		if k, ok := wheelKey(msg); ok {
+			return m.Update(k)
+		}
+
+	case tea.MouseClickMsg:
+		if i, ok := m.itemAt(msg.Y); ok && msg.Button == tea.MouseLeft {
+			m.selected = i
+			return m.Update(keyPress(tea.KeyEnter))
+		}
+
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+d":
@@ -129,6 +140,37 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// layout returns the logo when it fits above the rows, and how far the rows
+// are moved down to make room for it, or up to keep the selection in view.
+func (m accountListModel) layout() (logo []string, shift int) {
+	rows := len(m.accounts) + 4 // the accounts, a separator and three actions
+	limit := max(4, m.height-2) - 2
+	logo = strings.Split(renderLogo(m.width-4), "\n")
+	if rows+len(logo)+2 <= limit {
+		return logo, len(logo) + 2
+	}
+	selRow := m.selected
+	if m.selected >= len(m.accounts) {
+		selRow++
+	}
+	return nil, -max(0, selRow-limit+1)
+}
+
+// itemAt maps a screen row to an account or action; the separator is none.
+func (m accountListModel) itemAt(y int) (int, bool) {
+	_, shift := m.layout()
+	r := y - 2 - shift // under the header and the box's top edge
+	switch {
+	case r < 0 || y >= max(4, m.height-2):
+		return 0, false
+	case r < len(m.accounts):
+		return r, true
+	case r == len(m.accounts):
+		return 0, false
+	}
+	return r - 1, r-1 <= m.maxIndex()
+}
+
 func (m accountListModel) View() tea.View {
 	bodyHeight := max(4, m.height-2)
 	inner := m.width - 4
@@ -168,19 +210,14 @@ func (m accountListModel) View() tea.View {
 			rows = append(rows, styleSubtle.Render("  "+label))
 		}
 	}
-	selRow := m.selected
-	if m.selected >= len(m.accounts) {
-		selRow++
-	}
-	limit := bodyHeight - 2
-	if logo := strings.Split(renderLogo(inner), "\n"); len(rows)+len(logo)+2 <= limit {
+	if logo, shift := m.layout(); shift > 0 {
 		var top []string
 		for _, line := range logo {
 			top = append(top, lipgloss.PlaceHorizontal(inner, lipgloss.Center, line))
 		}
 		rows = append(append(top, "", ""), rows...)
-	} else if start := max(0, selRow-limit+1); start > 0 {
-		rows = rows[start:]
+	} else {
+		rows = rows[-shift:]
 	}
 
 	notice := ""
@@ -192,6 +229,7 @@ func (m accountListModel) View() tea.View {
 		renderFooter(accountListHelp, false, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
@@ -342,6 +380,18 @@ func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case wizardCancelled:
 		return m, tea.Quit
+	case tea.MouseWheelMsg:
+		if k, ok := wheelKey(msg); ok {
+			return m.Update(k)
+		}
+		return m, nil
+	case tea.MouseClickMsg:
+		if msg.Button != tea.MouseLeft {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.wiz, cmd = m.wiz.click(msg.Y-1, max(4, m.height-2)) // under the header
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.wiz, cmd = m.wiz.Update(msg)
@@ -355,6 +405,7 @@ func (m addAccountModel) View() tea.View {
 		renderFooter(m.wiz.helpKeys(), false, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 

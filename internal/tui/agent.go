@@ -194,6 +194,10 @@ func (m agentModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.MouseWheelMsg:
+		return m.handleWheel(msg)
+	case tea.MouseClickMsg:
+		return m.handleClick(msg.Mouse())
 	}
 	if m.screen == scrWizard {
 		var cmd tea.Cmd
@@ -793,18 +797,106 @@ func (m *agentModeModel) saveAgent(a wizardAnswers) error {
 
 // --- Rendering ---------------------------------------------------------------
 
+// paneAt is the screen whose list is drawn at column x.
+func (m agentModeModel) paneAt(x int) agentScreen {
+	switch {
+	case m.screen == scrWizard || m.screen == scrProviders:
+		return m.screen
+	case m.width < twoPaneWidth:
+		return m.screen
+	case x < agentSidebarWidth:
+		return scrAgents
+	case m.screen == scrAgents:
+		return scrConvs // the selected agent's conversations
+	}
+	return m.screen
+}
+
+// handleWheel moves the selection of the list under the pointer.
+func (m agentModeModel) handleWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	k, ok := wheelKey(msg)
+	if !ok || m.confirm != nil || msg.Y >= m.bodyHeight() {
+		return m, nil
+	}
+	switch m.paneAt(msg.X) {
+	case scrWizard:
+		var cmd tea.Cmd
+		m.wiz, cmd = m.wiz.Update(k)
+		return m, cmd
+	case scrAgents:
+		return m.agentsKey(k.String())
+	case scrConvs:
+		return m.convsKey(k.String())
+	case scrProviders:
+		return m.providersKey(k.String())
+	}
+	return m, nil
+}
+
+// handleClick selects the clicked agent, conversation or provider and opens
+// it as Enter would.
+func (m agentModeModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+	h := m.bodyHeight() - 2
+	if mouse.Button != tea.MouseLeft || mouse.Y >= m.bodyHeight() {
+		return m, nil
+	}
+	if m.confirm != nil {
+		return m.handleKey(keyPress(tea.KeyEscape)) // anything but y declines
+	}
+	row := mouse.Y - 1
+	if m.screen != scrWizard && (row < 0 || row >= h) {
+		return m, nil
+	}
+	m.notice = ""
+	switch m.paneAt(mouse.X) {
+	case scrWizard:
+		var cmd tea.Cmd
+		m.wiz, cmd = m.wiz.click(mouse.Y, m.bodyHeight())
+		return m, cmd
+	case scrAgents:
+		i := window(m.sel, h/2) + row/2 // two lines per agent
+		if i >= len(m.agents) {
+			return m, nil
+		}
+		if i != m.sel {
+			m.sel, m.tsel = i, 0
+			m = m.reload()
+		}
+		return m.agentsKey("enter")
+	case scrConvs:
+		i := window(m.tsel, h) + row
+		if i >= len(m.threads) {
+			return m, nil
+		}
+		m.tsel = i
+		return m.convsKey("enter")
+	case scrProviders:
+		if i := window(m.psel, h) + row; i < len(m.providers) {
+			m.psel = i
+		}
+	}
+	return m, nil
+}
+
 func (m agentModeModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
-func (m agentModeModel) render() string {
+func (m agentModeModel) footer() string {
 	notice := m.notice
 	if m.confirm != nil {
 		notice = m.confirmText
 	}
-	footer := renderThemedFooter(m.helpKeys(), m.fullHelp, notice, m.width, colorAgent)
+	return renderThemedFooter(m.helpKeys(), m.fullHelp, notice, m.width, colorAgent)
+}
+
+func (m agentModeModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
+
+func (m agentModeModel) render() string {
+	footer := m.footer()
 	bodyHeight := max(4, m.height-lipgloss.Height(footer))
 	var body string
 	switch {

@@ -37,10 +37,11 @@ Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
 Enter on another account, or Alt+1..9, switches to it.
 
-Clicking a message with an attachment downloads it to a private temp
-directory and opens it with xdg-open (open on macOS). Clicking a card in
-the Unread view opens its chat. Hold Shift while dragging to select text
-with the terminal.
+The mouse wheel scrolls the list under the pointer. Clicking a chat,
+account, card, menu row or picker entry opens it, as Enter would. Clicking a
+message with an attachment downloads it to a private temp directory and
+opens it with xdg-open (open on macOS). Hold Shift while dragging to select
+text with the terminal.
 
 Keyboard shortcuts:
 

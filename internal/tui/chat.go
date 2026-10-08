@@ -16,6 +16,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
@@ -49,6 +50,7 @@ type chatViewModel struct {
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	images           map[string]*chatImage           // by message ID
 	historyExhausted bool
+	loadingOlder     bool   // a page of older history is on its way
 	firstUnread      string // ID of the oldest message unread on open
 
 	input textinput.Model
@@ -626,6 +628,9 @@ func (m chatViewModel) fetchPreviews(msgs []backend.Message) tea.Cmd {
 }
 
 func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel, tea.Cmd) {
+	if msg.older {
+		m.loadingOlder = false
+	}
 	if msg.err != nil {
 		if !msg.older {
 			return m, func() tea.Msg { return chatReturnToList{} }
@@ -771,7 +776,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		}
 		if m.selected > 0 {
 			m.selected--
-		} else if !m.historyExhausted && len(m.messages) > 0 {
+		} else if !m.historyExhausted && !m.loadingOlder && len(m.messages) > 0 {
+			// The wheel repeats up quickly; one page at a time.
+			m.loadingOlder = true
 			var cmd tea.Cmd
 			m, cmd = m.followThread()
 			return m, tea.Batch(cmd, m.loadOlderHistory())
@@ -1220,6 +1227,10 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 // it in the desktop's default application.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	m = m.resetLock()
+	switch m.subMode {
+	case chatSubEmoji, chatSubSearch, chatSubUpload:
+		return m.pickerClick(msg.y - 1)
+	}
 	var follow tea.Cmd
 	sel, ok := m.threadMessageAt(msg.x, msg.y)
 	if !ok {
@@ -1244,6 +1255,62 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	m.opening = &mediaDownload{filename: filename, part: dir + ".part"}
 	return m, tea.Batch(follow, m.openExternalCmd(sel, dir, filename), mediaProgressCmd(),
 		m.spin.Tick)
+}
+
+// pickerClick acts on a click at body row r of the emoji picker, the search
+// results or the upload panel as if the row had been chosen with the keys.
+func (m chatViewModel) pickerClick(r int) (chatViewModel, tea.Cmd) {
+	inner, bodyHeight := m.width-4, m.height-2
+	switch m.subMode {
+	case chatSubEmoji:
+		i, ok := m.emoji.choiceAt(r, m.height)
+		if !ok {
+			return m, nil
+		}
+		m.emoji.selected = i
+		return m.handleEmojiKey(keyPress(tea.KeyEnter))
+	case chatSubSearch:
+		height := bodyHeight - len(composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote))
+		lines := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
+			m.searchQuery, inner, height)
+		// The same layout bottomLines gives the results: heading, blank, rows.
+		row := r - (height - len(lines)) - 2
+		start := max(0, m.searchSelected-max(1, height-2)+1)
+		if r >= height || row < 0 || row >= len(lines)-2 || len(m.searchResults) == 0 {
+			return m, nil
+		}
+		m.searchSelected = start + row
+		return m.handleSearchKey(keyPress(tea.KeyEnter))
+	}
+	u := &m.upload
+	switch u.step {
+	case uploadTyping:
+		limit := max(1, bodyHeight-5) // under the heading, a blank and the path box
+		i := max(0, u.matchIdx-limit+1) + r - 5
+		if r < 5 || i >= min(len(u.matches), max(0, u.matchIdx-limit+1)+limit) {
+			return m, nil
+		}
+		u.matchIdx = i
+		return m.handleUploadKey(keyPress(tea.KeyTab))
+	case uploadPick:
+		// The picker keeps its cursor private, so walk the keys to the row.
+		view := u.picker.View()
+		lines := strings.Split(view, "\n")
+		row := r - 3 // under the heading, the folder and a blank
+		cur, ok := cursorRow(view, u.picker.Cursor)
+		if !ok || row < 0 || row >= len(lines) || strings.TrimSpace(ansi.Strip(lines[row])) == "" {
+			return m, nil
+		}
+		step := keyPress(tea.KeyDown)
+		if row < cur {
+			step = keyPress(tea.KeyUp)
+		}
+		for range max(row-cur, cur-row) {
+			m, _ = m.handleUploadKey(step)
+		}
+		return m.handleUploadKey(keyPress(tea.KeyEnter))
+	}
+	return m, nil
 }
 
 func mediaProgressCmd() tea.Cmd {

@@ -230,6 +230,10 @@ func (m gameModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.tick()
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.MouseWheelMsg:
+		return m.handleWheel(msg)
+	case tea.MouseClickMsg:
+		return m.handleClick(msg.Mouse())
 	}
 	if m.screen == gameSetup {
 		var cmd tea.Cmd
@@ -713,16 +717,109 @@ func (m gameModeModel) playKey(k string) (tea.Model, tea.Cmd) {
 	return m.refresh(), nil
 }
 
+// --- Mouse -------------------------------------------------------------------
+
+// The mouse picks games, players and setup fields, and answers the modals.
+// Games themselves take keys only: scripts and the protocol carry no mouse.
+
+// playersAt reports whether column x of the lobby shows the players.
+func (m gameModeModel) playersAt(x int) bool {
+	if m.width >= twoPaneWidth {
+		return x >= agentSidebarWidth
+	}
+	return m.playersFocused
+}
+
+func (m gameModeModel) handleWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	k, ok := wheelKey(msg)
+	if !ok || m.invite != nil || msg.Y >= m.bodyHeight() {
+		return m, nil
+	}
+	switch {
+	case m.screen == gameSetup:
+		return m.setupKey(k)
+	case m.screen != gameLobby:
+	case m.playersAt(msg.X) && m.client != nil:
+		if k.Code == tea.KeyUp {
+			m.psel = max(0, m.psel-1)
+		} else {
+			m.psel = clampIndex(m.psel+1, len(m.players))
+		}
+	case !m.playersAt(msg.X):
+		if k.Code == tea.KeyUp {
+			m.gsel = max(0, m.gsel-1)
+		} else {
+			m.gsel = clampIndex(m.gsel+1, len(m.scripts))
+		}
+	}
+	return m, nil
+}
+
+func (m gameModeModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+	if mouse.Button != tea.MouseLeft {
+		return m, nil
+	}
+	switch {
+	case m.invite != nil:
+		if k, ok := modalKeyAt(m.inviteBody(), inviteKeys, m.width, m.height, mouse.X, mouse.Y); ok {
+			return m.inviteKey(k)
+		}
+		return m, nil
+	case m.screen == gamePlay:
+		if !m.over {
+			return m, nil
+		}
+		body, _ := m.resultBody()
+		if k, ok := modalKeyAt(body, m.resultKeys(), m.width, m.height, mouse.X, mouse.Y); ok {
+			return m.playKey(k)
+		}
+		return m, nil
+	}
+	row := mouse.Y - 1
+	h := m.bodyHeight() - 2
+	if row < 0 || row >= h {
+		return m, nil
+	}
+	if m.screen == gameSetup {
+		// Each field is a label, its input and a blank, under the intro.
+		if i := (row - 3) / 3; row >= 3 && (row-3)%3 < 2 && i < len(m.inputs) {
+			return m.focusField(i)
+		}
+		return m, nil
+	}
+	m.notice = ""
+	if m.playersAt(mouse.X) {
+		i := window(m.psel, h) + row
+		if m.client == nil || m.dialing || i >= len(m.players) {
+			return m, nil
+		}
+		m.psel, m.playersFocused = i, true
+		return m.challenge()
+	}
+	if row >= len(m.scripts) {
+		return m, nil
+	}
+	m.gsel, m.playersFocused = row, false
+	return m.lobbyKey("enter")
+}
+
 // --- Rendering ---------------------------------------------------------------
 
 func (m gameModeModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
+func (m gameModeModel) footer() string {
+	return renderThemedFooter(m.helpKeys(), m.fullHelp, m.notice, m.width, colorGame)
+}
+
+func (m gameModeModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
+
 func (m gameModeModel) render() string {
-	footer := renderThemedFooter(m.helpKeys(), m.fullHelp, m.notice, m.width, colorGame)
+	footer := m.footer()
 	bodyHeight := max(4, m.height-lipgloss.Height(footer))
 	var body string
 	switch {
@@ -757,7 +854,13 @@ func (m gameModeModel) render() string {
 	return screen
 }
 
+var inviteKeys = []modalKey{{"y", "accept", "y"}, {"n", "decline", "n"}}
+
 func (m gameModeModel) inviteModal(screen string) string {
+	return renderModal(screen, "Challenge", m.inviteBody(), m.width, m.height, colorGame)
+}
+
+func (m gameModeModel) inviteBody() []string {
 	from := textfmt.Plain(m.invite.From)
 	body := []string{from + " challenges you to a game"}
 	if s, ok := game.Find(m.scripts, *m.invite.Game); ok {
@@ -767,12 +870,23 @@ func (m gameModeModel) inviteModal(screen string) string {
 			styleSubtle.Render(s.Info.Desc),
 		}
 	}
-	body = append(body, "", styleGame.Render("y")+" accept    "+styleGame.Render("n")+" decline")
-	return renderModal(screen, "Challenge", body, m.width, m.height, colorGame)
+	return append(body, "", modalHint(inviteKeys, styleGame))
+}
+
+func (m gameModeModel) resultKeys() []modalKey {
+	if m.script.Info.Solo() {
+		return []modalKey{{"⏎", "play again", "enter"}, {"esc", "games", "esc"}}
+	}
+	return []modalKey{{"esc", "lobby", "esc"}}
 }
 
 // resultModal announces how the game ended, its title in a two-colour blend.
 func (m gameModeModel) resultModal(screen string) string {
+	body, from := m.resultBody()
+	return renderModal(screen, m.script.Info.Name, body, m.width, m.height, from)
+}
+
+func (m gameModeModel) resultBody() ([]string, color.Color) {
 	title, from, to := "Game over", colorGame, colorQuote
 	switch m.result {
 	case "win":
@@ -788,12 +902,8 @@ func (m gameModeModel) resultModal(screen string) string {
 	for i, r := range letters {
 		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(blend[i]).Render(string(r) + " "))
 	}
-	keys := styleGame.Render("esc") + " lobby"
-	if m.script.Info.Solo() {
-		keys = styleGame.Render("⏎") + " play again    " + styleGame.Render("esc") + " games"
-	}
-	body := []string{strings.TrimSpace(b.String()), "", styleSubtle.Render(m.status), "", keys}
-	return renderModal(screen, m.script.Info.Name, body, m.width, m.height, from)
+	return []string{strings.TrimSpace(b.String()), "", styleSubtle.Render(m.status), "",
+		modalHint(m.resultKeys(), styleGame)}, from
 }
 
 func (m gameModeModel) playersTitle() string {

@@ -182,6 +182,29 @@ func (m wizardModel) Update(msg tea.Msg) (wizardModel, tea.Cmd) {
 	return m, nil
 }
 
+// click picks the option at row y of a wizard drawn height rows tall, y
+// counted from its top edge: a choice is answered, a multi-select toggled.
+func (m wizardModel) click(y, height int) (wizardModel, tea.Cmd) {
+	if m.cur >= len(m.steps) || m.steps[m.cur].kind == wizText {
+		return m, nil
+	}
+	options := m.steps[m.cur].options(m.answers)
+	below := 0 // the error line under the options
+	if m.err != "" {
+		below = 1
+	}
+	// The transcript is bottom-anchored, so the options end above the error.
+	j := y - 1 - (height - 2 - len(options) - below)
+	if y < 1 || j < 0 || j >= len(options) {
+		return m, nil
+	}
+	m.cursor = j
+	if m.steps[m.cur].kind == wizMulti {
+		return m.Update(keyPress(tea.KeySpace))
+	}
+	return m.submit()
+}
+
 func (m wizardModel) submit() (wizardModel, tea.Cmd) {
 	step := m.steps[m.cur]
 	var value string

@@ -8,7 +8,9 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 
 	"wiregram/internal/account"
@@ -192,13 +194,8 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 // screen, a width×height frame. A terminal too small for it gets screen as is.
 func renderModal(screen, title string, body []string, width, height int,
 	accent color.Color) string {
-	widest := 0
-	for _, l := range body {
-		widest = max(widest, lipgloss.Width(l))
-	}
-	w := min(width-4, max(32, widest+6))
-	h := len(body) + 4
-	if w < 20 || h > height {
+	x, y, w, h, ok := modalRect(body, width, height)
+	if !ok {
 		return screen
 	}
 	lines := []string{""}
@@ -206,8 +203,80 @@ func renderModal(screen, title string, body []string, width, height int,
 		lines = append(lines, lipgloss.PlaceHorizontal(w-4, lipgloss.Center, l))
 	}
 	box := lipgloss.NewLayer(renderBox(title, lines, w, h, accent)).
-		X((width - w) / 2).Y((height - h) / 2).Z(1)
+		X(x).Y(y).Z(1)
 	return lipgloss.NewCompositor(lipgloss.NewLayer(screen), box).Render()
+}
+
+// modalRect is where renderModal puts a modal with these body lines;
+// ok is false when renderModal would draw none. Body line i is at row y+2+i.
+func modalRect(body []string, width, height int) (x, y, w, h int, ok bool) {
+	widest := 0
+	for _, l := range body {
+		widest = max(widest, lipgloss.Width(l))
+	}
+	w = min(width-4, max(32, widest+6))
+	h = len(body) + 4
+	if w < 20 || h > height {
+		return 0, 0, 0, 0, false
+	}
+	return (width - w) / 2, (height - h) / 2, w, h, true
+}
+
+// modalKey is one key shown on a modal's hint line: what it shows, what it
+// does, and the key a click on it presses.
+type modalKey struct{ shown, label, press string }
+
+func modalHint(keys []modalKey, style lipgloss.Style) string {
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, style.Render(k.shown)+" "+k.label)
+	}
+	return strings.Join(parts, "    ")
+}
+
+// modalKeyAt is the key whose hint renderModal drew at (x, y), when body ends
+// with modalHint(keys).
+func modalKeyAt(body []string, keys []modalKey, width, height, x, y int) (string, bool) {
+	bx, by, w, _, ok := modalRect(body, width, height)
+	if !ok || y != by+2+len(body)-1 {
+		return "", false
+	}
+	hint := lipgloss.Width(body[len(body)-1])
+	col := x - (bx + 2 + (w-4-hint)/2)
+	for _, k := range keys {
+		size := lipgloss.Width(k.shown + " " + k.label)
+		if col >= 0 && col < size {
+			return k.press, true
+		}
+		col -= size + 4
+	}
+	return "", false
+}
+
+// keyPress is a synthetic key press, so mouse input can reuse key handlers.
+func keyPress(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+
+// wheelKey turns a vertical wheel step into the up or down key: every list
+// scrolls with its selection, so the wheel moves the selection.
+func wheelKey(msg tea.MouseWheelMsg) (tea.KeyPressMsg, bool) {
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		return keyPress(tea.KeyUp), true
+	case tea.MouseWheelDown:
+		return keyPress(tea.KeyDown), true
+	}
+	return tea.KeyPressMsg{}, false
+}
+
+// cursorRow is the first line of view whose plain text starts with marker. It
+// finds the selection inside bubbles components that keep theirs private.
+func cursorRow(view, marker string) (int, bool) {
+	for i, line := range strings.Split(view, "\n") {
+		if strings.HasPrefix(ansi.Strip(line), marker) {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // accountShort is the account's tag in agent mode, such as TG1: its backend

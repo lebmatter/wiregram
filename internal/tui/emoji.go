@@ -101,12 +101,24 @@ func (m *emojiPickerModel) refreshChoices() {
 	m.selected = min(m.selected, max(0, len(m.choices)-1))
 }
 
-func (m emojiPickerModel) View(width, height int) string {
-	limit := max(1, height-4)
-	start := 0
+// window is the first choice shown and how many fit in height rows.
+func (m emojiPickerModel) window(height int) (start, limit int) {
+	limit = max(1, height-4)
 	if m.selected >= limit {
 		start = m.selected - limit + 1
 	}
+	return start, limit
+}
+
+// choiceAt maps a row of the View, counted from its top, to a choice.
+func (m emojiPickerModel) choiceAt(y, height int) (int, bool) {
+	start, limit := m.window(height)
+	i := start + y - 2 // under the heading and filter lines
+	return i, y >= 2 && i < min(len(m.choices), start+limit)
+}
+
+func (m emojiPickerModel) View(width, height int) string {
+	start, limit := m.window(height)
 	end := min(len(m.choices), start+limit)
 	heading := "Emoji for draft — type to filter; Tab: react"
 	if m.reactionMode {

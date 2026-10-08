@@ -7,9 +7,11 @@ AGENTS.md, whose durable rules were folded in here.)
 
 ## Project
 
-Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. The only mouse input is a
-left click: on a chat message it opens the attachment with `xdg-open`, and on an Unread
-card it opens that chat. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
+Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. Mouse input
+is the left click and the wheel. The wheel moves the selection of the list under the pointer
+as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter. A click on
+a chat message selects it and opens any attachment with `xdg-open`. The login and connecting
+screens leave the mouse to the terminal, and games themselves take keys only. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 

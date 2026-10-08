@@ -117,6 +117,18 @@ func (m chatListModel) row(index int) int {
 	return index + 2 + max(0, 1-len(m.entries)) // "No chats here" placeholder
 }
 
+// itemAt maps a body row on screen to a selection index; headers,
+// placeholders and separators are not selectable.
+func (m chatListModel) itemAt(y int) (int, bool) {
+	r := y + m.offset
+	for i := 0; i <= m.maxIndex(); i++ {
+		if m.row(i) == r {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (m chatListModel) scrolled() chatListModel {
 	r := m.row(m.selected)
 	if r < m.offset {

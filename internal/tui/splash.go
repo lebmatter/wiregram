@@ -40,7 +40,7 @@ func (m splashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-	case tea.KeyPressMsg:
+	case tea.KeyPressMsg, tea.MouseClickMsg:
 		return m, tea.Quit
 	case spinner.TickMsg:
 		elapsed := time.Since(m.started)
@@ -74,6 +74,7 @@ func (m splashModel) View() tea.View {
 	)
 	v := tea.NewView(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
