@@ -248,6 +248,120 @@ func renderQuote(orig *backend.Message, entry backend.ChatEntry) string {
 		textfmt.ShortExcerpt(backend.GenericMessageText(*orig)))
 }
 
+// textIndent is the column message text starts at: after the 2-cell gutter,
+// the timestamp and, outside channels, the nick column.
+func textIndent(entry backend.ChatEntry) int {
+	if kind, _ := kindOf(entry); kind == kindChannel {
+		return 2 + 8
+	}
+	return 2 + 8 + textfmt.NickWidth + 3
+}
+
+// messageHeader is "[HH:MM] <nick>", or just the time in channels, where
+// every post comes from the channel itself.
+func messageHeader(msg backend.Message, entry backend.ChatEntry) string {
+	if kind, _ := kindOf(entry); kind == kindChannel {
+		return msg.Timestamp.Format("[15:04]")
+	}
+	return backend.GenericMessagePrefix(msg, entry)
+}
+
+// shadeLine paints line on the selection background, padded to width. The
+// background is re-applied after every reset, since nick colours, styles and
+// image rows all end with one.
+func shadeLine(line string, width int) string {
+	pad := strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(line)))
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+selBgSGR)
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+selBgSGR)
+	return selBgSGR + line + pad + "\x1b[0m"
+}
+
+// styleMediaTag dims the leading "[tag]" of a media label.
+func styleMediaTag(text string) string {
+	if !strings.HasPrefix(text, "[") {
+		return text
+	}
+	end := strings.Index(text, "]")
+	if end < 0 {
+		return text
+	}
+	return styleSubtle.Render(text[:end+1]) + text[end+1:]
+}
+
+// Links are underlined in the quote colour. linkOff resets only underline
+// and foreground, so a selection background survives it.
+const (
+	linkOn  = "\x1b[4;38;5;75m"
+	linkOff = "\x1b[24;39m"
+)
+
+// selBgSGR is colorSelBg as a raw SGR, re-applied after resets by shadeLine.
+const selBgSGR = "\x1b[48;5;237m"
+
+// styleLinks marks the http(s) links in text before it is wrapped.
+func styleLinks(text string) string {
+	var out strings.Builder
+	for {
+		start := strings.Index(text, "http")
+		if start < 0 {
+			out.WriteString(text)
+			return out.String()
+		}
+		rest := text[start:]
+		if !strings.HasPrefix(rest, "https://") && !strings.HasPrefix(rest, "http://") {
+			out.WriteString(text[:start+4])
+			text = text[start+4:]
+			continue
+		}
+		end := strings.IndexAny(rest, " \t\n\x1b")
+		if end < 0 {
+			end = len(rest)
+		}
+		out.WriteString(text[:start] + linkOn + rest[:end] + linkOff)
+		text = rest[end:]
+	}
+}
+
+// closeLinks ends a link style at the end of a wrapped line and reopens it
+// after the next line's indent, so a long wrapped link stays styled without
+// underlining the indent.
+func closeLinks(lines []string) []string {
+	open := false
+	for i, line := range lines {
+		if open {
+			body := strings.TrimLeft(line, " ")
+			line = line[:len(line)-len(body)] + linkOn + body
+		}
+		open = strings.LastIndex(line, linkOn) > strings.LastIndex(line, linkOff)
+		if open {
+			line += linkOff
+		}
+		lines[i] = line
+	}
+	return lines
+}
+
+// joinColumns puts two boxes side by side line by line. Both are already
+// padded to their width, and lipgloss.JoinHorizontal would re-measure them
+// by grapheme cluster, which disagrees with the terminal on scripts like
+// Malayalam and pushes the right box off its column.
+func joinColumns(left, right string) string {
+	l, r := strings.Split(left, "\n"), strings.Split(right, "\n")
+	pad := strings.Repeat(" ", textfmt.DisplayWidth(l[0]))
+	lines := make([]string, max(len(l), len(r)))
+	for i := range lines {
+		a, b := pad, ""
+		if i < len(l) {
+			a = l[i]
+		}
+		if i < len(r) {
+			b = r[i]
+		}
+		lines[i] = a + b
+	}
+	return strings.Join(lines, "\n")
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one

@@ -1348,7 +1348,7 @@ func (m chatViewModel) openExternalCmd(sel backend.Message, dir, filename string
 func (m chatViewModel) View() string {
 	if m.subMode == chatSubThread {
 		if chatWidth, split := m.threadSplit(); split {
-			return lipgloss.JoinHorizontal(lipgloss.Top,
+			return joinColumns(
 				m.chatBox(chatWidth, m.height, false),
 				m.threadBox(m.width-chatWidth, m.height, m.focused))
 		}
@@ -1401,7 +1401,7 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	}
 	lines = bottomLines(lines, max(0, height))
 	for _, u := range m.uploads {
-		prefix := "  " + backend.GenericMessagePrefix(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry) + " "
+		prefix := "  " + messageHeader(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry) + " "
 		lines = append(lines, textfmt.ClipLine(prefix+m.spin.View()+
 			styleSubtle.Render(fmt.Sprintf("uploading %s (%s)…", filepath.Base(u.path), textfmt.FormatSize(u.size))), width))
 	}

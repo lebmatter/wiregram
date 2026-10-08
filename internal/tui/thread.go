@@ -8,7 +8,6 @@ import (
 	"charm.land/bubbletea/v2"
 
 	"wiregram/internal/backend"
-	"wiregram/internal/textfmt"
 )
 
 // Threads are built from loaded messages only: a thread is a root plus every
@@ -148,13 +147,17 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int) {
 	if len(thread) == 0 {
 		add(-1, styleSubtle.Render("The thread's first message is no longer loaded."))
 	}
-	const indent = 7 + 2 + textfmt.NickWidth + 2
+	replies := make(map[string]int)
+	for _, msg := range thread {
+		replies[msg.ReplyToID]++
+	}
+	// The root's count is already on the divider below it.
+	delete(replies, m.threadRoot)
 	for i, msg := range thread {
-		text, below := imageText(msg, m.images[msg.ID], indent, inner, imageRows(height))
-		add(i, textfmt.WrapMessage(backend.GenericMessagePrefix(msg, m.entry)+" ",
-			text, inner, indent)...)
-		add(i, below...)
-		add(i, previewCard(msg.Preview, indent, inner)...)
+		// The thread is the chain itself, so replies are drawn without a quote.
+		msg.ReplyToID = ""
+		add(i, messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
+			m.changedMessages[msg.ID], m.images[msg.ID], inner, imageRows(height))...)
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))

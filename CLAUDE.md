@@ -43,7 +43,10 @@ These are project constraints, not suggestions:
   x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow,
   modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
   charm.land/bubbles/v2 (its list component pulls in
-  github.com/sahilm/fuzzy, approved as a transitive dependency), and
+  github.com/sahilm/fuzzy, approved as a transitive dependency),
+  github.com/charmbracelet/x/ansi (already pulled in by bubbletea;
+  textfmt measures cell widths with its `WcWidth` so padding matches the
+  renderer), and
   github.com/yuin/gopher-lua for the embedded game scripts, and
   golang.org/x/image for scaling and WebP decoding of inline images.
   Standard library for everything else — no logging or CLI libraries.
@@ -84,11 +87,18 @@ These are project constraints, not suggestions:
   the chat and Tab moves focus; narrower terminals show one pane at a time.
 - The root `tuiModel` owns the screen's only bus subscription and routes
   events for the open chat into it, so the list and chat never race.
-- `>` marks the selected row in lists and the selected message in a chat.
-- Messages render as `[HH:MM] <sender> text` with a fixed-width nick column;
-  the user is always `you`. A reply puts `┃ sender: excerpt` on the header
-  row with its text below; threads (`internal/tui/thread.go`) are built from loaded
-  reply chains only.
+- `>` marks the selected row in lists. The selected message in a chat is
+  tinted with `colorSelBg` across its whole block (`shadeLine`); selection
+  never moves a column.
+- Every backend's messages share one block (`messageBlock`,
+  `internal/tui/chatlines.go`), in the chat and the thread pane: a 2-cell
+  gutter (`*` when edited live), `[HH:MM] <sender>` with a fixed-width nick
+  column, then the text; the user is always `you`. Channels drop the nick
+  column. A reply puts `┃ sender: excerpt` on the header row with its text
+  below. Under the text come any image or preview card, then a dim meta row:
+  reactions (your own count in copper) · reply count · pinned · `✓`/`✓✓`.
+  Media `[tags]` are dim and links are underlined. Threads
+  (`internal/tui/thread.go`) are built from loaded reply chains only.
 - Private chats show the first name, else username, else `Deleted Account`.
   Groups show the title; channels show `Channel: TITLE`.
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with

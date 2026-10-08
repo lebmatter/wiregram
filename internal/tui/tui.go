@@ -563,7 +563,7 @@ func (m tuiModel) render() string {
 		case m.chatOpen:
 			right = m.chat.View()
 		}
-		body = lipgloss.JoinHorizontal(lipgloss.Top, list, right)
+		body = joinColumns(list, right)
 	case m.searchOpen:
 		body = m.search.view(m.width, bodyHeight, true)
 	case m.unreadOpen:

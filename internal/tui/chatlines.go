@@ -115,39 +115,10 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			replies[messages[i].ReplyToID]++
 		}
 	}
-	const msgPrefixWidth = 7 + 2 + textfmt.NickWidth + 2
 	messageLines := func(i int) []string {
 		msg := messages[i]
-		marker := "  "
-		if changed[msg.ID] {
-			marker = "* "
-		}
-		if i == selected {
-			marker = styleAccent.Render(">") + " " + b.ReadMarker(entry, msg)
-			if reactions := backend.FormatMessageReactions(msg.Reactions); reactions != "" {
-				marker += "[" + reactions + "] "
-			}
-		}
-		indent := textfmt.DisplayWidth(marker) + msgPrefixWidth
-		body, below := imageText(msg, images[msg.ID], indent, lineWidth, imageRows(height))
-		if msg.Pinned {
-			body += " [pinned]"
-		}
-		if n := replies[msg.ID]; n > 0 {
-			body += styleSubtle.Render(fmt.Sprintf(" · %d %s", n, plural(n, "reply", "replies")))
-		}
-		prefix := marker + backend.GenericMessagePrefix(msg, entry) + " "
-		var lines []string
-		if msg.ReplyToID == "" {
-			lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
-		} else {
-			// Replies put the quoted original on the header row and the text below it.
-			quote := textfmt.ClipLine(prefix+renderQuote(byID[msg.ReplyToID], entry), lineWidth)
-			lines = append([]string{quote},
-				textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
-		}
-		lines = append(lines, below...)
-		return append(lines, previewCard(msg.Preview, indent, lineWidth)...)
+		return messageBlock(b, msg, entry, byID[msg.ReplyToID], replies[msg.ID],
+			changed[msg.ID], images[msg.ID], lineWidth, imageRows(height))
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines, owners := []string{}, []int{}
@@ -163,6 +134,11 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			return lines
 		}
 		lines := messageLines(i)
+		if i == selected {
+			for j := range lines {
+				lines[j] = shadeLine(lines[j], lineWidth)
+			}
+		}
 		blocks[i] = lines
 		return lines
 	}
@@ -208,6 +184,71 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		owners = append(owners, -1)
 	}
 	return lines, owners
+}
+
+// messageBlock lays out one message in the shared block format: a fixed
+// gutter and header, the text at textIndent, any image or preview card, and
+// a meta row. Nothing in it depends on selection, so columns never move.
+func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
+	quoted *backend.Message, replies int, edited bool, img *chatImage,
+	lineWidth, maxImageRows int) []string {
+	gutter := "  "
+	if edited {
+		gutter = "* "
+	}
+	indent := textIndent(entry)
+	body, below := imageText(msg, img, indent, lineWidth, maxImageRows)
+	body = styleLinks(styleMediaTag(body))
+	prefix := gutter + messageHeader(msg, entry) + " "
+	var lines []string
+	if msg.ReplyToID == "" {
+		lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
+	} else {
+		// Replies put the quoted original on the header row and the text below it.
+		quote := textfmt.ClipLine(prefix+renderQuote(quoted, entry), lineWidth)
+		lines = append([]string{quote},
+			textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
+	}
+	lines = closeLinks(lines)
+	lines = append(lines, below...)
+	lines = append(lines, previewCard(msg.Preview, indent, lineWidth)...)
+	if meta := metaRow(b, msg, entry, replies); meta != "" {
+		lines = append(lines, textfmt.ClipLine(strings.Repeat(" ", indent)+meta, lineWidth))
+	}
+	return lines
+}
+
+// metaRow joins a message's reactions, reply count, pin and read ticks into
+// one dim row, or "" when there is nothing to show.
+func metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry, replies int) string {
+	var reactions []string
+	for _, r := range msg.Reactions {
+		if r.Emoji == "" || r.Count < 1 {
+			continue
+		}
+		count := fmt.Sprint(r.Count)
+		if r.Chosen {
+			count = styleAccent.Render(count)
+		} else {
+			count = styleSubtle.Render(count)
+		}
+		reactions = append(reactions, r.Emoji+" "+count)
+	}
+	var parts []string
+	if len(reactions) > 0 {
+		parts = append(parts, strings.Join(reactions, "  "))
+	}
+	if replies > 0 {
+		parts = append(parts, styleSubtle.Render(fmt.Sprintf("%d %s", replies,
+			plural(replies, "reply", "replies"))))
+	}
+	if msg.Pinned {
+		parts = append(parts, styleSubtle.Render("pinned"))
+	}
+	if tick := strings.TrimSpace(b.ReadMarker(entry, msg)); tick != "" {
+		parts = append(parts, styleSubtle.Render(tick))
+	}
+	return strings.Join(parts, styleDim.Render(" · "))
 }
 
 // previewCard draws a link preview as a small box under the message text,

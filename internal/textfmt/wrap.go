@@ -2,7 +2,8 @@ package textfmt
 
 import (
 	"strings"
-	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 var nickColors = [...]string{
@@ -108,23 +109,10 @@ func WrapLineIndent(text string, width int, indent int) []string {
 	return lines
 }
 
+// DisplayWidth is the cells text takes, measured as the renderer measures
+// it (wcwidth per codepoint), so padded boxes line up on screen.
 func DisplayWidth(text string) int {
-	width := 0
-	inEscape := false
-	for _, r := range text {
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
-		width += runeWidth(r)
-	}
-	return width
+	return ansi.WcWidth.StringWidth(text)
 }
 
 func takeCells(text string, limit int) (string, string) {
@@ -157,15 +145,7 @@ func takeCells(text string, limit int) (string, string) {
 }
 
 func runeWidth(r rune) int {
-	if unicode.Is(unicode.Mn, r) || r == 0x200d {
-		return 0
-	}
-	if r >= 0x1100 && (r <= 0x115f || r >= 0x2e80 && r <= 0xa4cf ||
-		r >= 0xac00 && r <= 0xd7a3 || r >= 0xf900 && r <= 0xfaff ||
-		r >= 0xfe10 && r <= 0xfe6f || r >= 0xff01 && r <= 0xff60 || r >= 0x1f000) {
-		return 2
-	}
-	return 1
+	return ansi.WcWidth.StringWidth(string(r))
 }
 
 func ClipLine(text string, width int) string {
