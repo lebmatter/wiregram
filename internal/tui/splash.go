@@ -57,7 +57,13 @@ func (m splashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m splashModel) View() tea.View {
 	status := "ready"
 	if n := m.connecting(); n > 0 {
-		status = fmt.Sprintf("%sconnecting %d %s…", m.spin.View(), n, plural(n, "account", "accounts"))
+		status = fmt.Sprintf("%sconnecting %d %s", m.spin.View(), n, plural(n, "account", "accounts"))
+		if m.mgr.Agents != nil {
+			if b := m.mgr.Agents.Count(); b > 0 {
+				status += fmt.Sprintf(" and %d %s", b, plural(b, "agent", "agents"))
+			}
+		}
+		status += "…"
 	}
 	content := lipgloss.JoinVertical(lipgloss.Center,
 		renderLogo(m.width),

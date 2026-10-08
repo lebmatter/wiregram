@@ -142,6 +142,13 @@ func (rt *agentRuntime) Stop() {
 	rt.wg.Wait()
 }
 
+// Count is the number of enabled agents.
+func (rt *agentRuntime) Count() int {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return len(rt.agents)
+}
+
 // Changed signals the UI when suggestions or agent problems change.
 func (rt *agentRuntime) Changed() <-chan struct{} { return rt.changed }
 
