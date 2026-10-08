@@ -4,17 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/account"
+	"wiregram/internal/mail"
 	"wiregram/internal/textfmt"
 )
 
 // settingsSections are the left pane's sections; the actions follow them.
-var settingsSections = []string{"Accounts"}
+var settingsSections = []string{"Accounts", "Email"}
+
+const sectionEmail = 1
 
 var settingsActions = []string{"Chat Agents…", "Quit"}
 
@@ -71,7 +75,7 @@ func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *
 			m.sel = i
 		}
 	}
-	m.focus = paneAccounts // the only section, so open it straight away
+	m.focus = paneAccounts // Accounts comes first, so open it straight away
 	return m
 }
 
@@ -151,7 +155,60 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 	if m.focus == paneSections {
 		return m.sectionsKey(k)
 	}
+	if m.section == sectionEmail {
+		return m.emailKey(k)
+	}
 	return m.accountsKey(k)
+}
+
+// emailKey handles the Email section, whose one row cycles how long the
+// local mail cache keeps mail.
+func (m settingsModel) emailKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case "esc", "ctrl+c":
+		if m.twoPane() && m.canGoBack() {
+			m.result.back = true
+			return m, tea.Quit
+		}
+		m.focus = paneSections
+	case "tab", "left", "h":
+		m.focus = paneSections
+	case "enter", "space", " ", "right", "l":
+		days := mail.RetentionDays(m.mgr.Store)
+		next := mail.RetentionChoices[0]
+		for i, d := range mail.RetentionChoices {
+			if d == days {
+				next = mail.RetentionChoices[(i+1)%len(mail.RetentionChoices)]
+			}
+		}
+		if err := m.mgr.Store.SetSetting(mail.RetentionSetting, strconv.Itoa(next)); err != nil {
+			m.notice = textfmt.CleanError(err)
+		} else {
+			m.notice = "Keeping " + retentionLabel(next) + " of mail in the local cache"
+		}
+	}
+	return m, nil
+}
+
+func retentionLabel(days int) string {
+	switch {
+	case days == 0:
+		return "all"
+	case days%365 == 0:
+		return fmt.Sprintf("%d %s", days/365, plural(days/365, "year", "years"))
+	}
+	return fmt.Sprintf("%d days", days)
+}
+
+func (m settingsModel) emailLines(width int) []string {
+	focused := m.focus == paneAccounts
+	value := styleSubtle.Render(retentionLabel(mail.RetentionDays(m.mgr.Store)))
+	return []string{
+		themedListRow("Keep mail", value, true, focused, width, colorAccent),
+		"",
+		styleSubtle.Render(textfmt.ClipLine("How long email stays cached in wiregram.db.", width)),
+		styleSubtle.Render(textfmt.ClipLine("Mail on the server is never deleted.", width)),
+	}
 }
 
 func (m settingsModel) sectionsKey(k string) (tea.Model, tea.Cmd) {
@@ -268,6 +325,12 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if i > len(m.accounts) {
 		return m, nil
 	}
+	if m.section == sectionEmail {
+		if row == 0 {
+			return m.emailKey("enter")
+		}
+		return m, nil
+	}
 	m.sel = i
 	return m.accountsKey("enter")
 }
@@ -277,7 +340,8 @@ func (m settingsModel) footer() string {
 	switch {
 	case m.confirm != nil:
 		notice = m.confirmText
-	case notice == "" && m.focus == paneAccounts && m.sel < len(m.accounts):
+	case notice == "" && m.focus == paneAccounts && m.section != sectionEmail &&
+		m.sel < len(m.accounts):
 		notice = m.accounts[m.sel].Snapshot().Notice
 	}
 	return renderFooter(m.helpKeys(), m.fullHelp, notice, m.width)
@@ -288,18 +352,22 @@ func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height
 func (m settingsModel) View() tea.View {
 	footer := m.footer()
 	h := max(4, m.height-lipgloss.Height(footer))
+	title, lines := "Accounts", m.accountLines
+	if m.section == sectionEmail {
+		title, lines = "Email", func(width, _ int) []string { return m.emailLines(width) }
+	}
 	var body string
 	switch {
 	case m.twoPane():
 		left := renderBox("Settings", m.sectionLines(sidebarWidth-4), sidebarWidth, h,
 			boxBorder(m.focus == paneSections))
-		right := renderBox("Accounts", m.accountLines(m.width-sidebarWidth-4, h-2),
+		right := renderBox(title, lines(m.width-sidebarWidth-4, h-2),
 			m.width-sidebarWidth, h, boxBorder(m.focus == paneAccounts))
 		body = joinColumns(left, right)
 	case m.focus == paneSections:
 		body = renderBox("Settings", m.sectionLines(m.width-4), m.width, h, colorAccent)
 	default:
-		body = renderBox("Accounts", m.accountLines(m.width-4, h-2), m.width, h, colorAccent)
+		body = renderBox(title, lines(m.width-4, h-2), m.width, h, colorAccent)
 	}
 	v := tea.NewView(body + "\n" + footer)
 	v.AltScreen = true
@@ -360,6 +428,9 @@ func (m settingsModel) helpKeys() []helpKey {
 	}
 	if m.focus == paneSections {
 		return []helpKey{{"↑↓", "select"}, {"⏎", "open"}, back, {"?", "more"}}
+	}
+	if m.section == sectionEmail {
+		return []helpKey{{"⏎", "change"}, {"tab", "sections"}, back, {"?", "more"}}
 	}
 	return []helpKey{{"↑↓", "select"}, {"⏎", "switch"}, {"r", "reconnect"}, {"n", "add"},
 		{"x", "remove"}, {"tab", "sections"}, back, {"?", "more"}}

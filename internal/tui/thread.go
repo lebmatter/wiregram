@@ -65,7 +65,8 @@ func (m chatViewModel) threadSplit() (int, bool) {
 // followThread opens the selected message's thread beside the chat while
 // browsing, and closes it once the selection leaves every thread.
 func (m chatViewModel) followThread() (chatViewModel, tea.Cmd) {
-	if m.width < threadPaneMinWidth || m.privateMode {
+	// Most mails are replies; their threads open only on Alt+T.
+	if m.width < threadPaneMinWidth || m.privateMode || m.caps.MultilineCompose {
 		return m, nil
 	}
 	sel, ok := m.selectedMsg()

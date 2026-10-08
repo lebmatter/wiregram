@@ -14,6 +14,8 @@ import (
 // Set by the Go linker for distributed builds; never changed at runtime.
 var buildAPIID string
 var buildAPIHash string
+var buildGoogleClientID string
+var buildGoogleClientSecret string
 
 type Config struct {
 	APIID    int
@@ -22,6 +24,12 @@ type Config struct {
 }
 
 type PromptFunc func(string, bool) (string, error)
+
+// GoogleClient returns the OAuth client embedded in the build for Google
+// mail sign-in; ok is false when the build has none.
+func GoogleClient() (id, secret string, ok bool) {
+	return buildGoogleClientID, buildGoogleClientSecret, buildGoogleClientID != ""
+}
 
 // Dir returns the configuration directory, creating it if needed.
 func Dir() (string, error) {

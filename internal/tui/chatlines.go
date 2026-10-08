@@ -258,10 +258,11 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 	}
 	indent := textIndent(entry)
 	body, below := imageText(msg, img, indent, lineWidth, maxImageRows)
-	body = styleLinks(styleMediaTag(body))
 	prefix := gutter + messageHeader(msg, entry, unread) + " "
 	var lines []string
-	if msg.ReplyToID == "" {
+	if msg.Multiline || msg.Subject != "" {
+		lines = paragraphLines(msg, body, prefix, quoted, entry, lineWidth, indent)
+	} else if body = styleLinks(styleMediaTag(body)); msg.ReplyToID == "" {
 		lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
 	} else {
 		// Replies put the quoted original on the header row and the text below it.
@@ -281,6 +282,64 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 		lines = append(lines, textfmt.ClipLine(strings.Repeat(" ", indent)+meta, lineWidth))
 	}
 	return lines
+}
+
+// mailPreviewLines caps a mail's text in the chat; Enter opens the reader
+// for the rest, so a long mail never outgrows the pane.
+const mailPreviewLines = 12
+
+// paragraphLines lays out a message that keeps its line breaks: an email's
+// bold subject, then each line of the text wrapped on its own. Mails longer
+// than mailPreviewLines end with a hint to open the reader.
+func paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Message,
+	entry backend.ChatEntry, lineWidth, indent int) []string {
+	pad := strings.Repeat(" ", indent)
+	var text []string
+	if msg.Subject != "" {
+		for _, line := range textfmt.WrapLineIndent(pad+textfmt.Plain(msg.Subject), lineWidth, indent) {
+			text = append(text, boldLine(line))
+		}
+	}
+	for _, para := range bodyParagraphs(msg, body) {
+		para = styleLinks(styleMediaTag(para))
+		text = append(text, textfmt.WrapLineIndent(pad+para, lineWidth, indent)...)
+	}
+	if msg.Subject != "" && len(text) > mailPreviewLines {
+		more := len(text) - mailPreviewLines + 1
+		text = append(text[:mailPreviewLines-1], pad+styleSubtle.Render(
+			fmt.Sprintf("… %d more %s (⏎ reads all)", more, plural(more, "line", "lines"))))
+	}
+	if msg.ReplyToID != "" {
+		quote := textfmt.ClipLine(prefix+renderQuote(quoted, entry), lineWidth)
+		return append([]string{quote}, text...)
+	}
+	first := strings.TrimPrefix(text[0], pad)
+	if indent >= lineWidth-4 || first == text[0] {
+		first = strings.TrimLeft(text[0], " ")
+	}
+	text[0] = textfmt.ClipLine(prefix+first, lineWidth)
+	return text
+}
+
+// bodyParagraphs splits a message's text at its line breaks, with any media
+// label on a line of its own. A caption moved into an image card leaves only
+// what imageText returned.
+func bodyParagraphs(msg backend.Message, body string) []string {
+	if body != backend.GenericMessageText(msg) {
+		return []string{body}
+	}
+	paras := strings.Split(strings.TrimRight(msg.Text, "\n"), "\n")
+	if msg.MediaLabel != "" {
+		if paras[0] == "" {
+			paras[0] = msg.MediaLabel
+		} else {
+			paras = append([]string{msg.MediaLabel}, paras...)
+		}
+	}
+	for i := range paras {
+		paras[i] = textfmt.Plain(paras[i])
+	}
+	return paras
 }
 
 // metaRow joins a message's reactions, reply count, pin and read ticks into

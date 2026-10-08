@@ -298,12 +298,13 @@ var addAccountOptions = []struct {
 	{"mattermost", "Mattermost"},
 	{"matrix", "Matrix"},
 	{"whatsapp", "WhatsApp"},
+	{"email", "Email (Gmail / IMAP)"},
 }
 
 // addAccountSteps asks for Telegram API credentials only when none are configured.
 func addAccountSteps(needsAPI bool) []wizardStep {
 	needsServer := func(a wizardAnswers) bool {
-		return a["network"] == "mattermost" || a["network"] == "matrix"
+		return a["network"] == "mattermost" || a["network"] == "matrix" || a["network"] == "email"
 	}
 	skipAPI := func(a wizardAnswers) bool { return !needsAPI || a["network"] != "telegram" }
 	return []wizardStep{
@@ -332,13 +333,28 @@ func addAccountSteps(needsAPI bool) []wizardStep {
 			key:  "server",
 			kind: wizText,
 			ask: func(a wizardAnswers) string {
-				if a["network"] == "matrix" {
+				switch a["network"] {
+				case "matrix":
 					return "Which Matrix homeserver?"
+				case "email":
+					return "Which IMAP server? Gmail and Google Workspace use imap.gmail.com."
 				}
 				return "What's your Mattermost server URL?"
 			},
+			def: func(a wizardAnswers) string {
+				if a["network"] == "email" {
+					return "imap.gmail.com"
+				}
+				return ""
+			},
 			skip: func(a wizardAnswers) bool { return !needsServer(a) },
-			validate: func(v string, _ wizardAnswers) error {
+			validate: func(v string, a wizardAnswers) error {
+				if a["network"] == "email" {
+					if v == "" || strings.ContainsAny(v, "/: ") {
+						return errors.New("Give just the host name, like imap.gmail.com.")
+					}
+					return nil
+				}
 				if u, err := url.Parse(withScheme(v)); err != nil || u.Host == "" {
 					return errors.New("That doesn't look like a server address.")
 				}
@@ -448,6 +464,8 @@ func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.A
 		return mgr.AddMatrix(withScheme(answers["server"]))
 	case "whatsapp":
 		return mgr.AddWhatsApp()
+	case "email":
+		return mgr.AddEmail(strings.TrimSpace(answers["server"]))
 	}
 	return nil, context.Canceled
 }

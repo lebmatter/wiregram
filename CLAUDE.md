@@ -25,6 +25,9 @@ CGO_ENABLED=0 go build -buildvcs=false \
   -ldflags "-X wiregram/internal/config.buildAPIID=${TG_API_ID} -X wiregram/internal/config.buildAPIHash=${TG_API_HASH}" \
   -o wiregram ./cmd/wiregram
 ```
+Google sign-in for email accounts needs a Google OAuth desktop client, embedded the same way
+with `-X wiregram/internal/config.buildGoogleClientID=…` and `…buildGoogleClientSecret=…`;
+without one, Gmail accounts sign in with an app password.
 
 ## Lint / Format
 
@@ -49,8 +52,10 @@ These are project constraints, not suggestions:
   github.com/charmbracelet/x/ansi (already pulled in by bubbletea;
   textfmt measures cell widths with its `WcWidth` so padding matches the
   renderer), and
-  github.com/yuin/gopher-lua for the embedded game scripts, and
-  golang.org/x/image for scaling and WebP decoding of inline images.
+  github.com/yuin/gopher-lua for the embedded game scripts,
+  golang.org/x/image for scaling and WebP decoding of inline images, and
+  for the email backend github.com/emersion/go-imap/v2 (pinned beta, with
+  its go-message and go-sasl) and golang.org/x/oauth2 for Google sign-in.
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -125,6 +130,15 @@ These are project constraints, not suggestions:
   `os.UserCacheDir()/wiregram/media`, shared with click-to-open, and are pruned
   after 7 days unseen. View-once and self-destructing media never load inline.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
+  Multiline messages keep their line breaks.
+- Email (`internal/mail`, tag `EM`) is one chat per correspondent. A mail's
+  bold subject leads its block and its text stops after `mailPreviewLines`;
+  Enter opens the reader (`internal/tui/mail.go`) with headers and the whole
+  text. Email chats write in a multiline draft sent with Ctrl+S. Quoted
+  originals are trimmed in the chat, kept in the reader. HTML mail is reduced
+  to text and nothing it references is fetched. Mail is cached in
+  `wiregram.db` for the Settings › Email retention window (`mail_retention_days`,
+  default 90); pruning never touches the server, and deleting moves to Trash.
 - Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
   (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as
   `[TG1]`: backend plus Alt+N number. Chat Agents are created through the
@@ -132,7 +146,8 @@ These are project constraints, not suggestions:
   values only, never free chat with a model. Adding an account (network,
   server URL, then the sign-in prompts) uses the same bubble style in copper.
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
-  groups or channels and never start a chat.
+  groups or channels and never start a chat. Email publishes no DM events,
+  so agents never answer mail.
 - Game mode (`internal/tui/game.go`) is an easter egg: only Alt+G from the
   chat list opens it, and only `--help` mentions it (no menu entry, no footer
   hint). It uses green (`colorGame`, 114). Games are versioned Lua scripts
@@ -159,6 +174,7 @@ internal/
   matrix/            Matrix backend
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
+  mail/              IMAP/SMTP email backend and its mail cache tables
   agent/             SQLite store for agents, providers and message history
   game/              game protocol, base client, sandboxed Lua runtime and the
                      embedded game scripts (scripts/*.lua)
@@ -196,8 +212,9 @@ lowest package that needs them rather than importing sideways.
 
 `os.UserConfigDir()/wiregram/` (typically `~/.config/wiregram/`):
 - `wiregram.db` — the single SQLite database (`internal/store`): `settings`
-  (API credentials, autolock), `account_data` (identity, Telegram session and
-  Matrix sync token per account key) and the Chat Agent tables
+  (API credentials, autolock, mail retention), `account_data` (identity,
+  Telegram session and Matrix sync token per account key), the Chat Agent
+  tables and the email cache (`mail_messages`, `mail_sync`)
 - `accounts/<backend>-*/` — one directory per added account; its name is the
   account key (`primary` for the original Telegram account). WhatsApp keeps
   whatsmeow's own `whatsapp.db` here.

@@ -19,6 +19,7 @@ import (
 	"wiregram/internal/agent"
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
+	"wiregram/internal/mail"
 	"wiregram/internal/matrix"
 	"wiregram/internal/mattermost"
 	"wiregram/internal/store"
@@ -40,8 +41,9 @@ type AccountState struct {
 
 type Account struct {
 	Dir         string
-	BackendType string // "telegram", "mattermost", "matrix", or "whatsapp"
+	BackendType string // "telegram", "mattermost", "matrix", "whatsapp", or "email"
 	mmBackend   *mattermost.MmBackend
+	emBackend   *mail.MailBackend
 	mxBackend   *matrix.MxBackend
 	waBackend   *whatsapp.WaBackend
 	mu          sync.Mutex
@@ -72,6 +74,12 @@ func (a *Account) Label() string {
 	}
 	if a.BackendType == "whatsapp" && a.waBackend != nil {
 		return a.waBackend.AccountLabel()
+	}
+	if a.BackendType == "email" && a.emBackend != nil {
+		if a.emBackend.Account.Email != "" {
+			return a.emBackend.AccountLabel()
+		}
+		return "[EM] awaiting sign-in"
 	}
 	s := a.Snapshot()
 	if s.Identity.ID == 0 {
@@ -260,6 +268,28 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.Token == ""
 			m.addAccount(a)
+		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "email-") {
+			path := filepath.Join(dir, "accounts", entry.Name())
+			var identity mail.Identity
+			if ok, err := m.identity(path, &identity); err != nil {
+				return nil, fmt.Errorf("read email account: %w", err)
+			} else if !ok {
+				continue
+			}
+			eb, err := mail.NewMailBackend(identity.IMAPHost, db, m.keyOf(path))
+			if err != nil {
+				return nil, err
+			}
+			eb.Account = identity
+			a := &Account{
+				Dir:         path,
+				BackendType: "email",
+				emBackend:   eb,
+				Histories:   make(map[backend.ChatID][]string),
+			}
+			a.state.Status = "offline"
+			a.state.NeedsLogin = a.NeverAuthenticated()
+			m.addAccount(a)
 		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
 			if err := add(filepath.Join(dir, "accounts", entry.Name()), true); err != nil {
 				return nil, err
@@ -347,6 +377,33 @@ func (m *AccountManager) AddMatrix(homeserver string) (*Account, error) {
 	return a, nil
 }
 
+// AddEmail adds an IMAP account on imapHost; the address and password are
+// asked at sign-in.
+func (m *AccountManager) AddEmail(imapHost string) (*Account, error) {
+	root := filepath.Join(m.Dir, "accounts")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, fmt.Errorf("create accounts directory: %w", err)
+	}
+	dir, err := os.MkdirTemp(root, "email-")
+	if err != nil {
+		return nil, fmt.Errorf("create account directory: %w", err)
+	}
+	eb, err := mail.NewMailBackend(imapHost, m.Store, m.keyOf(dir))
+	if err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
+	a := &Account{
+		Dir:         dir,
+		BackendType: "email",
+		emBackend:   eb,
+		Histories:   make(map[backend.ChatID][]string),
+	}
+	a.state.Status, a.state.NeedsLogin = "sign-in required", true
+	m.addAccount(a)
+	return a, nil
+}
+
 func (m *AccountManager) AddWhatsApp() (*Account, error) {
 	root := filepath.Join(m.Dir, "accounts")
 	if err := os.MkdirAll(root, 0700); err != nil {
@@ -421,6 +478,11 @@ func (m *AccountManager) Discard(a *Account) {
 		if err := m.Store.DeleteAccount(m.keyOf(a.Dir)); err != nil {
 			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 		}
+		if a.BackendType == "email" {
+			if err := mail.PurgeAccount(m.Store, m.keyOf(a.Dir)); err != nil {
+				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
+			}
+		}
 	}
 	if a.BackendType == "telegram" {
 		if err := m.forgetUnprovenCredentials(); err != nil {
@@ -460,6 +522,10 @@ func (a *Account) NeverAuthenticated() bool {
 	}
 	if a.BackendType == "whatsapp" {
 		return a.waBackend == nil || a.waBackend.Jid.IsEmpty()
+	}
+	if a.BackendType == "email" {
+		return a.emBackend == nil || a.emBackend.Account.Email == "" ||
+			(a.emBackend.Account.Password == "" && a.emBackend.Account.RefreshToken == "")
 	}
 	return a.Snapshot().Identity.ID == 0
 }
@@ -507,6 +573,10 @@ func (m *AccountManager) Start(parent context.Context, a *Account, prompt config
 	}
 	if a.BackendType == "whatsapp" {
 		m.startWhatsApp(parent, a, prompt)
+		return
+	}
+	if a.BackendType == "email" {
+		m.startEmail(parent, a, prompt)
 		return
 	}
 	if a.Done != nil {
@@ -724,6 +794,48 @@ func (m *AccountManager) startMattermost(parent context.Context, a *Account, pro
 		mb.StartWebSocket(ctx)
 		a.set(m, func(s *AccountState) {
 			s.Backend, s.Ctx, s.Status, s.Notice = mb, ctx, "online", ""
+		})
+		<-ctx.Done()
+		a.set(m, func(s *AccountState) { s.Backend, s.Ctx, s.Status = nil, nil, "offline" })
+	}()
+}
+
+func (m *AccountManager) startEmail(parent context.Context, a *Account, prompt config.PromptFunc) {
+	if a.Done != nil {
+		select {
+		case <-a.Done:
+		default:
+			return
+		}
+	}
+	eb := a.emBackend
+	ctx, cancel := context.WithCancel(parent)
+	a.Cancel, a.Done = cancel, make(chan struct{})
+	a.set(m, func(s *AccountState) { s.Status, s.Notice, s.NeedsLogin = "connecting", "", false })
+	report := func(err error) {
+		a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
+	}
+	eb.Report = report
+	go func() {
+		defer close(a.Done)
+		defer m.notify()
+		if err := eb.Authenticate(ctx, prompt, report); err != nil {
+			a.set(m, func(s *AccountState) {
+				s.Status, s.Notice = "offline", textfmt.CleanError(err)
+				if !errors.Is(err, context.Canceled) {
+					s.NeedsLogin = true
+				}
+			})
+			return
+		}
+		if a.Dir != "" {
+			if err := m.saveIdentity(a.Dir, eb.Account); err != nil {
+				report(err)
+			}
+		}
+		eb.Start(ctx)
+		a.set(m, func(s *AccountState) {
+			s.Backend, s.Ctx, s.Status, s.Notice = eb, ctx, "online", ""
 		})
 		<-ctx.Done()
 		a.set(m, func(s *AccountState) { s.Backend, s.Ctx, s.Status = nil, nil, "offline" })

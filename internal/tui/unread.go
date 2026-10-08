@@ -221,6 +221,9 @@ func (m unreadModel) card(i, width int, focused bool) string {
 		}
 		sender := backend.GenericMessageSender(msg)
 		text := textfmt.ShortExcerpt(backend.GenericMessageText(msg))
+		if msg.Subject != "" {
+			text = textfmt.ShortExcerpt(textfmt.Plain(msg.Subject))
+		}
 		lines = append(lines, prefix+textfmt.NickColor(sender)+sender+"\x1b[0m"+
 			styleSubtle.Render(": ")+text)
 	}

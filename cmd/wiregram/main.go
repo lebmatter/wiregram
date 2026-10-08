@@ -25,12 +25,18 @@ const usageText = `Usage: wiregram
        wiregram base [-addr :8765]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
-Mattermost, Matrix, and WhatsApp. Text conversations with on-demand Kitty graphics and
-audio playback via mpv.
+Mattermost, Matrix, WhatsApp, and email over IMAP (Gmail and Google Workspace
+included). Text conversations with on-demand Kitty graphics and audio playback
+via mpv.
 
 First launch opens Add account. Telegram asks for API credentials from
 https://my.telegram.org/apps (unless embedded with -ldflags), then your
 phone number, login code, and optional 2FA password.
+Email accounts ask for an IMAP server (imap.gmail.com by default), the
+address, and an app password, or Google sign-in in the browser when the build
+embeds a Google OAuth client. Each correspondent is one chat. Mail is cached in
+wiregram.db for the window set in Settings > Email (90 days by default); mail
+on the server is never deleted by it.
 Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
@@ -68,7 +74,8 @@ Keyboard shortcuts:
   Settings
     Up/k, Down/j     Select section or account
     Tab               Move between sections and accounts
-    Enter             Open section, switch to the account, or add one
+    Enter             Open section, switch to the account, or add one;
+                      in Email, change how long mail stays cached
     r                 Reconnect the selected account
     n                 Add account
     x                 Remove account: signs out on the server, deletes its data
@@ -96,6 +103,15 @@ Keyboard shortcuts:
     Shift+Delete      Delete message (both sides)
     Esc               Back to chat list
     Ctrl+C            Close chat
+
+  Email chat
+    Up/Down           Select mail
+    Enter             Read the whole mail (Up/Down, PgUp/PgDn scroll; Esc closes)
+    Type              Write: Enter adds a line, Ctrl+S sends, Esc keeps the draft
+    Alt+R             Reply to the selected mail
+    Delete            Move the mail to Trash
+                      A new mail's first line is its subject; a first line
+                      "Subject: ..." starts a new conversation instead of a reply
 
   Thread (opens by itself on a threaded message in wide terminals)
     Up/Down           Move through the chat's messages

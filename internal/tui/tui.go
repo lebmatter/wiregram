@@ -221,6 +221,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			m.chat, cmd = m.chat.Update(chatEvent{msg.ev})
 		}
 		m.list = m.list.refreshUnread()
+		if msg.ev.Kind == backend.EventUnread && msg.ev.Chat == (backend.ChatID{}) {
+			cmd = tea.Batch(cmd, loadDialogs(m.ctx, m.b, m.archived))
+		}
 		return m, tea.Batch(cmd, listenEvents(m.events))
 
 	case chatHistoryLoaded:
@@ -393,7 +396,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		m.search, cmd = m.search.Update(k)
 	case m.chatOpen:
 		switch m.chat.subMode {
-		case chatSubNone, chatSubThread, chatSubEmoji, chatSubSearch, chatSubUpload:
+		case chatSubNone, chatSubThread, chatSubEmoji, chatSubSearch, chatSubUpload, chatSubReader:
 			// Other submodes are prompts that any key would answer.
 			m.chat, cmd = m.chat.Update(k)
 		}

@@ -14,7 +14,7 @@ const (
 	EventDelete
 	EventReaction
 	EventTyping // wake-up only; read the state with IsTyping
-	EventUnread // unread counts changed; no payload
+	EventUnread // unread counts changed; no payload. Without a Chat, chats may also have appeared
 )
 
 // Event is the one format every backend publishes.

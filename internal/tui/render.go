@@ -140,6 +140,8 @@ func backendTag(backendType string) string {
 		return "MX"
 	case "mattermost":
 		return "MM"
+	case "email":
+		return "EM"
 	}
 	return "??"
 }

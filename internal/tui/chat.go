@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -33,6 +34,8 @@ const (
 	chatSubThread
 	chatSubConfirmChatDelete
 	chatSubConfirmMsgDelete
+	chatSubCompose
+	chatSubReader
 )
 
 type chatViewModel struct {
@@ -55,8 +58,13 @@ type chatViewModel struct {
 	unread           map[string]bool // IDs of the messages unread on open
 
 	input textinput.Model
-	sends chan chatOutgoing
-	queue []chatOutgoing
+	// draft replaces input in email chats; reading is the mail in the reader.
+	draft        textarea.Model
+	sendingDraft bool
+	reading      backend.Message
+	readerTop    int
+	sends        chan chatOutgoing
+	queue        []chatOutgoing
 
 	reads    *genericReadReporter
 	replying *backend.Message
@@ -195,13 +203,19 @@ func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.Chat
 	ti.Prompt = ""
 	ti.Placeholder = "Message " + textfmt.Plain(entry.Title) + "…"
 	ti.Focus()
+	caps := b.Capabilities()
+	var draft textarea.Model
+	if caps.MultilineCompose {
+		draft = newDraft()
+	}
 	return chatViewModel{
 		ctx:             ctx,
 		cancel:          cancel,
 		b:               b,
 		entry:           entry,
-		caps:            b.Capabilities(),
+		caps:            caps,
 		histories:       histories,
+		draft:           draft,
 		seen:            make(map[string]bool),
 		changedMessages: make(map[string]bool),
 		previews:        make(map[string]*backend.LinkPreview),
@@ -443,6 +457,9 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		return m, tea.Batch(m.doMarkRead(), m.startReadTimer())
 
 	case chatSendResult:
+		if m.caps.MultilineCompose {
+			m = m.draftSent(msg.err)
+		}
 		if msg.err != nil {
 			m.notice = msg.err.Error()
 			return m, nil
@@ -759,6 +776,10 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		return m.handleConfirmChatDeleteKey(msg)
 	case chatSubConfirmMsgDelete:
 		return m.handleConfirmMsgDeleteKey(msg)
+	case chatSubCompose:
+		return m.handleComposeKey(msg)
+	case chatSubReader:
+		return m.handleReaderKey(msg)
 	}
 
 	switch msg.String() {
@@ -793,6 +814,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		}
 		return m.followThread()
 	case "enter":
+		if m.caps.MultilineCompose {
+			return m.openReader()
+		}
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			return m, nil
@@ -860,6 +884,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			m.replying = nil
 		} else {
 			m.replying = &sel
+			if m.caps.MultilineCompose {
+				return m.startCompose(nil)
+			}
 		}
 	case "alt+e", "alt+E":
 		if !m.caps.Edit {
@@ -962,6 +989,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			m.selected = len(m.messages) - 1
 		}
 	case "o":
+		if m.caps.MultilineCompose {
+			return m.startCompose(&msg)
+		}
 		if m.input.Value() != "" {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -979,6 +1009,12 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		m.notice = "downloading…"
 		return m, m.openMediaCmd(sel, player)
 	default:
+		if m.caps.MultilineCompose {
+			if msg.Text == "" {
+				return m, nil
+			}
+			return m.startCompose(&msg)
+		}
 		if m.caps.Typing && time.Since(m.lastTypingSent) > 5*time.Second {
 			m.lastTypingSent = time.Now()
 			m.b.SetTyping(m.ctx, m.entry)
@@ -1005,6 +1041,10 @@ func (m chatViewModel) handleEmojiPicked(msg emojiPicked) (chatViewModel, tea.Cm
 	}
 	if msg.value != "" {
 		m.b.RememberEmoji(msg.value)
+		if m.caps.MultilineCompose {
+			m.draft.InsertString(msg.value)
+			return m.startCompose(nil)
+		}
 		m.input.SetValue(m.input.Value() + msg.value)
 	}
 	return m, nil
@@ -1233,6 +1273,8 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	switch m.subMode {
 	case chatSubEmoji, chatSubSearch, chatSubUpload:
 		return m.pickerClick(msg.y - 1)
+	case chatSubReader:
+		return m, nil
 	}
 	var follow tea.Cmd
 	sel, ok := m.threadMessageAt(msg.x, msg.y)
@@ -1246,6 +1288,9 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		m, follow = m.followThread()
 	}
 	filename, ok := m.b.MediaSaveable(sel)
+	if !ok && m.caps.MultilineCompose {
+		return m.openReader()
+	}
 	if !ok || m.opening != nil {
 		return m, follow
 	}
@@ -1464,6 +1509,8 @@ func (m chatViewModel) chatBox(width, height int, focused bool) string {
 		body = append(bottomLines(results, bodyHeight-len(composer)), composer...)
 	case m.subMode == chatSubUpload:
 		body = m.uploadBody(inner, bodyHeight)
+	case m.subMode == chatSubReader:
+		body = m.readerBody(inner, bodyHeight)
 	default:
 		composer := m.composer(inner, focused)
 		body = append(m.messageLines(inner, bodyHeight-len(composer)), composer...)
@@ -1499,6 +1546,9 @@ func (m chatViewModel) composer(width int, focused bool) []string {
 	border := boxBorder(focused)
 	if m.subMode == chatSubEdit {
 		return composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
+	}
+	if m.caps.MultilineCompose {
+		return m.draftBox(width, border)
 	}
 	return composerBox("", m.replyBar(), "› ", m.input, width, border)
 }
@@ -1552,6 +1602,13 @@ func (m chatViewModel) helpKeys() []helpKey {
 		return emojiHelp
 	case chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return chatConfirmHelp
+	case chatSubCompose:
+		return chatComposeHelp
+	case chatSubReader:
+		return chatReaderHelp
+	}
+	if m.caps.MultilineCompose {
+		return m.mailHelp()
 	}
 	keys := []helpKey{{"↑↓", "messages"}, {"⏎", "send"}}
 	if m.embedded {
@@ -1578,6 +1635,19 @@ func (m chatViewModel) helpKeys() []helpKey {
 	keys = append(keys, helpKey{"del", "delete"}, helpKey{"M-h", "private"},
 		helpKey{"M-1…9", "account"}, helpKey{"?", "more"}, helpKey{"esc", "back"})
 	return keys
+}
+
+// mailHelp is the chat help of an email account, which has no media player,
+// edits or pins.
+func (m chatViewModel) mailHelp() []helpKey {
+	keys := []helpKey{{"↑↓", "mails"}, {"⏎", "read"}, {"type", "write"}}
+	if m.embedded {
+		keys = append(keys, helpKey{"tab", "chats"})
+	}
+	return append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"},
+		helpKey{"^F", "search"}, helpKey{"M-g", "go to quote"}, helpKey{"M-s", "save"},
+		helpKey{"del", "trash"}, helpKey{"M-1…9", "account"}, helpKey{"?", "more"},
+		helpKey{"esc", "back"})
 }
 
 func (m chatViewModel) cleanup() {

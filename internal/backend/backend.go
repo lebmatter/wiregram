@@ -51,6 +51,8 @@ type Message struct {
 	// enough (MaxInlineImage) to draw inline.
 	Image     bool
 	Multiline bool
+	// Subject is an email's subject line, empty for chat messages.
+	Subject   string
 	Reactions []MessageReaction
 	Preview   *LinkPreview
 	Raw       any
@@ -107,6 +109,9 @@ type Capabilities struct {
 	Typing        bool
 	DeleteChat    bool
 	Archive       bool
+	// MultilineCompose gives the chat a multiline composer that sends with
+	// Ctrl+S, and a reader for long messages.
+	MultilineCompose bool
 }
 
 type Backend interface {
@@ -201,6 +206,13 @@ type UnreadFetcher interface {
 type LinkPreviewer interface {
 	// LinkPreview returns nil when the server has nothing for url.
 	LinkPreview(ctx context.Context, url string) (*LinkPreview, error)
+}
+
+// FullMessager is implemented by backends whose messages are too long for
+// the chat, so the reader can show all of one.
+type FullMessager interface {
+	// FullMessage returns header lines and the complete text of msg.
+	FullMessage(msg Message) (headers []string, body string)
 }
 
 // NewestIncoming keeps the last limit messages the user did not send.
