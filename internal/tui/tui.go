@@ -108,8 +108,10 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 	return m.sized()
 }
 
+// Init opens the Unread view, so entering an account starts there.
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(listenEvents(m.events), chipsTick(), pruneMediaCache)
+	openUnread := func() tea.Msg { return chatListUnread{} }
+	return tea.Batch(listenEvents(m.events), chipsTick(), pruneMediaCache, openUnread)
 }
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }

@@ -289,10 +289,14 @@ func styleMediaTag(text string) string {
 }
 
 // Links are underlined in the quote colour. linkOff resets only underline
-// and foreground, so a selection background survives it.
+// and foreground, so a selection background survives it. Each link is also an
+// OSC 8 hyperlink to the full URL, so a click on any wrapped line of it opens
+// the whole link rather than the fragment the terminal sees on that row.
 const (
-	linkOn  = "\x1b[4;38;5;75m"
-	linkOff = "\x1b[24;39m"
+	linkOn     = "\x1b[4;38;5;75m"
+	linkOff    = "\x1b[24;39m"
+	oscLink    = "\x1b]8;;"
+	oscLinkEnd = "\x1b]8;;\a"
 )
 
 // selBgSGR is colorSelBg as a raw SGR, re-applied after resets by shadeLine.
@@ -317,7 +321,8 @@ func styleLinks(text string) string {
 		if end < 0 {
 			end = len(rest)
 		}
-		out.WriteString(text[:start] + linkOn + rest[:end] + linkOff)
+		url := rest[:end]
+		out.WriteString(text[:start] + linkOn + oscLink + url + "\a" + url + oscLinkEnd + linkOff)
 		text = rest[end:]
 	}
 }
@@ -326,15 +331,19 @@ func styleLinks(text string) string {
 // after the next line's indent, so a long wrapped link stays styled without
 // underlining the indent.
 func closeLinks(lines []string) []string {
-	open := false
+	opener := ""
 	for i, line := range lines {
-		if open {
+		if opener != "" {
 			body := strings.TrimLeft(line, " ")
-			line = line[:len(line)-len(body)] + linkOn + body
+			line = line[:len(line)-len(body)] + opener + body
 		}
-		open = strings.LastIndex(line, linkOn) > strings.LastIndex(line, linkOff)
-		if open {
-			line += linkOff
+		opener = ""
+		if on := strings.LastIndex(line, linkOn); on > strings.LastIndex(line, linkOff) {
+			opener = line[on:]
+			if end := strings.IndexByte(opener, '\a'); end >= 0 {
+				opener = opener[:end+1]
+			}
+			line += oscLinkEnd + linkOff
 		}
 		lines[i] = line
 	}

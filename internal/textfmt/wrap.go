@@ -2,6 +2,7 @@ package textfmt
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -120,28 +121,43 @@ func takeCells(text string, limit int) (string, string) {
 		limit = 1
 	}
 	used, end := 0, 0
-	inEscape := false
-	for index, r := range text {
-		if r == '\033' {
-			inEscape = true
-			end = index + len(string(r))
+	for end < len(text) {
+		if text[end] == '\033' {
+			end = escapeEnd(text, end)
 			continue
 		}
-		if inEscape {
-			end = index + len(string(r))
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
+		r, size := utf8.DecodeRuneInString(text[end:])
 		cells := runeWidth(r)
 		if used > 0 && used+cells > limit {
 			break
 		}
 		used += cells
-		end = index + len(string(r))
+		end += size
 	}
 	return text[:end], text[end:]
+}
+
+// escapeEnd returns the index just past the escape sequence at text[i]. An
+// OSC (hyperlinks) runs to BEL or ST, since its URL is full of letters; any
+// other sequence ends at its first letter.
+func escapeEnd(text string, i int) int {
+	if i+1 < len(text) && text[i+1] == ']' {
+		for j := i + 2; j < len(text); j++ {
+			if text[j] == '\a' {
+				return j + 1
+			}
+			if text[j] == '\033' && j+1 < len(text) && text[j+1] == '\\' {
+				return j + 2
+			}
+		}
+		return len(text)
+	}
+	for j := i + 1; j < len(text); j++ {
+		if c := text[j]; (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			return j + 1
+		}
+	}
+	return len(text)
 }
 
 func runeWidth(r rune) int {
@@ -151,26 +167,21 @@ func runeWidth(r rune) int {
 func ClipLine(text string, width int) string {
 	var out strings.Builder
 	used := 0
-	inEscape := false
-	for _, r := range text {
-		if r == '\033' {
-			inEscape = true
-			out.WriteRune(r)
+	for i := 0; i < len(text); {
+		if text[i] == '\033' {
+			next := escapeEnd(text, i)
+			out.WriteString(text[i:next])
+			i = next
 			continue
 		}
-		if inEscape {
-			out.WriteRune(r)
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
+		r, size := utf8.DecodeRuneInString(text[i:])
 		cells := runeWidth(r)
 		if used+cells > width {
 			break
 		}
-		out.WriteRune(r)
+		out.WriteString(text[i : i+size])
 		used += cells
+		i += size
 	}
 	return out.String()
 }
