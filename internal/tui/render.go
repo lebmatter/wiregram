@@ -327,12 +327,19 @@ func textIndent(entry backend.ChatEntry) int {
 }
 
 // messageHeader is "[HH:MM] <nick>", or just the time in channels, where
-// every post comes from the channel itself.
-func messageHeader(msg backend.Message, entry backend.ChatEntry) string {
-	if kind, _ := kindOf(entry); kind == kindChannel {
-		return msg.Timestamp.Format("[15:04]")
+// every post comes from the channel itself. The time is dim unless the
+// message is unread, when the whole block is bold instead.
+func messageHeader(msg backend.Message, entry backend.ChatEntry, unread bool) string {
+	stamp := msg.Timestamp.Format("[15:04]")
+	if !unread {
+		stamp = styleDim.Render(stamp)
 	}
-	return backend.GenericMessagePrefix(msg, entry)
+	if kind, _ := kindOf(entry); kind == kindChannel {
+		return stamp
+	}
+	nick, _ := strings.CutPrefix(backend.GenericMessagePrefix(msg, entry),
+		msg.Timestamp.Format("[15:04]"))
+	return stamp + nick
 }
 
 // shadeLine paints line on the selection background, padded to width. The
@@ -343,6 +350,14 @@ func shadeLine(line string, width int) string {
 	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+selBgSGR)
 	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+selBgSGR)
 	return selBgSGR + line + pad + "\x1b[0m"
+}
+
+// boldLine sets line in bold, re-applied after every reset as in shadeLine.
+// It ends with SGR 22 rather than a full reset so a selection tint survives.
+func boldLine(line string) string {
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m\x1b[1m")
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m\x1b[1m")
+	return "\x1b[1m" + line + "\x1b[22m"
 }
 
 // styleMediaTag dims the leading "[tag]" of a media label.

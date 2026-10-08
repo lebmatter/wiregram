@@ -157,7 +157,8 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int) {
 		// The thread is the chain itself, so replies are drawn without a quote.
 		msg.ReplyToID = ""
 		add(i, messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
-			m.changedMessages[msg.ID], m.images[msg.ID], inner, imageRows(height))...)
+			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID], inner,
+			imageRows(height))...)
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))

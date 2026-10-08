@@ -100,8 +100,9 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 // genericSelectedLines also returns, for each line, the index of the message
 // it belongs to (-1 for none) so mouse clicks can find their message.
 // Day and unread dividers sit above the message they introduce; firstUnread
-// is the ID of the oldest message unread when the chat opened ("" for none).
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, firstUnread string, width, height int) ([]string, []int) {
+// is the ID of the oldest message unread when the chat opened ("" for none)
+// and unread holds the IDs of all of them, drawn in bold.
+func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -122,7 +123,8 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 	messageLines := func(i int) []string {
 		msg := messages[i]
 		return messageBlock(b, msg, entry, byID[msg.ReplyToID], replies[msg.ID],
-			changed[msg.ID], images[msg.ID], lineWidth, imageRows(height))
+			changed[msg.ID], unread[msg.ID], images[msg.ID],
+			lineWidth, imageRows(height))
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
 		lines, owners := []string{}, []int{}
@@ -246,8 +248,9 @@ func dayLabel(t, now time.Time) string {
 // messageBlock lays out one message in the shared block format: a fixed
 // gutter and header, the text at textIndent, any image or preview card, and
 // a meta row. Nothing in it depends on selection, so columns never move.
+// An unread message has its header and text in bold.
 func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
-	quoted *backend.Message, replies int, edited bool, img *chatImage,
+	quoted *backend.Message, replies int, edited, unread bool, img *chatImage,
 	lineWidth, maxImageRows int) []string {
 	gutter := "  "
 	if edited {
@@ -256,7 +259,7 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 	indent := textIndent(entry)
 	body, below := imageText(msg, img, indent, lineWidth, maxImageRows)
 	body = styleLinks(styleMediaTag(body))
-	prefix := gutter + messageHeader(msg, entry) + " "
+	prefix := gutter + messageHeader(msg, entry, unread) + " "
 	var lines []string
 	if msg.ReplyToID == "" {
 		lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
@@ -267,6 +270,11 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 			textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 	}
 	lines = closeLinks(lines)
+	if unread {
+		for i := range lines {
+			lines[i] = boldLine(lines[i])
+		}
+	}
 	lines = append(lines, below...)
 	lines = append(lines, previewCard(msg.Preview, indent, lineWidth)...)
 	if meta := metaRow(b, msg, entry, replies); meta != "" {

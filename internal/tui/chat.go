@@ -50,8 +50,9 @@ type chatViewModel struct {
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	images           map[string]*chatImage           // by message ID
 	historyExhausted bool
-	loadingOlder     bool   // a page of older history is on its way
-	firstUnread      string // ID of the oldest message unread on open
+	loadingOlder     bool            // a page of older history is on its way
+	firstUnread      string          // ID of the oldest message unread on open
+	unread           map[string]bool // IDs of the messages unread on open
 
 	input textinput.Model
 	sends chan chatOutgoing
@@ -344,17 +345,19 @@ func (m chatViewModel) appendMessage(msg backend.Message) chatViewModel {
 	return m
 }
 
-// firstUnreadID is the oldest of the newest unread incoming messages, or ""
-// when nothing is unread.
-func firstUnreadID(messages []backend.Message, unread int) string {
-	id := ""
+// unreadIDs returns the newest unread incoming messages and the oldest of
+// them, or "" when nothing is unread.
+func unreadIDs(messages []backend.Message, unread int) (map[string]bool, string) {
+	ids := make(map[string]bool)
+	first := ""
 	for i := len(messages) - 1; i >= 0 && unread > 0; i-- {
 		if !messages[i].Outgoing {
-			id = messages[i].ID
+			first = messages[i].ID
+			ids[first] = true
 			unread--
 		}
 	}
-	return id
+	return ids, first
 }
 
 func (m chatViewModel) selectedMsg() (backend.Message, bool) {
@@ -659,7 +662,7 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 	}
 	m.messages = msg.messages
 	m.selected = len(msg.messages) - 1
-	m.firstUnread = firstUnreadID(msg.messages, m.entry.Unread)
+	m.unread, m.firstUnread = unreadIDs(msg.messages, m.entry.Unread)
 	for _, msg := range msg.messages {
 		m.seen[msg.ID] = true
 	}
@@ -1382,7 +1385,7 @@ func (m chatViewModel) chatOwners(width int) []int {
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
 	_, owners := genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages,
-		m.images, nil, false, m.firstUnread, inner, height)
+		m.images, nil, false, m.firstUnread, m.unread, inner, height)
 	return screenOwners(owners, height)
 }
 
@@ -1474,16 +1477,16 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, false, "", width, height)
+		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, false, "", nil, width, height)
 	} else {
-		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, nil, false, m.firstUnread, width, height)
+		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, nil, false, m.firstUnread, m.unread, width, height)
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, styleSubtle.Render("No messages yet. Say hi!"))
 	}
 	lines = bottomLines(lines, max(0, height))
 	for _, u := range m.uploads {
-		prefix := "  " + messageHeader(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry) + " "
+		prefix := "  " + messageHeader(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry, false) + " "
 		lines = append(lines, textfmt.ClipLine(prefix+m.spin.View()+
 			styleSubtle.Render(fmt.Sprintf("uploading %s (%s)…", filepath.Base(u.path), textfmt.FormatSize(u.size))), width))
 	}
