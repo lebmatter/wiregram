@@ -80,7 +80,7 @@ func imageCard(msg backend.Message, c *chatImage, indent, lineWidth, maxRows int
 			body = append(body, strings.TrimLeft(line, " "))
 		}
 	}
-	title := strings.Replace(strings.TrimPrefix(msg.MediaLabel, "["), "]", "", 1)
+	title := mediaTitle(msg.MediaLabel)
 	pad := strings.Repeat(" ", indent)
 	lines := strings.Split(renderBox(title, body, width, len(body)+2, colorDim), "\n")
 	for i := range lines {
@@ -104,7 +104,23 @@ func imageText(msg backend.Message, c *chatImage, indent, lineWidth,
 	if card == nil {
 		return text, nil
 	}
-	return msg.MediaLabel, card
+	return "", card
+}
+
+// mediaTitle shortens a media label to its first kind for a card title, with
+// a count of any further attachments: "[photo] 800x792, 587 KB, [photo] …"
+// becomes "photo +1".
+func mediaTitle(label string) string {
+	start := strings.Index(label, "[")
+	end := strings.Index(label, "]")
+	if start < 0 || end < start {
+		return label
+	}
+	title := label[start+1 : end]
+	if more := strings.Count(label, "[") - 1; more > 0 {
+		title += fmt.Sprintf(" +%d", more)
+	}
+	return title
 }
 
 // loadVisibleImages starts downloading the images of the messages on screen
