@@ -47,11 +47,17 @@ type Message struct {
 	Forwarded  bool
 	ViaBot     bool
 	MediaLabel string
-	Multiline  bool
-	Reactions  []MessageReaction
-	Preview    *LinkPreview
-	Raw        any
+	// Image marks a still image that SaveMedia fetches and that is small
+	// enough (MaxInlineImage) to draw inline.
+	Image     bool
+	Multiline bool
+	Reactions []MessageReaction
+	Preview   *LinkPreview
+	Raw       any
 }
+
+// MaxInlineImage is the largest image file, in bytes, drawn inline.
+const MaxInlineImage = 10 << 20
 
 // LinkPreview is a server-supplied summary of a link in a message.
 type LinkPreview struct {

@@ -44,7 +44,8 @@ These are project constraints, not suggestions:
   modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
   charm.land/bubbles/v2 (its list component pulls in
   github.com/sahilm/fuzzy, approved as a transitive dependency), and
-  github.com/yuin/gopher-lua for the embedded game scripts.
+  github.com/yuin/gopher-lua for the embedded game scripts, and
+  golang.org/x/image for scaling and WebP decoding of inline images.
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -98,6 +99,12 @@ These are project constraints, not suggestions:
   Telegram webpages, Mattermost OpenGraph embeds, WhatsApp link fields, and
   the Matrix homeserver's `preview_url`, fetched once per link in the
   background. Wiregram never fetches linked pages itself.
+- Still images (`Message.Image`, up to `backend.MaxInlineImage`) draw inline
+  with truecolor `▄` half-blocks (`internal/halfblock`) in a rounded card
+  titled with the media label, the caption inside under the image, in the chat
+  and the thread pane. Only messages on screen are fetched; downloads live in
+  `os.UserCacheDir()/wiregram/media`, shared with click-to-open, and are pruned
+  after 7 days unseen. View-once and self-destructing media never load inline.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 - Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
   (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as
@@ -122,6 +129,7 @@ These are project constraints, not suggestions:
 cmd/wiregram/        main(): flags, database and config load, hands off to tui
 internal/
   textfmt/           pure text helpers: plain(), wrapping, cell widths, nick colours
+  halfblock/         decodes, scales and draws images as truecolor half-blocks
   store/             wiregram.db: settings and per-account data (identity,
                      Telegram session, Matrix sync token)
   config/            settings loading

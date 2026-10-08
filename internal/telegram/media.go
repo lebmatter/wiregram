@@ -63,6 +63,29 @@ func formatMedia(media tg.MessageMediaClass) string {
 	}
 }
 
+// inlineImage reports whether media is a still image to draw in the chat.
+// Expiring media is left alone so it is only opened on purpose.
+func inlineImage(media tg.MessageMediaClass) bool {
+	if expiringMediaLabel(media) != "" {
+		return false
+	}
+	switch m := media.(type) {
+	case *tg.MessageMediaPhoto:
+		_, ok := m.Photo.(*tg.Photo)
+		return ok
+	case *tg.MessageMediaDocument:
+		d, ok := m.Document.(*tg.Document)
+		if !ok || d.Size > backend.MaxInlineImage {
+			return false
+		}
+		switch d.MimeType {
+		case "image/jpeg", "image/png", "image/gif", "image/webp":
+			return true
+		}
+	}
+	return false
+}
+
 // webPagePreview returns the link preview Telegram attached, or nil while it
 // is still pending or has nothing to show.
 func webPagePreview(media tg.MessageMediaClass) *backend.LinkPreview {

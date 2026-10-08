@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"image/color"
@@ -49,6 +47,7 @@ type chatViewModel struct {
 	seen             map[string]bool
 	changedMessages  map[string]bool
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
+	images           map[string]*chatImage           // by message ID
 	historyExhausted bool
 
 	input textinput.Model
@@ -202,6 +201,7 @@ func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.Chat
 		seen:            make(map[string]bool),
 		changedMessages: make(map[string]bool),
 		previews:        make(map[string]*backend.LinkPreview),
+		images:          make(map[string]*chatImage),
 		input:           ti,
 		sends:           make(chan chatOutgoing),
 		autoLock:        b.AutoLockEnabled(),
@@ -358,7 +358,17 @@ func (m chatViewModel) clearSelectedChanged() chatViewModel {
 	return m
 }
 
+// Update handles msg, then fetches any image it brought into view.
 func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
+	m, cmd := m.update(msg)
+	switch msg.(type) {
+	case spinner.TickMsg, lockTick, mediaProgressTick:
+		return m, cmd // nothing moved
+	}
+	return m, tea.Batch(cmd, m.loadVisibleImages())
+}
+
+func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -367,6 +377,12 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	case chatHistoryLoaded:
 		cm, cmd := m.handleHistoryLoaded(msg)
 		return cm.clearSelectedChanged(), tea.Batch(cmd, cm.fetchPreviews(msg.messages))
+
+	case chatImageLoaded:
+		if c := m.images[msg.id]; c != nil {
+			c.img, c.failed = msg.img, msg.err != nil
+		}
+		return m, nil
 
 	case linkPreviewLoaded:
 		if msg.preview == nil {
@@ -1189,20 +1205,26 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 // it in the desktop's default application.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	m = m.resetLock()
-	i, ok := m.messageAt(msg.x, msg.y)
+	var follow tea.Cmd
+	sel, ok := m.threadMessageAt(msg.x, msg.y)
 	if !ok {
-		return m, nil
+		i, ok := m.messageAt(msg.x, msg.y)
+		if !ok {
+			return m, nil
+		}
+		m.selected = i
+		sel = m.messages[i]
+		m, follow = m.followThread()
 	}
-	m.selected = i
-	sel := m.messages[i]
-	m, follow := m.followThread()
 	filename, ok := m.b.MediaSaveable(sel)
 	if !ok || m.opening != nil {
 		return m, follow
 	}
-	key := fmt.Sprintf("%s\x00%v\x00%s", m.b.AccountLabel(), m.entry.ID, sel.ID)
-	sum := sha256.Sum256([]byte(key))
-	dir := filepath.Join(mediaCacheRoot(), hex.EncodeToString(sum[:12]))
+	dir, err := mediaDir(m.b, m.entry, sel)
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, follow
+	}
 	m.notice = ""
 	m.opening = &mediaDownload{filename: filename, part: dir + ".part"}
 	return m, tea.Batch(follow, m.openExternalCmd(sel, dir, filename), mediaProgressCmd(),
@@ -1262,51 +1284,49 @@ func (m chatViewModel) messageAt(x, y int) (int, bool) {
 	if x >= width {
 		return 0, false
 	}
-	// The chat beside an open thread draws its composer unfocused.
-	inner, bodyHeight := width-4, m.height-2
-	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
+	owners := m.chatOwners(width)
 	row := y - 1
-	if row < 0 || row >= height {
-		return 0, false
-	}
-	_, owners := genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages,
-		nil, false, inner, height)
-	// bottomLines pads short content at the top and trims long content there.
-	row -= max(0, height-len(owners))
-	row += max(0, len(owners)-height)
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
 		return 0, false
 	}
 	return owners[row], true
 }
 
-// openExternalCmd downloads the attachment into a per-user temp cache unless
-// an earlier click already did, then hands it to xdg-open (open on macOS).
+// chatOwners maps each message row of a chat box width columns wide, below
+// its top border, to the message drawn there (-1 for none).
+func (m chatViewModel) chatOwners(width int) []int {
+	_, split := m.threadSplit()
+	// The chat beside an open thread draws its composer unfocused.
+	inner, bodyHeight := width-4, m.height-2
+	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
+	_, owners := genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages,
+		m.images, nil, false, inner, height)
+	return screenOwners(owners, height)
+}
+
+// screenOwners pads or trims line owners the way bottomLines does the lines.
+func screenOwners(owners []int, height int) []int {
+	height = max(0, height)
+	if len(owners) > height {
+		return owners[len(owners)-height:]
+	}
+	pad := make([]int, height-len(owners), height)
+	for i := range pad {
+		pad[i] = -1
+	}
+	return append(pad, owners...)
+}
+
+// openExternalCmd downloads the attachment into the media cache unless an
+// earlier click or inline image already did, then hands it to xdg-open (open
+// on macOS).
 func (m chatViewModel) openExternalCmd(sel backend.Message, dir, filename string) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
 	return func() tea.Msg {
-		if err := ensureMediaCache(); err != nil {
+		path, err := fetchMedia(ctx, b, sel, dir, filename)
+		if err != nil {
 			return mediaOpened{err: err}
-		}
-		path := filepath.Join(dir, filename)
-		if _, err := os.Stat(path); err != nil {
-			// Download beside the final directory and rename it into place, so
-			// an interrupted download is never mistaken for a cached one.
-			part := dir + ".part"
-			if err := os.RemoveAll(part); err != nil {
-				return mediaOpened{err: fmt.Errorf("clear partial download: %w", err)}
-			}
-			if err := os.Mkdir(part, 0o700); err != nil {
-				return mediaOpened{err: fmt.Errorf("create download directory: %w", err)}
-			}
-			if err := b.SaveMedia(ctx, sel, part); err != nil {
-				_ = os.RemoveAll(part)
-				return mediaOpened{err: err}
-			}
-			if err := os.Rename(part, dir); err != nil {
-				return mediaOpened{err: fmt.Errorf("store download: %w", err)}
-			}
 		}
 		opener := "xdg-open"
 		if runtime.GOOS == "darwin" {
@@ -1325,30 +1345,6 @@ func (m chatViewModel) openExternalCmd(sel backend.Message, dir, filename string
 	}
 }
 
-// mediaCacheRoot is the private directory under the system temp dir that
-// holds clicked attachments.
-func mediaCacheRoot() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("wiregram-%d", os.Getuid()))
-}
-
-// ensureMediaCache creates mediaCacheRoot, refusing one another user could
-// have planted.
-func ensureMediaCache() error {
-	dir := mediaCacheRoot()
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("create media cache: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("check media cache: %w", err)
-	}
-	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("media cache %s is not a private directory", dir)
-	}
-	return nil
-}
-
-// View renders the chat pane as a box exactly m.width×m.height cells.
 func (m chatViewModel) View() string {
 	if m.subMode == chatSubThread {
 		if chatWidth, split := m.threadSplit(); split {
@@ -1396,9 +1392,9 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, false, width, height)
+		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, false, width, height)
 	} else {
-		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, nil, false, width, height)
+		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, nil, false, width, height)
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, styleSubtle.Render("No messages yet. Say hi!"))

@@ -122,24 +122,74 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 }
 
 func (m chatViewModel) threadBox(width, height int, focused bool) string {
-	inner, bodyHeight := width-4, height-2
+	inner := width - 4
+	composer := m.threadComposer(inner, focused)
+	lines, _ := m.threadLines(inner, height-2-len(composer))
+	body := append(bottomLines(lines, height-2-len(composer)), composer...)
+	return renderBox("Thread", body, width, height, boxBorder(focused))
+}
+
+func (m chatViewModel) threadComposer(inner int, focused bool) []string {
+	return composerBox("", nil, "› ", m.threadInput, inner, boxBorder(focused))
+}
+
+// threadLines lays out the thread inner columns wide and returns, for each
+// line, the index into threadMessages it belongs to (-1 for none).
+func (m chatViewModel) threadLines(inner, height int) ([]string, []int) {
 	thread := threadMessages(m.messages, m.threadRoot)
-	composer := composerBox("", nil, "› ", m.threadInput, inner, boxBorder(focused))
 	var lines []string
+	var owners []int
+	add := func(owner int, more ...string) {
+		lines = append(lines, more...)
+		for range more {
+			owners = append(owners, owner)
+		}
+	}
 	if len(thread) == 0 {
-		lines = append(lines, styleSubtle.Render("The thread's first message is no longer loaded."))
+		add(-1, styleSubtle.Render("The thread's first message is no longer loaded."))
 	}
 	const indent = 7 + 2 + textfmt.NickWidth + 2
 	for i, msg := range thread {
-		lines = append(lines, textfmt.WrapMessage(backend.GenericMessagePrefix(msg, m.entry)+" ",
-			backend.GenericMessageText(msg), inner, indent)...)
-		lines = append(lines, previewCard(msg.Preview, indent, inner)...)
+		text, below := imageText(msg, m.images[msg.ID], indent, inner, imageRows(height))
+		add(i, textfmt.WrapMessage(backend.GenericMessagePrefix(msg, m.entry)+" ",
+			text, inner, indent)...)
+		add(i, below...)
+		add(i, previewCard(msg.Preview, indent, inner)...)
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))
-			lines = append(lines, styleDim.Render("──"+label+strings.Repeat("─", max(0, inner-2-len(label)))))
+			add(-1, styleDim.Render("──"+label+strings.Repeat("─", max(0, inner-2-len(label)))))
 		}
 	}
-	body := append(bottomLines(lines, bodyHeight-len(composer)), composer...)
-	return renderBox("Thread", body, width, height, boxBorder(focused))
+	return lines, owners
+}
+
+// threadOwners maps each row inside a thread pane width columns wide, below
+// its top border, to the threadMessages index drawn there (-1 for none).
+func (m chatViewModel) threadOwners(width int) []int {
+	inner := width - 4
+	height := m.height - 2 - len(m.threadComposer(inner, false))
+	_, owners := m.threadLines(inner, height)
+	return screenOwners(owners, height)
+}
+
+// threadMessageAt returns the thread message drawn at column x and row y
+// of the chat pane, when the thread pane is there.
+func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, bool) {
+	if m.subMode != chatSubThread || m.privateMode {
+		return backend.Message{}, false
+	}
+	left, split := m.threadSplit()
+	if !split {
+		left = 0
+	}
+	if x < left {
+		return backend.Message{}, false
+	}
+	owners := m.threadOwners(m.width - left)
+	row := y - 1
+	if row < 0 || row >= len(owners) || owners[row] < 0 {
+		return backend.Message{}, false
+	}
+	return threadMessages(m.messages, m.threadRoot)[owners[row]], true
 }

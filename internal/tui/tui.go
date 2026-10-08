@@ -109,7 +109,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(listenEvents(m.events), chipsTick())
+	return tea.Batch(listenEvents(m.events), chipsTick(), pruneMediaCache)
 }
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }

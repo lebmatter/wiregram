@@ -1146,6 +1146,7 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 		Timestamp:  info.Timestamp,
 		Outgoing:   outgoing,
 		MediaLabel: mediaLabel,
+		Image:      waInlineImage(evt.Message),
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(evt.Message),
 		Forwarded:  isForwarded(evt.Message),
@@ -1210,6 +1211,13 @@ func waPreview(m *waE2E.Message) *backend.LinkPreview {
 	return &backend.LinkPreview{
 		URL: link, Site: site, Title: ext.GetTitle(), Description: ext.GetDescription(),
 	}
+}
+
+// waInlineImage reports whether m is an image to draw in the chat; view-once
+// images are only opened on purpose.
+func waInlineImage(m *waE2E.Message) bool {
+	img := m.GetImageMessage()
+	return img != nil && !img.GetViewOnce() && img.GetFileLength() <= backend.MaxInlineImage
 }
 
 func (wa *WaBackend) extractMessageContent(m *waE2E.Message) (text, mediaLabel string, multiline bool) {

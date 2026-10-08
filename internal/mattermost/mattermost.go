@@ -468,7 +468,13 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 	}
 
 	var mediaLabel string
+	image := false
 	if p.Metadata != nil {
+		// SaveMedia fetches the first file, so only that one can be drawn.
+		if files := p.Metadata.Files; len(files) > 0 {
+			image = strings.HasPrefix(files[0].MimeType, "image/") &&
+				files[0].Size <= backend.MaxInlineImage
+		}
 		for _, f := range p.Metadata.Files {
 			if mediaLabel != "" {
 				mediaLabel += ", "
@@ -495,6 +501,7 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		EditDate:   editDate,
 		ReplyToID:  p.RootID,
 		MediaLabel: mediaLabel,
+		Image:      image,
 		Multiline:  strings.Contains(p.Message, "\n"),
 		Preview:    mmPreview(p.Metadata),
 		Raw:        p,

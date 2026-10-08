@@ -800,6 +800,7 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 	text := ""
 	mediaLabel := ""
 	multiline := false
+	image := false
 
 	if ev.Type == "m.room.encrypted" {
 		mediaLabel = "[encrypted message]"
@@ -815,6 +816,7 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 			text = "* " + body
 		case "m.image":
 			mediaLabel = mxMediaLabel("photo", ev.Content)
+			image = mxInlineImage(ev.Content)
 		case "m.video":
 			mediaLabel = mxMediaLabel("video", ev.Content)
 		case "m.audio":
@@ -860,9 +862,21 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 		EditDate:   editDate,
 		ReplyToID:  replyToID,
 		MediaLabel: mediaLabel,
+		Image:      image,
 		Multiline:  multiline,
 		Raw:        ev,
 	}
+}
+
+// mxInlineImage reports whether an m.image can be fetched unencrypted and is
+// small enough to draw inline; a missing size is trusted.
+func mxInlineImage(content map[string]any) bool {
+	if url, _ := content["url"].(string); url == "" {
+		return false
+	}
+	info, _ := content["info"].(map[string]any)
+	size, _ := info["size"].(float64)
+	return size <= backend.MaxInlineImage
 }
 
 func mxMediaLabel(kind string, content map[string]any) string {

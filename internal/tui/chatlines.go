@@ -97,7 +97,7 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 // Generic selected lines rendering.
 // genericSelectedLines also returns, for each line, the index of the message
 // it belongs to (-1 for none) so mouse clicks can find their message.
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, replying *backend.Message, typing bool, width, height int) ([]string, []int) {
+func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, width, height int) ([]string, []int) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -129,7 +129,7 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			}
 		}
 		indent := textfmt.DisplayWidth(marker) + msgPrefixWidth
-		body := backend.GenericMessageText(msg)
+		body, below := imageText(msg, images[msg.ID], indent, lineWidth, imageRows(height))
 		if msg.Pinned {
 			body += " [pinned]"
 		}
@@ -146,6 +146,7 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			lines = append([]string{quote},
 				textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 		}
+		lines = append(lines, below...)
 		return append(lines, previewCard(msg.Preview, indent, lineWidth)...)
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
