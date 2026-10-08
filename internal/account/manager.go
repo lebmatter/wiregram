@@ -368,6 +368,31 @@ func (m *AccountManager) AddWhatsApp() (*Account, error) {
 	return a, nil
 }
 
+// Remove signs the account out on its server when it is online, then deletes
+// its local data and its agent binding. The local data goes even when the
+// server logout fails; that failure is returned.
+func (m *AccountManager) Remove(ctx context.Context, a *Account) error {
+	var logoutErr error
+	s := a.Snapshot()
+	if lb, ok := s.Backend.(backend.LogoutBackend); ok && s.Status == "online" {
+		lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		logoutErr = lb.Logout(lctx)
+		cancel()
+	}
+	key := m.AccountKey(a)
+	m.Discard(a)
+	if m.Agents != nil {
+		if err := m.Agents.Db.UnbindAccount(key); err != nil {
+			return err
+		}
+		m.Agents.Reload()
+	}
+	if logoutErr != nil {
+		return fmt.Errorf("removed locally, but server logout failed: %w", logoutErr)
+	}
+	return nil
+}
+
 func (m *AccountManager) Discard(a *Account) {
 	if a.Cancel != nil {
 		a.Cancel()
@@ -387,7 +412,12 @@ func (m *AccountManager) Discard(a *Account) {
 	}
 	m.mu.Unlock()
 	if a.Dir != "" {
-		os.RemoveAll(a.Dir)
+		// The primary account's directory is the config directory itself.
+		if m.keyOf(a.Dir) != agent.PrimaryAccountKey {
+			if err := os.RemoveAll(a.Dir); err != nil {
+				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
+			}
+		}
 		if err := m.Store.DeleteAccount(m.keyOf(a.Dir)); err != nil {
 			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 		}

@@ -194,6 +194,13 @@ func (wa *WaBackend) AccountLabel() string {
 
 func (wa *WaBackend) AutoLockEnabled() bool { return false }
 
+func (wa *WaBackend) Logout(ctx context.Context) error {
+	if err := wa.Client.Logout(ctx); err != nil {
+		return fmt.Errorf("unlink WhatsApp device: %w", err)
+	}
+	return nil
+}
+
 func (wa *WaBackend) Run(ctx context.Context) error {
 	<-ctx.Done()
 	if wa.Client != nil {

@@ -277,6 +277,13 @@ func (mb *MmBackend) AccountLabel() string {
 
 func (mb *MmBackend) AutoLockEnabled() bool { return false }
 
+func (mb *MmBackend) Logout(ctx context.Context) error {
+	if err := mb.apiJSON(ctx, "POST", "/users/logout", nil, nil); err != nil {
+		return fmt.Errorf("log out of Mattermost: %w", err)
+	}
+	return nil
+}
+
 func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.ChatEntry, int, error) {
 	if archived {
 		return nil, 0, nil

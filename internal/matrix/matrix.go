@@ -311,6 +311,13 @@ func (mx *MxBackend) AccountLabel() string {
 
 func (mx *MxBackend) AutoLockEnabled() bool { return false }
 
+func (mx *MxBackend) Logout(ctx context.Context) error {
+	if err := mx.apiJSON(ctx, "POST", "/logout", struct{}{}, nil); err != nil {
+		return fmt.Errorf("log out of Matrix: %w", err)
+	}
+	return nil
+}
+
 // Run + sync loop.
 
 func (mx *MxBackend) Run(ctx context.Context) error {

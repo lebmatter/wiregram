@@ -49,6 +49,7 @@ Keyboard shortcuts:
     Alt+1..9          Switch to account N
     Alt+A             Chat Agents (from the chat list)
     Alt+G             Games (from the chat list)
+    Alt+S             Settings (from the chat list)
     Tab               Move between chat list and chat (wide terminals)
     ?                 Show all shortcuts
 
@@ -57,11 +58,21 @@ Keyboard shortcuts:
     Enter             Open chat, or switch to the selected account
     /                 Search users
     u                 Unread: cards for every chat with unread messages
-    a                 Manage accounts (add, sign in, retry)
+    a                 Manage accounts (add, sign in, retry; Settings… is listed there)
     r                 Refresh chats
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)
     Esc               Close the open chat (wide terminals)
+    q, Ctrl+D         Quit
+
+  Settings
+    Up/k, Down/j     Select section or account
+    Tab               Move between sections and accounts
+    Enter             Open section, switch to the account, or add one
+    r                 Reconnect the selected account
+    n                 Add account
+    x                 Remove account: signs out on the server, deletes its data
+    Esc               Back to where Settings was opened from
     q, Ctrl+D         Quit
 
   Chat

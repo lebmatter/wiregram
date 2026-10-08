@@ -182,6 +182,12 @@ type Backend interface {
 	ReactionChoices(query string) []EmojiOption
 }
 
+// LogoutBackend is implemented by backends that can end their server session,
+// so a removed account no longer shows among the user's active sessions.
+type LogoutBackend interface {
+	Logout(ctx context.Context) error
+}
+
 // UnreadFetcher is implemented by backends whose API can fetch a chat's
 // unread messages directly, cheaper than a History page.
 type UnreadFetcher interface {

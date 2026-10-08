@@ -390,6 +390,14 @@ func (d *AgentDB) AccountAgents() (map[string]int64, error) {
 	return out, rows.Err()
 }
 
+// UnbindAccount drops the account's binding; its agent stays.
+func (d *AgentDB) UnbindAccount(key string) error {
+	if _, err := d.db.Exec(`DELETE FROM agent_accounts WHERE account_key = ?`, key); err != nil {
+		return fmt.Errorf("unbind account: %w", err)
+	}
+	return nil
+}
+
 // SetAgentAccounts replaces the agent's bindings. A key bound to another agent
 // fails the whole change.
 func (d *AgentDB) SetAgentAccounts(agentID int64, keys []string) error {

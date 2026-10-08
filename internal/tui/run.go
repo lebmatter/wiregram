@@ -17,6 +17,10 @@ type accountsRequested struct{}
 
 func (accountsRequested) Error() string { return "switch accounts" }
 
+type settingsRequested struct{}
+
+func (settingsRequested) Error() string { return "open settings" }
+
 type agentsRequested struct{}
 
 func (agentsRequested) Error() string { return "open agents" }
@@ -129,6 +133,23 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			var sw accountSwitch
 			if errors.As(err, &sw) {
 				active = sw.to
+				continue
+			}
+			if _, ok := err.(settingsRequested); ok {
+				to, err := tuiSettings(ctx, m, active, false)
+				if err != nil {
+					if _, ok := err.(agentsRequested); ok && m.Agents != nil {
+						if active, err = tuiAgentMode(ctx, m); err != nil {
+							return err
+						}
+						continue
+					}
+					return err
+				}
+				if to == nil {
+					return nil
+				}
+				active = to
 				continue
 			}
 			if _, switching := err.(accountsRequested); !switching && !errors.Is(err, context.Canceled) {

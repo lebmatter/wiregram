@@ -23,6 +23,7 @@ const (
 
 type tuiResult struct {
 	accounts bool
+	settings bool
 	agents   bool
 	games    bool
 	switchTo *account.Account
@@ -403,7 +404,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
-		chatListArchiveToggle, chatListSearch, chatListUnread, chatListAccounts, chatListQuit, chatListSwitch,
+		chatListArchiveToggle, chatListSearch, chatListUnread, chatListAccounts, chatListSettings, chatListQuit, chatListSwitch,
 		chatListDeleteDone:
 		return true
 	}
@@ -432,6 +433,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	if k == "alt+a" && idle && m.mgr != nil && m.mgr.Agents != nil {
 		m = m.closeChat()
 		return m.done(tuiResult{agents: true})
+	}
+	// Inside a chat Alt+S saves the attachment.
+	if k == "alt+s" && !paneFocused && m.mgr != nil {
+		m = m.closeChat()
+		return m.done(tuiResult{settings: true})
 	}
 	// Inside a chat Alt+G jumps to the quoted message.
 	if k == "alt+g" && !paneFocused && m.mgr != nil {
@@ -536,6 +542,10 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m.done(tuiResult{accounts: true})
 
+	case chatListSettings:
+		m = m.closeChat()
+		return m.done(tuiResult{settings: true})
+
 	case chatListSwitch:
 		m = m.closeChat()
 		return m.done(tuiResult{switchTo: msg.to})
@@ -591,6 +601,9 @@ func (m tuiModel) footer() string {
 		}
 		if m.mgr != nil && m.mgr.Agents != nil {
 			keys = append(keys, helpKey{"M-a", "agents"})
+		}
+		if m.mgr != nil {
+			keys = append(keys, helpKey{"M-s", "settings"})
 		}
 		keys = append(keys, helpKey{"?", "more"})
 	}
@@ -675,6 +688,8 @@ func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *acc
 		return accountSwitch{to: final.result.switchTo}
 	case final.result.accounts:
 		return accountsRequested{}
+	case final.result.settings:
+		return settingsRequested{}
 	case final.result.agents:
 		return agentsRequested{}
 	case final.result.games:

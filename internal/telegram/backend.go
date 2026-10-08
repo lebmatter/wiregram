@@ -198,6 +198,13 @@ func (tb *TelegramBackend) AccountLabel() string { return "[TG] " + tb.C.Account
 
 func (tb *TelegramBackend) AutoLockEnabled() bool { return tb.C.autoLock }
 
+func (tb *TelegramBackend) Logout(ctx context.Context) error {
+	if _, err := tb.C.Api.AuthLogOut(ctx); err != nil {
+		return fmt.Errorf("log out of Telegram: %w", err)
+	}
+	return nil
+}
+
 func (tb *TelegramBackend) Dialogs(ctx context.Context, archived bool) ([]backend.ChatEntry, int, error) {
 	chats, archiveUnread, err := tb.C.dialogs(ctx, archived)
 	if err != nil {

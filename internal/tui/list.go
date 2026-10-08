@@ -15,8 +15,8 @@ import (
 // chatListModel is the sidebar tree: every account as a header, with the
 // active account expanded to its chats and the others collapsed above and
 // below it. Selection indexes run over the selectable rows in display order:
-// accounts above, chats, archive and search, accounts below, then "Manage
-// accounts…".
+// accounts above, chats, archive and search, accounts below, then
+// "Settings…".
 type chatListModel struct {
 	ctx           context.Context
 	mgr           *account.AccountManager
@@ -41,6 +41,7 @@ type chatListChoice struct{ index int }
 type chatListSwitch struct{ to *account.Account }
 type chatListRefresh struct{}
 type chatListAccounts struct{}
+type chatListSettings struct{}
 type chatListSearch struct{}
 type chatListUnread struct{}
 type chatListArchiveToggle struct{}
@@ -222,7 +223,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 				to := below[idx-len(m.entries)-3]
 				return m, func() tea.Msg { return chatListSwitch{to} }
 			default:
-				return m, func() tea.Msg { return chatListAccounts{} }
+				return m, func() tea.Msg { return chatListSettings{} }
 			}
 		}
 
@@ -316,7 +317,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
 		index++
 	}
-	manage := chatListLine(backend.ChatEntry{Title: "Manage accounts…"}, index == m.selected, focused, width)
+	manage := chatListLine(backend.ChatEntry{Title: "Settings…"}, index == m.selected, focused, width)
 	if index != m.selected {
 		manage = styleDim.Render(manage)
 	}

@@ -82,6 +82,13 @@ These are project constraints, not suggestions:
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label), the active one
   expanded to its chats, archive and search. Enter on another account, or
   Alt+N, switches to it. The agents mode sidebar lists the agents.
+- After the splash comes the account chooser (`internal/tui/account.go`) with the
+  logo; its `Settings…` row, Alt+S from the chat list and the sidebar's last row
+  open Settings (`internal/tui/settings.go`): sections on the left (Accounts for
+  now), the section's rows on the right. Removing an account (`x`) logs out on the server
+  (`backend.LogoutBackend`) when online, then deletes its local data and agent
+  binding; the primary account's directory is the config directory, so only its
+  rows are deleted.
 - Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.

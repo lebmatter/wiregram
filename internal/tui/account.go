@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,10 +19,11 @@ import (
 )
 
 type accountChoice struct {
-	index  int
-	add    bool
-	agents bool
-	quit   bool
+	index    int
+	add      bool
+	agents   bool
+	settings bool
+	quit     bool
 }
 
 type accountListModel struct {
@@ -64,7 +66,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 	}
 }
 
-func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
+func (m accountListModel) maxIndex() int { return len(m.accounts) + 3 }
 
 func (m accountListModel) Init() tea.Cmd {
 	return listenAccounts(m.mgr)
@@ -116,12 +118,16 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mgr.Start(m.ctx, m.accounts[m.selected], nil)
 			}
 		case "enter":
-			if m.selected == len(m.accounts)+2 {
+			if m.selected == len(m.accounts)+3 {
 				m.result = &accountChoice{quit: true}
 				return m, tea.Quit
 			}
-			if m.selected == len(m.accounts)+1 {
+			if m.selected == len(m.accounts)+2 {
 				m.result = &accountChoice{add: true}
+				return m, tea.Quit
+			}
+			if m.selected == len(m.accounts)+1 {
+				m.result = &accountChoice{settings: true}
 				return m, tea.Quit
 			}
 			if m.selected == len(m.accounts) {
@@ -143,7 +149,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // layout returns the logo when it fits above the rows, and how far the rows
 // are moved down to make room for it, or up to keep the selection in view.
 func (m accountListModel) layout() (logo []string, shift int) {
-	rows := len(m.accounts) + 4 // the accounts, a separator and three actions
+	rows := len(m.accounts) + 5 // the accounts, a separator and four actions
 	limit := max(4, m.height-2) - 2
 	logo = strings.Split(renderLogo(m.width-4), "\n")
 	if rows+len(logo)+2 <= limit {
@@ -202,7 +208,7 @@ func (m accountListModel) View() tea.View {
 		rows = append(rows, row)
 	}
 	rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
-	for i, label := range []string{"Chat Agents…", "Add account…", "Quit"} {
+	for i, label := range []string{"Chat Agents…", "Settings…", "Add account…", "Quit"} {
 		index := len(m.accounts) + i
 		if index == m.selected {
 			rows = append(rows, styleSelectedRow.Render(styleAccent.Render("> ")+label))
@@ -257,6 +263,16 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 	}
 	if final.result.agents {
 		return nil, agentsRequested{}
+	}
+	if final.result.settings {
+		to, err := tuiSettings(ctx, mgr, active, true)
+		if _, back := err.(accountsRequested); back {
+			if !slices.Contains(mgr.List(), active) {
+				active = nil // removed in Settings
+			}
+			return tuiChooseAccount(ctx, mgr, active)
+		}
+		return to, err
 	}
 	if final.result.add {
 		return tuiPickAndAdd(ctx, mgr)
