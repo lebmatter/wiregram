@@ -618,7 +618,7 @@ func (mb *MmBackend) aggregateReactions(reactions []mmReaction) []backend.Messag
 	for _, r := range reactions {
 		if _, ok := counts[r.EmojiName]; !ok {
 			order = append(order, r.EmojiName)
-			counts[r.EmojiName] = &backend.MessageReaction{Emoji: r.EmojiName}
+			counts[r.EmojiName] = &backend.MessageReaction{Emoji: reactionLabel(r.EmojiName)}
 		}
 		mr := counts[r.EmojiName]
 		mr.Count++
@@ -631,6 +631,23 @@ func (mb *MmBackend) aggregateReactions(reactions []mmReaction) []backend.Messag
 		result = append(result, *counts[name])
 	}
 	return result
+}
+
+// reactionLabel shows a reaction as its emoji. Custom emoji are server-side
+// images, so they keep their :name:.
+func reactionLabel(name string) string {
+	if emoji, ok := systemEmoji(name); ok {
+		return emoji
+	}
+	return ":" + name + ":"
+}
+
+// reactionName turns a picked emoji into the short name Mattermost stores.
+func reactionName(emoji string) string {
+	if name, ok := systemEmojiName(strings.ReplaceAll(emoji, "\ufe0f", "")); ok {
+		return name
+	}
+	return strings.Trim(emoji, ":")
 }
 
 func (mb *MmBackend) Send(ctx context.Context, ch backend.ChatEntry, text string, replyTo string) (backend.Message, error) {
@@ -792,6 +809,7 @@ func (mb *MmBackend) SetTyping(ctx context.Context, ch backend.ChatEntry) {
 }
 
 func (mb *MmBackend) React(ctx context.Context, ch backend.ChatEntry, msg backend.Message, emoji string) ([]backend.MessageReaction, error) {
+	emoji = reactionName(emoji)
 	var existing []mmReaction
 	if err := mb.apiJSON(ctx, "GET", "/posts/"+msg.ID+"/reactions", nil, &existing); err != nil {
 		return nil, fmt.Errorf("load reactions: %w", err)
