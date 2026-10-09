@@ -261,6 +261,18 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 		if m.sel < len(m.accounts) {
 			m.mgr.Start(m.ctx, m.accounts[m.sel], nil)
 		}
+	case "d":
+		if m.sel < len(m.accounts) {
+			a := m.accounts[m.sel]
+			skip := !digestSkipped(m.mgr, a)
+			m.notice = accountShort(m.mgr, m.mgr.AccountKey(a)) + " shown in the unread digest"
+			if skip {
+				m.notice = accountShort(m.mgr, m.mgr.AccountKey(a)) + " hidden from the unread digest"
+			}
+			if err := setDigestSkipped(m.mgr, a, skip); err != nil {
+				m.notice = textfmt.CleanError(err)
+			}
+		}
 	case "x", "delete":
 		if m.sel < len(m.accounts) {
 			a := m.accounts[m.sel]
@@ -415,6 +427,9 @@ func (m settingsModel) accountLines(width, height int) []string {
 		if a == m.active {
 			status += " · current"
 		}
+		if digestSkipped(m.mgr, a) {
+			status += " · no digest"
+		}
 		lines = append(lines, themedListRow(text, styleSubtle.Render(status), i == m.sel,
 			focused, width, colorAccent))
 	}
@@ -433,7 +448,7 @@ func (m settingsModel) helpKeys() []helpKey {
 		return []helpKey{{"⏎", "change"}, {"tab", "sections"}, back, {"?", "more"}}
 	}
 	return []helpKey{{"↑↓", "select"}, {"⏎", "switch"}, {"r", "reconnect"}, {"n", "add"},
-		{"x", "remove"}, {"tab", "sections"}, back, {"?", "more"}}
+		{"x", "remove"}, {"d", "digest"}, {"tab", "sections"}, back, {"?", "more"}}
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil

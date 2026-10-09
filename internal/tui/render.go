@@ -215,6 +215,16 @@ func cursorRow(view, marker string) (int, bool) {
 	return 0, false
 }
 
+// accountLabel is the account's label without its [TG] prefix, for rows
+// that show the tag themselves.
+func accountLabel(a *account.Account) string {
+	label := textfmt.Plain(a.Label())
+	if _, rest, ok := strings.Cut(label, "] "); ok && strings.HasPrefix(label, "[") {
+		return rest
+	}
+	return label
+}
+
 // accountShort is the account's tag in agent mode, such as TG1: its backend
 // and its Alt+N number.
 func accountShort(mgr *account.AccountManager, key string) string {

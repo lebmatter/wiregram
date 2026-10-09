@@ -20,6 +20,7 @@ const (
 	Identity        = "identity"
 	TelegramSession = "telegram_session"
 	SyncToken       = "sync_token"
+	DigestSkip      = "digest_skip"
 )
 
 const schema = `

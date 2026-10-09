@@ -250,10 +250,7 @@ func (m chatListModel) accountRow(a *account.Account, expanded, selected, focuse
 		arrow = "▾ "
 	}
 	tag := accountShort(m.mgr, m.mgr.AccountKey(a))
-	label := textfmt.Plain(a.Label())
-	if _, rest, ok := strings.Cut(label, "] "); ok && strings.HasPrefix(label, "[") {
-		label = rest // the tag already names the backend
-	}
+	label := accountLabel(a)
 	marker := "  "
 	if selected {
 		marker = "> "

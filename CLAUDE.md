@@ -90,6 +90,10 @@ These are project constraints, not suggestions:
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
   binding; the primary account's directory is the config directory, so only its
   rows are deleted.
+- Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
+  a grid of cards, one per online account, each fetched once when the account comes
+  online, showing its unread total and busiest chats. Settings › Accounts `d` leaves an
+  account out (`store.DigestSkip` in `account_data`). Clicking a card opens the account.
 - Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.

@@ -34,6 +34,7 @@ type accountListModel struct {
 	selected int
 	notice   string
 	result   *accountChoice
+	digest   digestModel
 	width    int
 	height   int
 }
@@ -61,6 +62,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 		accounts: mgr.Accounts,
 		active:   active,
 		selected: selected,
+		digest:   newDigest(ctx, mgr),
 		width:    w,
 		height:   h,
 	}
@@ -69,7 +71,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 func (m accountListModel) maxIndex() int { return len(m.accounts) + 3 }
 
 func (m accountListModel) Init() tea.Cmd {
-	return listenAccounts(m.mgr)
+	return tea.Batch(listenAccounts(m.mgr), func() tea.Msg { return digestSync{} })
 }
 
 func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -82,7 +84,17 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selected > m.maxIndex() {
 			m.selected = m.maxIndex()
 		}
-		return m, listenAccounts(m.mgr)
+		var sync tea.Cmd
+		m.digest, sync = m.digest.sync()
+		return m, tea.Batch(listenAccounts(m.mgr), sync)
+
+	case digestSync:
+		var sync tea.Cmd
+		m.digest, sync = m.digest.sync()
+		return m, sync
+
+	case digestLoaded:
+		m.digest = m.digest.loaded(msg)
 
 	case tea.MouseWheelMsg:
 		if k, ok := wheelKey(msg); ok {
@@ -90,9 +102,20 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseClickMsg:
-		if i, ok := m.itemAt(msg.Y); ok && msg.Button == tea.MouseLeft {
+		if msg.Button != tea.MouseLeft {
+			break
+		}
+		if i, ok := m.itemAt(msg.Y); ok {
 			m.selected = i
 			return m.Update(keyPress(tea.KeyEnter))
+		}
+		_, shift, digest := m.layout()
+		top := 2 + shift + len(m.accounts) + 5 + digestGap // the cards' first screen row
+		if a, ok := m.digest.cardAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < digest {
+			if i := slices.Index(m.accounts, a); i >= 0 {
+				m.selected = i
+				return m.Update(keyPress(tea.KeyEnter))
+			}
 		}
 
 	case tea.KeyPressMsg:
@@ -146,28 +169,43 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// layout returns the logo when it fits above the rows, and how far the rows
-// are moved down to make room for it, or up to keep the selection in view.
-func (m accountListModel) layout() (logo []string, shift int) {
+func (m accountListModel) bodyHeight() int { return max(4, m.height-2) }
+
+// digestGap is the blank line and the divider above the digest's cards.
+const digestGap = 2
+
+// layout returns the logo when it fits above the rows and the digest, and how
+// far the rows are moved down to make room for it, or up to keep the
+// selection in view; digest is the height left for the cards under them.
+func (m accountListModel) layout() (logo []string, shift, digest int) {
 	rows := len(m.accounts) + 5 // the accounts, a separator and four actions
-	limit := max(4, m.height-2) - 2
+	limit := m.bodyHeight() - 2
+	cards := m.digest.height(m.width - 4)
 	logo = strings.Split(renderLogo(m.width-4), "\n")
-	if rows+len(logo)+2 <= limit {
-		return logo, len(logo) + 2
+	section := 0
+	if cards > 0 {
+		section = digestGap + cards
+	}
+	if rows+len(logo)+2+section <= limit {
+		return logo, len(logo) + 2, cards
 	}
 	selRow := m.selected
 	if m.selected >= len(m.accounts) {
 		selRow++
 	}
-	return nil, -max(0, selRow-limit+1)
+	shift = -max(0, selRow-limit+1)
+	if digest = limit - rows - digestGap; shift < 0 || cards == 0 || digest < digestCardH {
+		digest = 0
+	}
+	return nil, shift, digest
 }
 
 // itemAt maps a screen row to an account or action; the separator is none.
 func (m accountListModel) itemAt(y int) (int, bool) {
-	_, shift := m.layout()
+	_, shift, _ := m.layout()
 	r := y - 2 - shift // under the header and the box's top edge
 	switch {
-	case r < 0 || y >= max(4, m.height-2):
+	case r < 0 || y >= m.bodyHeight():
 		return 0, false
 	case r < len(m.accounts):
 		return r, true
@@ -178,7 +216,6 @@ func (m accountListModel) itemAt(y int) (int, bool) {
 }
 
 func (m accountListModel) View() tea.View {
-	bodyHeight := max(4, m.height-2)
 	inner := m.width - 4
 	var rows []string
 	for i, a := range m.accounts {
@@ -216,7 +253,14 @@ func (m accountListModel) View() tea.View {
 			rows = append(rows, styleSubtle.Render("  "+label))
 		}
 	}
-	if logo, shift := m.layout(); shift > 0 {
+	logo, shift, digest := m.layout()
+	if digest > 0 {
+		label := "── Unread "
+		rule := strings.Repeat("─", max(0, inner-textfmt.DisplayWidth(label)))
+		rows = append(rows, "", styleDim.Render(label+rule))
+		rows = append(rows, strings.Split(m.digest.view(inner, digest), "\n")...)
+	}
+	if shift > 0 {
 		var top []string
 		for _, line := range logo {
 			top = append(top, lipgloss.PlaceHorizontal(inner, lipgloss.Center, line))
@@ -231,7 +275,7 @@ func (m accountListModel) View() tea.View {
 		notice = m.accounts[m.selected].Snapshot().Notice
 	}
 	content := renderHeader(m.width) + "\n" +
-		renderBox("Accounts", rows, m.width, bodyHeight, colorAccent) + "\n" +
+		renderBox("Accounts", rows, m.width, m.bodyHeight(), colorAccent) + "\n" +
 		renderFooter(accountListHelp, false, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true

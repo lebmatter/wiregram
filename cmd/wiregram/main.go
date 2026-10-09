@@ -39,6 +39,8 @@ Config and sessions are stored in ~/.config/wiregram/.
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
 Enter on another account, or Alt+1..9, switches to it.
+The account list shows an unread digest below it: one card per connected
+account, with its busiest chats. Settings can leave an account out (d).
 
 The mouse wheel scrolls the list under the pointer. Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
@@ -75,6 +77,7 @@ Keyboard shortcuts:
     r                 Reconnect the selected account
     n                 Add account
     x                 Remove account: signs out on the server, deletes its data
+    d                 Show or hide the account in the unread digest
     Esc               Back to where Settings was opened from
     q, Ctrl+D         Quit
 
