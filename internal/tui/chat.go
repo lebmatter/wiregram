@@ -1396,7 +1396,11 @@ func (m chatViewModel) footerLine() (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return styleAccent.Render("click") + styleSubtle.Render(" to download and open "+filename), true
+	line := styleAccent.Render("click") + styleSubtle.Render(" to download and open "+filename)
+	if !m.caps.MultilineCompose && m.b.MediaPlayable(sel) {
+		line += styleSubtle.Render(" · ") + styleAccent.Render("M-o") + styleSubtle.Render(" plays it")
+	}
+	return line, true
 }
 
 // messageAt maps a row of the chat pane to the message drawn there, using
@@ -1627,8 +1631,11 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if m.caps.Pin {
 		keys = append(keys, helpKey{"M-p", "pin"})
 	}
-	keys = append(keys, helpKey{"del", "delete"}, helpKey{"M-h", "private"},
-		helpKey{"esc", "back"})
+	keys = append(keys, helpKey{"del", "delete"})
+	if m.caps.DeleteChat && m.entry.IsDM {
+		keys = append(keys, helpKey{"M-d", "delete chat"})
+	}
+	keys = append(keys, helpKey{"M-h", "private"}, helpKey{"esc", "back"})
 	return keys
 }
 

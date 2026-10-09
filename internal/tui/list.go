@@ -346,13 +346,11 @@ func (m chatListModel) notice() string {
 		textfmt.Plain(m.confirm.entry.Title), scope)
 }
 
-var chatListHelp = []helpKey{
-	{"↑↓", "select"},
-	{"⏎", "open"},
-	{"/", "search"},
-	{"u", "unread"},
-	{"a", "manage accounts"},
-	{"r", "refresh"},
-	{"M-d", "delete chat"},
-	{"q", "quit"},
+func (m chatListModel) helpKeys() []helpKey {
+	keys := []helpKey{{"↑↓", "select"}, {"⏎", "open"}, {"/", "search"}, {"u", "unread"},
+		{"a", "manage accounts"}, {"r", "refresh"}}
+	if m.caps.DeleteChat {
+		keys = append(keys, helpKey{"M-d", "delete chat"})
+	}
+	return append(keys, helpKey{"q", "quit"})
 }

@@ -566,8 +566,10 @@ func (m tuiModel) footer() string {
 	case m.chatOpen && m.focus == focusChat:
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
+	case m.list.confirm != nil:
+		keys = chatConfirmHelp
 	default:
-		keys = append(keys, chatListHelp...)
+		keys = append(keys, m.list.helpKeys()...)
 		if m.searchOpen {
 			keys = append(keys, helpKey{"tab", "search"}, helpKey{"esc", "close search"})
 		}
