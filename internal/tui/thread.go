@@ -111,7 +111,7 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 	case "enter":
 		text := strings.TrimSpace(m.threadInput.Value())
 		if text == "" {
-			return m, nil
+			return m.openMenu()
 		}
 		m.threadInput.SetValue("")
 		return m, m.sendMessage(chatOutgoing{text: text, replyTo: m.threadRoot})
@@ -124,7 +124,7 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 func (m chatViewModel) threadBox(width, height int, focused bool) string {
 	inner := width - 4
 	composer := m.threadComposer(inner, focused)
-	lines, _ := m.threadLines(inner, height-2-len(composer))
+	lines, _, _ := m.threadLines(inner, height-2-len(composer))
 	body := append(bottomLines(lines, height-2-len(composer)), composer...)
 	return renderBox("Thread", body, width, height, boxBorder(focused))
 }
@@ -134,15 +134,18 @@ func (m chatViewModel) threadComposer(inner int, focused bool) []string {
 }
 
 // threadLines lays out the thread inner columns wide and returns, for each
-// line, the index into threadMessages it belongs to (-1 for none).
-func (m chatViewModel) threadLines(inner, height int) ([]string, []int) {
+// line, the index into threadMessages it belongs to (-1 for none) and
+// whether it draws that message's attachment.
+func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) {
 	thread := threadMessages(m.messages, m.threadRoot)
 	var lines []string
 	var owners []int
+	var media []bool
 	add := func(owner int, more ...string) {
 		lines = append(lines, more...)
 		for range more {
 			owners = append(owners, owner)
+			media = append(media, false)
 		}
 	}
 	if len(thread) == 0 {
@@ -157,44 +160,48 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int) {
 	for i, msg := range thread {
 		// The thread is the chain itself, so replies are drawn without a quote.
 		msg.ReplyToID = ""
-		add(i, messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
+		block, blockMedia := messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
 			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID], inner,
-			imageRows(height))...)
+			imageRows(height))
+		add(i, block...)
+		copy(media[len(media)-len(block):], blockMedia)
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))
 			add(-1, styleDim.Render("──"+label+strings.Repeat("─", max(0, inner-2-len(label)))))
 		}
 	}
-	return lines, owners
+	return lines, owners, media
 }
 
 // threadOwners maps each row inside a thread pane width columns wide, below
-// its top border, to the threadMessages index drawn there (-1 for none).
-func (m chatViewModel) threadOwners(width int) []int {
+// its top border, to the threadMessages index drawn there (-1 for none) and
+// whether the row draws its attachment.
+func (m chatViewModel) threadOwners(width int) ([]int, []bool) {
 	inner := width - 4
 	height := m.height - 2 - len(m.threadComposer(inner, false))
-	_, owners := m.threadLines(inner, height)
-	return screenOwners(owners, height)
+	_, owners, media := m.threadLines(inner, height)
+	return screenRows(owners, height, -1), screenRows(media, height, false)
 }
 
 // threadMessageAt returns the thread message drawn at column x and row y
-// of the chat pane, when the thread pane is there.
-func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, bool) {
+// of the chat pane, when the thread pane is there, and whether the row
+// draws its attachment.
+func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, bool, bool) {
 	if m.subMode != chatSubThread || m.privateMode {
-		return backend.Message{}, false
+		return backend.Message{}, false, false
 	}
 	left, split := m.threadSplit()
 	if !split {
 		left = 0
 	}
 	if x < left {
-		return backend.Message{}, false
+		return backend.Message{}, false, false
 	}
-	owners := m.threadOwners(m.width - left)
+	owners, media := m.threadOwners(m.width - left)
 	row := y - 1
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
-		return backend.Message{}, false
+		return backend.Message{}, false, false
 	}
-	return threadMessages(m.messages, m.threadRoot)[owners[row]], true
+	return threadMessages(m.messages, m.threadRoot)[owners[row]], media[row], true
 }

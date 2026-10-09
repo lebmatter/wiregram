@@ -139,13 +139,15 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 	}
 	width, split := m.threadSplit()
 	if m.subMode == chatSubNone || split {
-		add(m.messages, m.chatOwners(width))
+		owners, _ := m.chatOwners(width)
+		add(m.messages, owners)
 	}
 	if m.subMode == chatSubThread {
 		if !split {
 			width = 0
 		}
-		add(threadMessages(m.messages, m.threadRoot), m.threadOwners(m.width-width))
+		owners, _ := m.threadOwners(m.width - width)
+		add(threadMessages(m.messages, m.threadRoot), owners)
 	}
 	var cmds []tea.Cmd
 	for _, msg := range visible {

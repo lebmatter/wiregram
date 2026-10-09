@@ -99,7 +99,7 @@ func (m chatViewModel) draftBox(width int, border color.Color) []string {
 		lines = strings.Split(m.draft.View(), "\n")
 		lines = append(lines, styleSubtle.Render("draft · type to continue · ^S sends"))
 	default:
-		lines = []string{styleSubtle.Render("Type to write a mail · ⏎ reads the selected one")}
+		lines = []string{styleSubtle.Render("Type to write a mail · ⏎ acts on the selected one")}
 	}
 	lines = append(m.replyBar(), lines...)
 	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
@@ -134,14 +134,8 @@ func (m chatViewModel) handleReaderKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		m.readerTop = 0
 	case "end", "G":
 		m.readerTop = last
-	case "alt+r", "alt+R":
-		m.subMode = chatSubNone
-		sel := m.reading
-		m.replying = &sel
-		return m.startCompose(nil)
-	case "alt+s", "alt+S", "delete", "shift+delete":
-		m.subMode = chatSubNone
-		return m.handleKey(msg)
+	case "enter":
+		return m.openMenuOn(m.reading)
 	}
 	m.readerTop = max(0, min(m.readerTop, last))
 	return m, nil
@@ -191,8 +185,6 @@ var chatComposeHelp = []helpKey{
 var chatReaderHelp = []helpKey{
 	{"↑↓", "scroll"},
 	{"PgUp/PgDn", "page"},
-	{"M-r", "reply"},
-	{"M-s", "save attachment"},
-	{"del", "trash"},
+	{"⏎", "actions"},
 	{"esc", "close"},
 }

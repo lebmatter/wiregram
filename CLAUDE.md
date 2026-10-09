@@ -10,7 +10,8 @@ AGENTS.md, whose durable rules were folded in here.)
 Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. Mouse input
 is the left click and the wheel. The wheel moves the selection of the list under the pointer
 as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter. A click on
-a chat message selects it and opens any attachment with `xdg-open`. The login and connecting
+a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`;
+a click elsewhere on a message opens its actions modal. The login and connecting
 screens leave the mouse to the terminal. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
@@ -115,6 +116,13 @@ These are project constraints, not suggestions:
   reactions (your own count in copper) · reply count · pinned · `✓`/`✓✓`.
   Media `[tags]` are dim and links are underlined. Threads
   (`internal/tui/thread.go`) are built from loaded reply chains only.
+- Messages have no per-message shortcuts. Enter on an empty composer (always,
+  in email chats and the mail reader) or a click opens the actions modal
+  (`internal/tui/msgmenu.go`) for the selected message: when the backend has
+  reactions, a `reaction:` search field (typing in the modal filters) over the
+  matching emoji row, then only the actions the message allows. The root draws
+  it centred over the chat with everything behind it reduced to plain dim
+  text (`fadeUnder`); the footer shows the modal's keys.
 - Private chats show the first name, else username, else `Deleted Account`.
   Groups show the title; channels show `Channel: TITLE`.
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with

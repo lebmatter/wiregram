@@ -1086,18 +1086,7 @@ func (wa *WaBackend) RememberEmoji(value string) {
 func (wa *WaBackend) EmojiChoices(query string) []backend.EmojiOption {
 	catalog := backend.EmojiCatalog()
 	if query == "" {
-		recent := wa.recentEmoji
-		if len(recent) == 0 {
-			if len(catalog) > 10 {
-				catalog = catalog[:10]
-			}
-			return catalog
-		}
-		var choices []backend.EmojiOption
-		for _, v := range recent {
-			choices = append(choices, backend.EmojiOption{Value: v, Name: v})
-		}
-		return choices
+		return backend.RecentFirst(catalog, wa.recentEmoji)
 	}
 	q := strings.ToLower(query)
 	var matches []backend.EmojiOption

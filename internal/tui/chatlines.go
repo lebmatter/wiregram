@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
@@ -98,11 +99,12 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 
 // Generic selected lines rendering.
 // genericSelectedLines also returns, for each line, the index of the message
-// it belongs to (-1 for none) so mouse clicks can find their message.
+// it belongs to (-1 for none) and whether it draws that message's attachment,
+// so mouse clicks can find what they hit.
 // Day and unread dividers sit above the message they introduce; firstUnread
 // is the ID of the oldest message unread when the chat opened ("" for none)
 // and unread holds the IDs of all of them, drawn in bold.
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int) {
+func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int, []bool) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -120,28 +122,30 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 			replies[messages[i].ReplyToID]++
 		}
 	}
-	messageLines := func(i int) []string {
+	messageLines := func(i int) ([]string, []bool) {
 		msg := messages[i]
 		return messageBlock(b, msg, entry, byID[msg.ReplyToID], replies[msg.ID],
 			changed[msg.ID], unread[msg.ID], images[msg.ID],
 			lineWidth, imageRows(height))
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
-		lines, owners := []string{}, []int{}
+		lines, owners, media := []string{}, []int{}, []bool{}
 		if replying != nil {
 			lines = append(lines, textfmt.ClipLine("replying to "+backend.GenericReplySummary(*replying, entry), lineWidth))
 			owners = append(owners, -1)
+			media = append(media, false)
 		}
-		return lines, owners
+		return lines, owners, media
 	}
 	now := time.Now()
 	dividers := make(map[int]int) // divider lines at the top of each block
 	blocks := make(map[int][]string)
+	blockMedia := make(map[int][]bool)
 	block := func(i int) []string {
 		if lines := blocks[i]; lines != nil {
 			return lines
 		}
-		lines := messageLines(i)
+		lines, media := messageLines(i)
 		if i == selected {
 			for j := range lines {
 				lines[j] = shadeLine(lines[j], lineWidth)
@@ -158,6 +162,7 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		dividers[i] = len(top)
 		lines = append(top, lines...)
 		blocks[i] = lines
+		blockMedia[i] = append(make([]bool, len(top)), media...)
 		return lines
 	}
 	selectedBlock := block(selected)
@@ -183,12 +188,14 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 	}
 	lines := make([]string, 0, used+1)
 	owners := make([]int, 0, used+1)
+	media := make([]bool, 0, used+1)
 	for i := start; i < end; i++ {
 		visible := block(i)
 		if i == selected && len(visible) > available {
 			visible = selectedBlock
 		}
 		lines = append(lines, visible...)
+		media = append(media, blockMedia[i][:len(visible)]...)
 		for j := range visible {
 			if j < dividers[i] {
 				owners = append(owners, -1)
@@ -200,12 +207,14 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 	if replying != nil {
 		lines = append(lines, textfmt.ClipLine("replying to "+backend.GenericReplySummary(*replying, entry), lineWidth))
 		owners = append(owners, -1)
+		media = append(media, false)
 	}
 	if typing {
 		lines = append(lines, textfmt.ClipLine(textfmt.Plain(entry.Title)+" is typing...", lineWidth))
 		owners = append(owners, -1)
+		media = append(media, false)
 	}
-	return lines, owners
+	return lines, owners, media
 }
 
 // dividerLine centres label in a rule across the chat, like ── yesterday ──.
@@ -248,10 +257,11 @@ func dayLabel(t, now time.Time) string {
 // messageBlock lays out one message in the shared block format: a fixed
 // gutter and header, the text at textIndent, any image or preview card, and
 // a meta row. Nothing in it depends on selection, so columns never move.
-// An unread message has its header and text in bold.
+// An unread message has its header and text in bold. Alongside the lines it
+// marks those that draw the attachment: its image card or its [tag] row.
 func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
 	quoted *backend.Message, replies int, edited, unread bool, img *chatImage,
-	lineWidth, maxImageRows int) []string {
+	lineWidth, maxImageRows int) ([]string, []bool) {
 	gutter := "  "
 	if edited {
 		gutter = "* "
@@ -276,12 +286,31 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 			lines[i] = boldLine(lines[i])
 		}
 	}
+	media := make([]bool, len(lines), len(lines)+len(below))
+	if tag := mediaTag(msg.MediaLabel); tag != "" {
+		for i, line := range lines {
+			media[i] = strings.Contains(ansi.Strip(line), tag)
+		}
+	}
 	lines = append(lines, below...)
+	for range below {
+		media = append(media, true)
+	}
 	lines = append(lines, previewCard(msg.Preview, indent, lineWidth)...)
 	if meta := metaRow(b, msg, entry, replies); meta != "" {
 		lines = append(lines, textfmt.ClipLine(strings.Repeat(" ", indent)+meta, lineWidth))
 	}
-	return lines
+	return lines, append(media, make([]bool, len(lines)-len(media))...)
+}
+
+// mediaTag is the first bracket tag of a media label, like "[photo]".
+func mediaTag(label string) string {
+	start := strings.Index(label, "[")
+	end := strings.Index(label, "]")
+	if start < 0 || end < start {
+		return ""
+	}
+	return label[start : end+1]
 }
 
 // mailPreviewLines caps a mail's text in the chat; Enter opens the reader
@@ -307,7 +336,7 @@ func paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Me
 	if msg.Subject != "" && len(text) > mailPreviewLines {
 		more := len(text) - mailPreviewLines + 1
 		text = append(text[:mailPreviewLines-1], pad+styleSubtle.Render(
-			fmt.Sprintf("… %d more %s (⏎ reads all)", more, plural(more, "line", "lines"))))
+			fmt.Sprintf("… %d more %s (⏎ to read)", more, plural(more, "line", "lines"))))
 	}
 	if msg.ReplyToID != "" {
 		quote := textfmt.ClipLine(prefix+renderQuote(quoted, entry), lineWidth)

@@ -332,7 +332,7 @@ func (m tuiModel) overList(x int) bool {
 }
 
 // handleClick makes a left click on a row act like selecting it and pressing
-// Enter; a click on a message selects it and opens its media.
+// Enter; a click on a message opens its attachment or its actions.
 func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft || mouse.Y >= m.bodyHeight() {
 		return m, nil
@@ -341,6 +341,12 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
 	}
 	var cmd tea.Cmd
+	if m.menuShown() {
+		x, y, w, h := m.menuRect()
+		inside := mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h
+		m.chat, cmd = m.chat.menuClick(mouse.X-x, mouse.Y-y, inside)
+		return m, cmd
+	}
 	if m.overList(mouse.X) {
 		if m.loadErr != nil || m.list.confirm != nil {
 			return m, nil
@@ -388,6 +394,8 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	switch {
+	case m.menuShown():
+		m.chat, cmd = m.chat.Update(k)
 	case m.overList(mouse.X):
 		if m.loadErr == nil && m.list.confirm == nil {
 			m.list, cmd = m.list.Update(k)
@@ -398,7 +406,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		m.search, cmd = m.search.Update(k)
 	case m.chatOpen:
 		switch m.chat.subMode {
-		case chatSubNone, chatSubThread, chatSubEmoji, chatSubSearch, chatSubUpload, chatSubReader:
+		case chatSubNone, chatSubThread, chatSubMenu, chatSubSearch, chatSubUpload, chatSubReader:
 			// Other submodes are prompts that any key would answer.
 			m.chat, cmd = m.chat.Update(k)
 		}
@@ -634,7 +642,26 @@ func (m tuiModel) render() string {
 		body = renderBox(m.list.title(), m.list.body(m.width-4, bodyHeight-2, true),
 			m.width, bodyHeight, colorAccent)
 	}
+	if m.menuShown() {
+		x, y, _, _ := m.menuRect()
+		body = fadeUnder(body, m.chat.menu.View(m.chat.width), x, y)
+	}
 	return body + "\n" + m.footer()
+}
+
+// menuShown reports whether the open chat's message actions modal is up.
+func (m tuiModel) menuShown() bool {
+	return m.chatOpen && !m.searchOpen && !m.unreadOpen && m.chat.menuOpen()
+}
+
+// menuRect is where the message actions modal sits: centred over the chat.
+func (m tuiModel) menuRect() (x, y, w, h int) {
+	left := 0
+	if m.twoPane() {
+		left = sidebarWidth
+	}
+	w, h = m.chat.menu.size(m.chat.width)
+	return left + (m.chat.width-w)/2, max(0, (m.bodyHeight()-h)/2), w, h
 }
 
 func (m tuiModel) emptyPane(width, height int) string {

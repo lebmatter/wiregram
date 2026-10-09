@@ -27,7 +27,7 @@ type chatSubMode int
 
 const (
 	chatSubNone chatSubMode = iota
-	chatSubEmoji
+	chatSubMenu
 	chatSubSearch
 	chatSubEdit
 	chatSubUpload
@@ -74,7 +74,7 @@ type chatViewModel struct {
 	subMode chatSubMode
 	notice  string
 
-	emoji emojiPickerModel
+	menu msgMenuModel
 
 	searchInput    textinput.Model
 	searchQuery    string
@@ -606,12 +606,6 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 			m.notice = "opened " + msg.filename
 		}
 
-	case emojiPicked:
-		return m.handleEmojiPicked(msg)
-
-	case emojiCancelled:
-		m.subMode = chatSubNone
-
 	case tea.KeyPressMsg:
 		cm, cmd := m.handleKey(msg)
 		return cm.clearSelectedChanged(), cmd
@@ -762,8 +756,8 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	m.notice = ""
 
 	switch m.subMode {
-	case chatSubEmoji:
-		return m.handleEmojiKey(msg)
+	case chatSubMenu:
+		return m.handleMenuKey(msg)
 	case chatSubSearch:
 		return m.handleSearchKey(msg)
 	case chatSubEdit:
@@ -814,12 +808,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		}
 		return m.followThread()
 	case "enter":
-		if m.caps.MultilineCompose {
-			return m.openReader()
-		}
 		text := strings.TrimSpace(m.input.Value())
-		if text == "" {
-			return m, nil
+		if m.caps.MultilineCompose || text == "" {
+			return m.openMenu()
 		}
 		replyTo := ""
 		if m.replying != nil {
@@ -848,97 +839,6 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			return m, nil
 		}
 		return m.startUpload()
-	case "alt+g", "alt+G":
-		sel, ok := m.selectedMsg()
-		if !ok || sel.ReplyToID == "" {
-			return m, nil
-		}
-		for i, msg := range m.messages {
-			if msg.ID == sel.ReplyToID {
-				m.selected = i
-				return m.followThread()
-			}
-		}
-		m.notice = "the quoted message is not loaded; scroll up to load older messages"
-	case "alt+t", "alt+T":
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		return m.openThread(sel)
-	case "alt+m", "alt+M":
-		sel, ok := m.selectedMsg()
-		reactionMode := m.caps.Reactions && ok
-		if reactionMode {
-			m.emoji = newEmojiPicker(m.b, true, &sel)
-		} else {
-			m.emoji = newEmojiPicker(m.b, false, nil)
-		}
-		m.subMode = chatSubEmoji
-	case "alt+r", "alt+R":
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		if m.replying != nil && m.replying.ID == sel.ID {
-			m.replying = nil
-		} else {
-			m.replying = &sel
-			if m.caps.MultilineCompose {
-				return m.startCompose(nil)
-			}
-		}
-	case "alt+e", "alt+E":
-		if !m.caps.Edit {
-			return m, nil
-		}
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		if err := m.b.Editable(sel); err != nil {
-			m.notice = err.Error()
-			return m, nil
-		}
-		m.subMode = chatSubEdit
-		m.editing = &sel
-		m.editInput = textinput.New()
-		m.editInput.SetValue(sel.Text)
-		m.editInput.Focus()
-		return m, m.editInput.Focus()
-	case "alt+f", "alt+F":
-		if !m.caps.Forward {
-			return m, nil
-		}
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		req := forwardRequest{from: m.entry, msgID: sel.ID}
-		return m, func() tea.Msg { return chatForwardReq{req} }
-	case "alt+s", "alt+S":
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		filename, saveable := m.b.MediaSaveable(sel)
-		if !saveable {
-			m.notice = "this message has no downloadable attachment"
-			return m, nil
-		}
-		m.notice = fmt.Sprintf("saving %s to ~/Downloads", filename)
-		return m, m.doSave(sel, filename)
-	case "alt+p", "alt+P":
-		if !m.caps.Pin {
-			return m, nil
-		}
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		idx := m.selected
-		unpin := sel.Pinned
-		return m, m.doPin(sel, idx, unpin)
 	case "alt+d", "alt+D":
 		if !m.caps.DeleteChat || !m.entry.IsDM {
 			return m, nil
@@ -957,52 +857,11 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		m.subMode = chatSubConfirmChatDelete
 		m.confirmRevoke = true
 		m.notice = fmt.Sprintf("Delete chat with %s for both sides? y to confirm; any other key cancels.", textfmt.Plain(m.entry.Title))
-	case "delete":
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		_ = sel
-		revoke := true
-		if m.caps.DeleteForMe {
-			revoke = false
-		}
-		m.subMode = chatSubConfirmMsgDelete
-		m.confirmRevoke = revoke
-		scope := "only for you"
-		if revoke {
-			scope = "for both sides"
-		}
-		m.notice = fmt.Sprintf("Delete this message %s? y to confirm; any other key cancels.", scope)
-	case "shift+delete":
-		sel, ok := m.selectedMsg()
-		if !ok {
-			return m, nil
-		}
-		_ = sel
-		m.subMode = chatSubConfirmMsgDelete
-		m.confirmRevoke = true
-		m.notice = "Delete this message for both sides? y to confirm; any other key cancels."
 	case "alt+h", "alt+H":
 		m.privateMode = !m.privateMode
 		if m.privateMode {
 			m.selected = len(m.messages) - 1
 		}
-	case "alt+o", "alt+O":
-		if m.caps.MultilineCompose {
-			return m, nil
-		}
-		sel, ok := m.selectedMsg()
-		if !ok || !m.b.MediaPlayable(sel) {
-			return m, nil
-		}
-		player, err := exec.LookPath("mpv")
-		if err != nil {
-			m.notice = "install mpv with Kitty video output to open media"
-			return m, nil
-		}
-		m.notice = "downloading…"
-		return m, m.openMediaCmd(sel, player)
 	default:
 		if m.caps.MultilineCompose {
 			if msg.Text == "" {
@@ -1021,28 +880,168 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m chatViewModel) handleEmojiKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	var cmd tea.Cmd
-	m.emoji, cmd = m.emoji.Update(msg)
-	return m, cmd
+// openMenu opens the actions modal on the selected message.
+func (m chatViewModel) openMenu() (chatViewModel, tea.Cmd) {
+	sel, ok := m.selectedMsg()
+	if !ok {
+		return m, nil
+	}
+	return m.openMenuOn(sel)
 }
 
-func (m chatViewModel) handleEmojiPicked(msg emojiPicked) (chatViewModel, tea.Cmd) {
-	m.subMode = chatSubNone
-	if msg.reactionMode && msg.target != nil {
-		target := *msg.target
-		emoticon := msg.value
-		return m, m.doReact(target, emoticon)
+func (m chatViewModel) openMenuOn(sel backend.Message) (chatViewModel, tea.Cmd) {
+	m.menu = newMsgMenu(m.b, m.caps, sel, m.subMode)
+	m.subMode = chatSubMenu
+	if !m.menu.reactions {
+		return m, nil
 	}
-	if msg.value != "" {
-		m.b.RememberEmoji(msg.value)
-		if m.caps.MultilineCompose {
-			m.draft.InsertString(msg.value)
-			return m.startCompose(nil)
+	return m, m.menu.search.Focus()
+}
+
+func (m chatViewModel) menuOpen() bool { return m.subMode == chatSubMenu }
+
+func (m chatViewModel) handleMenuKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
+	var cmd tea.Cmd
+	var choice *msgMenuChoice
+	var done bool
+	m.menu, cmd, choice, done = m.menu.key(msg)
+	m, act := m.menuDone(choice, done)
+	return m, tea.Batch(cmd, act)
+}
+
+// menuClick acts on a click at column x and row y of the open modal, counted
+// from its top-left corner; a click outside it closes the modal.
+func (m chatViewModel) menuClick(x, y int, inside bool) (chatViewModel, tea.Cmd) {
+	m = m.resetLock()
+	if !inside {
+		return m.menuDone(nil, true)
+	}
+	menu, ok := m.menu.hit(x, y, m.width)
+	if !ok {
+		return m, nil
+	}
+	m.menu = menu
+	return m.menuDone(m.menu.choice(), true)
+}
+
+func (m chatViewModel) menuDone(choice *msgMenuChoice, done bool) (chatViewModel, tea.Cmd) {
+	if !done {
+		return m, nil
+	}
+	m.subMode = m.menu.prev
+	if choice == nil {
+		return m, nil
+	}
+	return m.runMenuAction(*choice)
+}
+
+// runMenuAction does what the modal chose to its message, which becomes the
+// chat's selection first.
+func (m chatViewModel) runMenuAction(c msgMenuChoice) (chatViewModel, tea.Cmd) {
+	sel := m.menu.target
+	idx := -1
+	for i, msg := range m.messages {
+		if msg.ID == sel.ID {
+			m.selected, idx = i, i
+			break
 		}
-		m.input.SetValue(m.input.Value() + msg.value)
+	}
+	switch c.kind {
+	case actReact:
+		return m, m.doReact(sel, c.emoji)
+	case actRead:
+		return m.openReader()
+	case actReply:
+		return m.startReply(sel)
+	case actThread:
+		return m.openThread(sel)
+	case actQuote:
+		return m.goToQuote(sel)
+	case actEdit:
+		return m.startEdit(sel)
+	case actForward:
+		req := forwardRequest{from: m.entry, msgID: sel.ID}
+		return m, func() tea.Msg { return chatForwardReq{req} }
+	case actOpen:
+		return m.openAttachment(sel)
+	case actPlay:
+		return m.playMedia(sel)
+	case actSave:
+		return m.saveMedia(sel)
+	case actPin:
+		return m, m.doPin(sel, idx, sel.Pinned)
+	case actDeleteForMe, actDeleteForAll:
+		return m.askDelete(c.kind == actDeleteForAll), nil
 	}
 	return m, nil
+}
+
+func (m chatViewModel) goToQuote(sel backend.Message) (chatViewModel, tea.Cmd) {
+	for i, msg := range m.messages {
+		if msg.ID == sel.ReplyToID {
+			m.selected = i
+			return m.followThread()
+		}
+	}
+	m.notice = "the quoted message is not loaded; scroll up to load older messages"
+	return m, nil
+}
+
+func (m chatViewModel) startReply(sel backend.Message) (chatViewModel, tea.Cmd) {
+	if m.replying != nil && m.replying.ID == sel.ID {
+		m.replying = nil
+		return m, nil
+	}
+	m.replying = &sel
+	if m.caps.MultilineCompose {
+		return m.startCompose(nil)
+	}
+	return m, nil
+}
+
+func (m chatViewModel) startEdit(sel backend.Message) (chatViewModel, tea.Cmd) {
+	if err := m.b.Editable(sel); err != nil {
+		m.notice = err.Error()
+		return m, nil
+	}
+	m.subMode = chatSubEdit
+	m.editing = &sel
+	m.editInput = textinput.New()
+	m.editInput.SetValue(sel.Text)
+	return m, m.editInput.Focus()
+}
+
+func (m chatViewModel) saveMedia(sel backend.Message) (chatViewModel, tea.Cmd) {
+	filename, ok := m.b.MediaSaveable(sel)
+	if !ok {
+		m.notice = "this message has no downloadable attachment"
+		return m, nil
+	}
+	m.notice = fmt.Sprintf("saving %s to ~/Downloads", filename)
+	return m, m.doSave(sel, filename)
+}
+
+func (m chatViewModel) playMedia(sel backend.Message) (chatViewModel, tea.Cmd) {
+	player, err := exec.LookPath("mpv")
+	if err != nil {
+		m.notice = "install mpv with Kitty video output to open media"
+		return m, nil
+	}
+	m.notice = "downloading…"
+	return m, m.openMediaCmd(sel, player)
+}
+
+// askDelete asks before deleting the selected message, for both sides when
+// revoke is set.
+func (m chatViewModel) askDelete(revoke bool) chatViewModel {
+	m.subMode = chatSubConfirmMsgDelete
+	m.confirmRevoke = revoke
+	scope := "only for you"
+	if revoke {
+		scope = "for both sides"
+	}
+	m.notice = fmt.Sprintf("Delete this message %s? y to confirm; any other key cancels.", scope)
+	return m
 }
 
 func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
@@ -1102,6 +1101,8 @@ func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	switch m.subMode {
 	case chatSubNone:
 		m.input, cmd = m.input.Update(msg)
+	case chatSubMenu:
+		m.menu, cmd, _, _ = m.menu.edited(msg)
 	case chatSubSearch:
 		return m.searchEdited(msg)
 	case chatSubEdit:
@@ -1261,20 +1262,21 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 	}
 }
 
-// handleClick selects the clicked message and, when it carries media, opens
-// it in the desktop's default application.
+// handleClick opens the clicked attachment in the desktop's default
+// application, or selects the clicked message and opens its actions.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	m = m.resetLock()
 	switch m.subMode {
-	case chatSubEmoji, chatSubSearch, chatSubUpload:
+	case chatSubSearch, chatSubUpload:
 		return m.pickerClick(msg.y - 1)
-	case chatSubReader:
+	case chatSubReader, chatSubMenu, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return m, nil
 	}
 	var follow tea.Cmd
-	sel, ok := m.threadMessageAt(msg.x, msg.y)
+	sel, media, ok := m.threadMessageAt(msg.x, msg.y)
 	if !ok {
-		i, ok := m.messageAt(msg.x, msg.y)
+		var i int
+		i, media, ok = m.messageAt(msg.x, msg.y)
 		if !ok {
 			return m, nil
 		}
@@ -1282,36 +1284,37 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		sel = m.messages[i]
 		m, follow = m.followThread()
 	}
-	filename, ok := m.b.MediaSaveable(sel)
-	if !ok && m.caps.MultilineCompose {
-		return m.openReader()
+	if _, saveable := m.b.MediaSaveable(sel); media && saveable {
+		var cmd tea.Cmd
+		m, cmd = m.openAttachment(sel)
+		return m, tea.Batch(follow, cmd)
 	}
+	m, cmd := m.openMenuOn(sel)
+	return m, tea.Batch(follow, cmd)
+}
+
+// openAttachment downloads sel's attachment and opens it in the desktop's
+// default application.
+func (m chatViewModel) openAttachment(sel backend.Message) (chatViewModel, tea.Cmd) {
+	filename, ok := m.b.MediaSaveable(sel)
 	if !ok || m.opening != nil {
-		return m, follow
+		return m, nil
 	}
 	dir, err := mediaDir(m.b, m.entry, sel)
 	if err != nil {
 		m.notice = textfmt.CleanError(err)
-		return m, follow
+		return m, nil
 	}
 	m.notice = ""
 	m.opening = &mediaDownload{filename: filename, part: dir + ".part"}
-	return m, tea.Batch(follow, m.openExternalCmd(sel, dir, filename), mediaProgressCmd(),
-		m.spin.Tick)
+	return m, tea.Batch(m.openExternalCmd(sel, dir, filename), mediaProgressCmd(), m.spin.Tick)
 }
 
-// pickerClick acts on a click at body row r of the emoji picker, the search
-// results or the upload panel as if the row had been chosen with the keys.
+// pickerClick acts on a click at body row r of the search results or the
+// upload panel as if the row had been chosen with the keys.
 func (m chatViewModel) pickerClick(r int) (chatViewModel, tea.Cmd) {
 	inner, bodyHeight := m.width-4, m.height-2
 	switch m.subMode {
-	case chatSubEmoji:
-		i, ok := m.emoji.choiceAt(r, m.height)
-		if !ok {
-			return m, nil
-		}
-		m.emoji.selected = i
-		return m.handleEmojiKey(keyPress(tea.KeyEnter))
 	case chatSubSearch:
 		height := bodyHeight - len(composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote))
 		lines := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
@@ -1396,54 +1399,55 @@ func (m chatViewModel) footerLine() (string, bool) {
 	if !ok {
 		return "", false
 	}
-	line := styleAccent.Render("click") + styleSubtle.Render(" to download and open "+filename)
-	if !m.caps.MultilineCompose && m.b.MediaPlayable(sel) {
-		line += styleSubtle.Render(" · ") + styleAccent.Render("M-o") + styleSubtle.Render(" plays it")
-	}
+	line := styleAccent.Render("click") + styleSubtle.Render(" the attachment to open "+filename) +
+		styleSubtle.Render(" · ") + styleAccent.Render("⏎") + styleSubtle.Render(" actions")
 	return line, true
 }
 
-// messageAt maps a row of the chat pane to the message drawn there, using
-// the same layout as chatBox and messageLines.
-func (m chatViewModel) messageAt(x, y int) (int, bool) {
+// messageAt maps a row of the chat pane to the message drawn there, and
+// whether the row draws its attachment, using the same layout as chatBox and
+// messageLines.
+func (m chatViewModel) messageAt(x, y int) (int, bool, bool) {
 	width, split := m.threadSplit()
 	if (m.subMode != chatSubNone && !split) || m.privateMode || m.messages == nil {
-		return 0, false
+		return 0, false, false
 	}
 	if x >= width {
-		return 0, false
+		return 0, false, false
 	}
-	owners := m.chatOwners(width)
+	owners, media := m.chatOwners(width)
 	row := y - 1
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
-		return 0, false
+		return 0, false, false
 	}
-	return owners[row], true
+	return owners[row], media[row], true
 }
 
 // chatOwners maps each message row of a chat box width columns wide, below
-// its top border, to the message drawn there (-1 for none).
-func (m chatViewModel) chatOwners(width int) []int {
+// its top border, to the message drawn there (-1 for none) and whether the
+// row draws its attachment.
+func (m chatViewModel) chatOwners(width int) ([]int, []bool) {
 	_, split := m.threadSplit()
 	// The chat beside an open thread draws its composer unfocused.
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
-	_, owners := genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages,
-		m.images, nil, false, m.firstUnread, m.unread, inner, height)
-	return screenOwners(owners, height)
+	_, owners, media := genericSelectedLines(m.b, m.messages, m.entry, m.selected,
+		m.changedMessages, m.images, nil, false, m.firstUnread, m.unread, inner, height)
+	return screenRows(owners, height, -1), screenRows(media, height, false)
 }
 
-// screenOwners pads or trims line owners the way bottomLines does the lines.
-func screenOwners(owners []int, height int) []int {
+// screenRows pads with blank or trims per-line values the way bottomLines
+// does the lines.
+func screenRows[T any](rows []T, height int, blank T) []T {
 	height = max(0, height)
-	if len(owners) > height {
-		return owners[len(owners)-height:]
+	if len(rows) > height {
+		return rows[len(rows)-height:]
 	}
-	pad := make([]int, height-len(owners), height)
+	pad := make([]T, height-len(rows), height)
 	for i := range pad {
-		pad[i] = -1
+		pad[i] = blank
 	}
-	return append(pad, owners...)
+	return append(pad, rows...)
 }
 
 // openExternalCmd downloads the attachment into the media cache unless an
@@ -1499,8 +1503,6 @@ func (m chatViewModel) chatBox(width, height int, focused bool) string {
 	switch {
 	case m.messages == nil:
 		body = centerLines(inner, bodyHeight, m.spin.View()+"loading messages…")
-	case m.subMode == chatSubEmoji:
-		body = strings.Split(m.emoji.View(inner, bodyHeight+2), "\n")
 	case m.subMode == chatSubSearch:
 		composer := composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote)
 		results := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
@@ -1523,9 +1525,9 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, false, "", nil, width, height)
+		lines, _, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, false, "", nil, width, height)
 	} else {
-		lines, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, nil, false, m.firstUnread, m.unread, width, height)
+		lines, _, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, nil, false, m.firstUnread, m.unread, width, height)
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, styleSubtle.Render("No messages yet. Say hi!"))
@@ -1597,8 +1599,11 @@ func (m chatViewModel) helpKeys() []helpKey {
 		return chatThreadHelp
 	case chatSubSearch:
 		return chatSearchHelp
-	case chatSubEmoji:
-		return emojiHelp
+	case chatSubMenu:
+		if !m.menu.reactions {
+			return []helpKey{msgMenuHelp[0], msgMenuHelp[3], msgMenuHelp[4]}
+		}
+		return msgMenuHelp
 	case chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return chatConfirmHelp
 	case chatSubCompose:
@@ -1609,29 +1614,16 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if m.caps.MultilineCompose {
 		return m.mailHelp()
 	}
-	keys := []helpKey{{"↑↓", "messages"}, {"⏎", "send"}}
+	keys := []helpKey{{"↑↓", "messages"}, {"⏎", "send · actions"}}
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})
 	}
-	keys = append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"}, helpKey{"M-o", "media"})
 	if m.caps.Upload {
 		keys = append(keys, helpKey{"^U", "upload"})
 	}
 	if m.caps.Search {
 		keys = append(keys, helpKey{"^F", "search"})
 	}
-	keys = append(keys, helpKey{"M-m", "emoji"}, helpKey{"M-g", "go to quote"})
-	if m.caps.Edit {
-		keys = append(keys, helpKey{"M-e", "edit"})
-	}
-	if m.caps.Forward {
-		keys = append(keys, helpKey{"M-f", "forward"})
-	}
-	keys = append(keys, helpKey{"M-s", "save"})
-	if m.caps.Pin {
-		keys = append(keys, helpKey{"M-p", "pin"})
-	}
-	keys = append(keys, helpKey{"del", "delete"})
 	if m.caps.DeleteChat && m.entry.IsDM {
 		keys = append(keys, helpKey{"M-d", "delete chat"})
 	}
@@ -1639,16 +1631,13 @@ func (m chatViewModel) helpKeys() []helpKey {
 	return keys
 }
 
-// mailHelp is the chat help of an email account, which has no media player,
-// edits or pins.
+// mailHelp is the chat help of an email account.
 func (m chatViewModel) mailHelp() []helpKey {
-	keys := []helpKey{{"↑↓", "mails"}, {"⏎", "read"}, {"type", "write"}}
+	keys := []helpKey{{"↑↓", "mails"}, {"⏎", "actions"}, {"type", "write"}}
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})
 	}
-	return append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"},
-		helpKey{"^F", "search"}, helpKey{"M-g", "go to quote"}, helpKey{"M-s", "save"},
-		helpKey{"del", "trash"}, helpKey{"esc", "back"})
+	return append(keys, helpKey{"^F", "search"}, helpKey{"esc", "back"})
 }
 
 func (m chatViewModel) cleanup() {

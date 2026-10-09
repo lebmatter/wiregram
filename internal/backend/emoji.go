@@ -58,3 +58,22 @@ func ReactionCatalog() []EmojiOption {
 		{"😇", "angel innocent"}, {"😡", "angry"},
 	}
 }
+
+// RecentFirst is the catalog with the recent emoji moved to the front, so an
+// empty search always fills a row.
+func RecentFirst(catalog []EmojiOption, recent []string) []EmojiOption {
+	choices := make([]EmojiOption, 0, len(catalog)+len(recent))
+	seen := make(map[string]bool, len(recent))
+	for _, v := range recent {
+		if !seen[v] {
+			choices = append(choices, EmojiOption{Value: v, Name: v})
+			seen[v] = true
+		}
+	}
+	for _, e := range catalog {
+		if !seen[e.Value] {
+			choices = append(choices, e)
+		}
+	}
+	return choices
+}

@@ -44,9 +44,9 @@ account, with its busiest chats. Settings can leave an account out.
 
 The mouse wheel scrolls the list under the pointer. Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
-message with an attachment downloads it to a private temp directory and
-opens it with xdg-open (open on macOS). Hold Shift while dragging to select
-text with the terminal.
+message opens its actions; clicking its attachment (the image or the [tag]
+row) downloads it and opens it with xdg-open (open on macOS). Hold Shift
+while dragging to select text with the terminal.
 
 Keyboard shortcuts:
 
@@ -99,35 +99,21 @@ Keyboard shortcuts:
 
   Chat
     Up/Down           Select message (Up at the top loads older ones)
-    Enter             Send text
-    Alt+O             Open selected media in mpv
+    Enter             Send text; with an empty input, open the selected
+                      message's actions
     Ctrl+U            Upload file (browse, or / to type a path)
     Ctrl+F            Search messages (Up/Down, Enter jumps, Esc cancels)
-    Alt+R             Reply (toggle)
-    Alt+G             Jump to the quoted message
-    Alt+T             Open the selected message's thread
-    Alt+E             Edit outgoing message (Enter saves, Esc cancels)
-    Alt+M             React with emoji
-    Alt+F             Forward message
-    Alt+S             Save attachment to ~/Downloads
-    Alt+P             Pin/unpin message
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
-    Delete            Delete message (you only where the network allows,
-                      otherwise both sides; the prompt says which)
-    Shift+Delete      Delete message (both sides)
     Esc               Cancel the reply, else back to chat list
     Ctrl+C            Close chat
     Any key           Unlock after the inactivity lock
 
   Email chat
     Up/Down           Select mail
-    Enter             Read the whole mail
+    Enter             Open the selected mail's actions (Read first)
     Type              Write: Enter adds a line, Ctrl+S sends, Esc keeps the draft
-    Alt+R             Reply to the selected mail
-    Alt+S             Save attachment to ~/Downloads
-    Delete            Move the mail to Trash
                       A new mail's first line is its subject; a first line
                       "Subject: ..." starts a new conversation instead of a reply
 
@@ -135,14 +121,13 @@ Keyboard shortcuts:
     Up/k, Down/j      Scroll
     PgUp/b, PgDn/Space  Page
     Home/g, End/G     Top, bottom
-    Alt+R             Reply
-    Alt+S             Save attachment
-    Delete            Move to Trash
+    Enter             Actions (reply, save attachment, move to Trash…)
     Esc, q            Close
 
   Thread (opens by itself on a threaded message in wide terminals)
     Up/Down           Move through the chat's messages
-    Enter             Reply in thread
+    Enter             Reply in thread; with an empty input, open the
+                      selected message's actions
     Esc               Close thread
 
   Upload
@@ -151,12 +136,14 @@ Keyboard shortcuts:
     Enter             Send with the optional caption
     Esc               Back, then cancel
 
-  Emoji picker
-    Type              Filter by name (Backspace deletes, Ctrl+U clears)
-    Up/Down           Select emoji
-    Tab               Toggle reaction / draft insert
-    Enter             Confirm
-    Esc               Cancel
+  Message actions (over the faded screen)
+    Up/Down           Select an action: reply, thread, go to quote, edit,
+                      forward, open/play/save attachment, pin, delete
+    Type              Search reactions by name in the "reaction:" field
+                      (Backspace deletes); the emoji row shows the matches
+    Left/Right        Select a reaction on the emoji row
+    Enter             Do it (deletes ask first)
+    Esc               Close (a click outside it closes it too)
 
   Chat Agents (violet)
     Up/k, Down/j      Select

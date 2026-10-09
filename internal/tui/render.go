@@ -175,6 +175,30 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 	return b.String()
 }
 
+// fadeUnder draws box over bg with its top-left corner at column x and row
+// y, with bg reduced to plain dim text so the box is all that stands out.
+func fadeUnder(bg, box string, x, y int) string {
+	lines := strings.Split(bg, "\n")
+	rows := strings.Split(box, "\n")
+	for i, line := range lines {
+		line = ansi.Strip(line)
+		r := i - y
+		if r < 0 || r >= len(rows) {
+			lines[i] = styleDim.Render(line)
+			continue
+		}
+		left := ansi.TruncateWc(line, x, "")
+		left += strings.Repeat(" ", max(0, x-textfmt.DisplayWidth(left)))
+		end := x + textfmt.DisplayWidth(rows[r])
+		right := ansi.TruncateLeftWc(line, end, "")
+		// A wide character cut by the box's right edge leaves a gap.
+		right = strings.Repeat(" ",
+			max(0, textfmt.DisplayWidth(line)-end-textfmt.DisplayWidth(right))) + right
+		lines[i] = styleDim.Render(left) + rows[r] + "\x1b[0m" + styleDim.Render(right)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // keyPress is a synthetic key press, so mouse input can reuse key handlers.
 func keyPress(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
 
