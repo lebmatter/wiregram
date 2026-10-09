@@ -32,7 +32,7 @@ phone number, login code, and optional 2FA password.
 Email accounts ask for an IMAP server (imap.gmail.com by default), the
 address, and an app password, or Google sign-in in the browser when the build
 embeds a Google OAuth client. Each correspondent is one chat. Mail is cached in
-wiregram.db for the window set in Settings > Email (90 days by default); mail
+wiregram.db for the window set in an email account's Settings (90 days by default); mail
 on the server is never deleted by it.
 Config and sessions are stored in ~/.config/wiregram/.
 
@@ -40,7 +40,7 @@ Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
 Enter on another account, or Alt+1..9, switches to it.
 The account list shows an unread digest below it: one card per connected
-account, with its busiest chats. Settings can leave an account out (d).
+account, with its busiest chats. Settings can leave an account out.
 
 The mouse wheel scrolls the list under the pointer. Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
@@ -70,15 +70,11 @@ Keyboard shortcuts:
     q, Ctrl+D         Quit
 
   Settings
-    Up/k, Down/j     Select section or account
-    Tab               Move between sections and accounts
-    Enter             Open section, switch to the account, or add one;
-                      in Email, change how long mail stays cached
-    r                 Reconnect the selected account
-    n                 Add account
-    x                 Remove account: signs out on the server, deletes its data
-    d                 Show or hide the account in the unread digest
-    Esc               Back to where Settings was opened from
+    Up/k, Down/j     Select an account on the left, or a setting on the right
+    Enter             Show the account's settings, or change the selected one:
+                      open or sign in, reconnect, unread digest shown/hidden,
+                      how long mail stays cached (email), remove account
+    Esc               Back to the accounts, then to where Settings was opened
     q, Ctrl+D         Quit
 
   Chat

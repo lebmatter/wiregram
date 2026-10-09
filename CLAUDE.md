@@ -85,15 +85,16 @@ These are project constraints, not suggestions:
   Alt+N, switches to it. The agents mode sidebar lists the agents.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row, Alt+S from the chat list and the sidebar's last row
-  open Settings (`internal/tui/settings.go`): sections on the left (Accounts for
-  now), the section's rows on the right. Removing an account (`x`) logs out on the server
+  open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
+  Chat Agents, Quit), the selected account's settings on the right, each a row chosen
+  with the arrows and changed with Enter — no per-setting shortcuts. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
   binding; the primary account's directory is the config directory, so only its
   rows are deleted.
 - Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
   a grid of cards, one per online account, each fetched once when the account comes
-  online, showing its unread total and busiest chats. Settings › Accounts `d` leaves an
-  account out (`store.DigestSkip` in `account_data`). Clicking a card opens the account.
+  online, showing its unread total and busiest chats. An account's Unread digest
+  setting leaves it out (`store.DigestSkip` in `account_data`). Clicking a card opens the account.
 - Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
@@ -137,7 +138,7 @@ These are project constraints, not suggestions:
   text. Email chats write in a multiline draft sent with Ctrl+S. Quoted
   originals are trimmed in the chat, kept in the reader. HTML mail is reduced
   to text and nothing it references is fetched. Mail is cached in
-  `wiregram.db` for the Settings › Email retention window (`mail_retention_days`,
+  `wiregram.db` for the Keep mail cached setting of an email account's Settings (`mail_retention_days`,
   default 90); pruning never touches the server, and deleting moves to Trash.
 - Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
   (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as

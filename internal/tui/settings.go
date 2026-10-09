@@ -15,19 +15,35 @@ import (
 	"wiregram/internal/textfmt"
 )
 
-// settingsSections are the left pane's sections; the actions follow them.
-var settingsSections = []string{"Accounts", "Email"}
+// settingsActions follow the accounts in the left pane, under a separator.
+var settingsActions = []string{"+ Add account…", "Chat Agents…", "Quit"}
 
-const sectionEmail = 1
-
-var settingsActions = []string{"Chat Agents…", "Quit"}
+const (
+	actionAdd = iota
+	actionAgents
+	actionQuit
+)
 
 type settingsPane int
 
 const (
-	paneSections settingsPane = iota
-	paneAccounts
+	paneAccounts settingsPane = iota
+	paneItems
 )
+
+// settingsItem is one changeable row of an account's settings.
+type settingsItem int
+
+const (
+	itemOpen settingsItem = iota
+	itemReconnect
+	itemDigest
+	itemRetention
+	itemRemove
+)
+
+// itemsTop is how many lines sit above the items in the right pane.
+const itemsTop = 2
 
 type settingsResult struct {
 	account *account.Account // switch to it
@@ -41,8 +57,8 @@ type settingsRemoved struct {
 	err error
 }
 
-// settingsModel is the two-pane Settings screen: sections on the left, the
-// selected section's rows on the right.
+// settingsModel is the two-pane Settings screen: accounts on the left, the
+// selected account's settings on the right.
 type settingsModel struct {
 	ctx      context.Context
 	mgr      *account.AccountManager
@@ -52,9 +68,9 @@ type settingsModel struct {
 	// fromAccounts: opened from the account chooser, so Esc goes back there.
 	fromAccounts bool
 
-	focus   settingsPane
-	section int // left row: a section, then the actions
-	sel     int // right row: an account, then "Add account…"
+	focus settingsPane
+	left  int // left row: an account, then the actions
+	sel   int // right row: an item of the selected account
 
 	result      settingsResult
 	confirm     func() tea.Cmd
@@ -72,19 +88,47 @@ func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *
 		fromAccounts: fromAccounts, width: w, height: h}
 	for i, a := range m.accounts {
 		if a == active {
-			m.sel = i
+			m.left = i
 		}
 	}
-	m.focus = paneAccounts // Accounts comes first, so open it straight away
 	return m
 }
 
 func (m settingsModel) Init() tea.Cmd { return listenAccounts(m.mgr) }
 
-func (m settingsModel) leftRows() int { return len(settingsSections) + len(settingsActions) }
+func (m settingsModel) leftRows() int { return len(m.accounts) + len(settingsActions) }
+
+// selected is the account chosen in the left pane, or nil on an action row.
+func (m settingsModel) selected() *account.Account {
+	if m.left < len(m.accounts) {
+		return m.accounts[m.left]
+	}
+	return nil
+}
+
+func (m settingsModel) items() []settingsItem {
+	a := m.selected()
+	if a == nil {
+		return nil
+	}
+	items := []settingsItem{itemOpen, itemReconnect, itemDigest}
+	if a.BackendType == "email" {
+		items = append(items, itemRetention)
+	}
+	return append(items, itemRemove)
+}
 
 func (m settingsModel) canGoBack() bool {
 	return m.fromAccounts || m.active != nil && m.active.Snapshot().Status == "online"
+}
+
+func (m *settingsModel) reload() {
+	m.accounts = m.mgr.List()
+	m.left = clampIndex(m.left, m.leftRows())
+	m.sel = clampIndex(m.sel, len(m.items()))
+	if m.selected() == nil {
+		m.focus = paneAccounts
+	}
 }
 
 func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -92,8 +136,7 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case accountsChanged:
-		m.accounts = m.mgr.List()
-		m.sel = clampIndex(m.sel, len(m.accounts)+1)
+		m.reload()
 		return m, listenAccounts(m.mgr)
 	case settingsRemoved:
 		m.busy = false
@@ -104,8 +147,7 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.a == m.active {
 			m.active = nil
 		}
-		m.accounts = m.mgr.List()
-		m.sel = clampIndex(m.sel, len(m.accounts)+1)
+		m.reload()
 		if len(m.accounts) == 0 {
 			m.result.add = true
 			return m, tea.Quit
@@ -132,7 +174,7 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 	if m.confirm != nil {
 		run := m.confirm
 		m.confirm, m.confirmText = nil, ""
-		if k == "y" || k == "Y" {
+		if k == "enter" || k == "y" || k == "Y" {
 			m.busy, m.notice = true, "Signing out…"
 			return m, run()
 		}
@@ -152,28 +194,84 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.focus == paneSections {
-		return m.sectionsKey(k)
+	if m.focus == paneAccounts {
+		return m.accountsKey(k)
 	}
-	if m.section == sectionEmail {
-		return m.emailKey(k)
-	}
-	return m.accountsKey(k)
+	return m.itemsKey(k)
 }
 
-// emailKey handles the Email section, whose one row cycles how long the
-// local mail cache keeps mail.
-func (m settingsModel) emailKey(k string) (tea.Model, tea.Cmd) {
+func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "esc", "ctrl+c":
-		if m.twoPane() && m.canGoBack() {
+		if m.canGoBack() {
 			m.result.back = true
 			return m, tea.Quit
 		}
-		m.focus = paneSections
-	case "tab", "left", "h":
-		m.focus = paneSections
+	case "up", "k":
+		m.left, m.sel = max(0, m.left-1), 0
+	case "down", "j":
+		m.left, m.sel = min(m.leftRows()-1, m.left+1), 0
+	case "enter", "tab", "right", "l":
+		if m.selected() != nil {
+			m.focus = paneItems
+			return m, nil
+		}
+		if k != "enter" {
+			return m, nil
+		}
+		switch m.left - len(m.accounts) {
+		case actionAdd:
+			m.result.add = true
+		case actionAgents:
+			m.result.agents = true
+		}
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m settingsModel) itemsKey(k string) (tea.Model, tea.Cmd) {
+	items := m.items()
+	switch k {
+	case "esc", "ctrl+c", "tab", "left", "h":
+		m.focus = paneAccounts
+	case "up", "k":
+		m.sel = max(0, m.sel-1)
+	case "down", "j":
+		m.sel = min(len(items)-1, m.sel+1)
 	case "enter", "space", " ", "right", "l":
+		if m.sel < len(items) {
+			return m.apply(items[m.sel])
+		}
+	}
+	return m, nil
+}
+
+// apply changes or runs one setting of the selected account.
+func (m settingsModel) apply(item settingsItem) (tea.Model, tea.Cmd) {
+	a := m.selected()
+	short := accountShort(m.mgr, m.mgr.AccountKey(a))
+	switch item {
+	case itemOpen:
+		s := a.Snapshot()
+		if s.Status == "online" || s.NeedsLogin || s.Identity.ID == 0 {
+			m.result.account = a
+			return m, tea.Quit
+		}
+		m.mgr.Start(m.ctx, a, nil)
+	case itemReconnect:
+		m.mgr.Start(m.ctx, a, nil)
+		m.notice = "Reconnecting " + short
+	case itemDigest:
+		skip := !digestSkipped(m.mgr, a)
+		m.notice = short + " shown in the unread digest"
+		if skip {
+			m.notice = short + " hidden from the unread digest"
+		}
+		if err := setDigestSkipped(m.mgr, a, skip); err != nil {
+			m.notice = textfmt.CleanError(err)
+		}
+	case itemRetention:
 		days := mail.RetentionDays(m.mgr.Store)
 		next := mail.RetentionChoices[0]
 		for i, d := range mail.RetentionChoices {
@@ -185,6 +283,12 @@ func (m settingsModel) emailKey(k string) (tea.Model, tea.Cmd) {
 			m.notice = textfmt.CleanError(err)
 		} else {
 			m.notice = "Keeping " + retentionLabel(next) + " of mail in the local cache"
+		}
+	case itemRemove:
+		m.confirmText = fmt.Sprintf("Remove %s %s? It signs out and deletes its local data. "+
+			"⏎ remove, any other key cancels", short, textfmt.Plain(a.Label()))
+		m.confirm = func() tea.Cmd {
+			return func() tea.Msg { return settingsRemoved{a: a, err: m.mgr.Remove(m.ctx, a)} }
 		}
 	}
 	return m, nil
@@ -200,104 +304,6 @@ func retentionLabel(days int) string {
 	return fmt.Sprintf("%d days", days)
 }
 
-func (m settingsModel) emailLines(width int) []string {
-	focused := m.focus == paneAccounts
-	value := styleSubtle.Render(retentionLabel(mail.RetentionDays(m.mgr.Store)))
-	return []string{
-		themedListRow("Keep mail", value, true, focused, width, colorAccent),
-		"",
-		styleSubtle.Render(textfmt.ClipLine("How long email stays cached in wiregram.db.", width)),
-		styleSubtle.Render(textfmt.ClipLine("Mail on the server is never deleted.", width)),
-	}
-}
-
-func (m settingsModel) sectionsKey(k string) (tea.Model, tea.Cmd) {
-	switch k {
-	case "esc", "ctrl+c":
-		if m.canGoBack() {
-			m.result.back = true
-			return m, tea.Quit
-		}
-	case "up", "k":
-		m.section = max(0, m.section-1)
-	case "down", "j":
-		m.section = min(m.leftRows()-1, m.section+1)
-	case "enter", "tab", "right", "l":
-		switch m.section - len(settingsSections) {
-		case 0:
-			if k == "enter" {
-				m.result.agents = true
-				return m, tea.Quit
-			}
-		case 1:
-			if k == "enter" {
-				return m, tea.Quit
-			}
-		default:
-			m.focus = paneAccounts
-		}
-	}
-	return m, nil
-}
-
-func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
-	switch k {
-	case "esc", "ctrl+c":
-		if m.twoPane() && m.canGoBack() {
-			m.result.back = true
-			return m, tea.Quit
-		}
-		m.focus = paneSections
-	case "tab", "left", "h":
-		m.focus = paneSections
-	case "up", "k":
-		m.sel = max(0, m.sel-1)
-	case "down", "j":
-		m.sel = min(len(m.accounts), m.sel+1)
-	case "n":
-		m.result.add = true
-		return m, tea.Quit
-	case "r":
-		if m.sel < len(m.accounts) {
-			m.mgr.Start(m.ctx, m.accounts[m.sel], nil)
-		}
-	case "d":
-		if m.sel < len(m.accounts) {
-			a := m.accounts[m.sel]
-			skip := !digestSkipped(m.mgr, a)
-			m.notice = accountShort(m.mgr, m.mgr.AccountKey(a)) + " shown in the unread digest"
-			if skip {
-				m.notice = accountShort(m.mgr, m.mgr.AccountKey(a)) + " hidden from the unread digest"
-			}
-			if err := setDigestSkipped(m.mgr, a, skip); err != nil {
-				m.notice = textfmt.CleanError(err)
-			}
-		}
-	case "x", "delete":
-		if m.sel < len(m.accounts) {
-			a := m.accounts[m.sel]
-			m.confirmText = fmt.Sprintf("Remove %s %s? It signs out and deletes its local data. y/n",
-				accountShort(m.mgr, m.mgr.AccountKey(a)), textfmt.Plain(a.Label()))
-			m.confirm = func() tea.Cmd {
-				return func() tea.Msg { return settingsRemoved{a: a, err: m.mgr.Remove(m.ctx, a)} }
-			}
-		}
-	case "enter":
-		if m.sel == len(m.accounts) {
-			m.result.add = true
-			return m, tea.Quit
-		}
-		a := m.accounts[m.sel]
-		s := a.Snapshot()
-		if s.Status == "online" || s.NeedsLogin || s.Identity.ID == 0 {
-			m.result.account = a
-			return m, tea.Quit
-		}
-		m.mgr.Start(m.ctx, a, nil)
-	}
-	return m, nil
-}
-
 func (m settingsModel) twoPane() bool { return m.width >= twoPaneWidth }
 
 func (m settingsModel) paneAt(x int) settingsPane {
@@ -305,9 +311,9 @@ func (m settingsModel) paneAt(x int) settingsPane {
 		return m.focus
 	}
 	if x < sidebarWidth {
-		return paneSections
+		return paneAccounts
 	}
-	return paneAccounts
+	return paneItems
 }
 
 // handleClick selects the clicked row and acts on it as Enter would.
@@ -318,33 +324,30 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.confirm != nil {
-		return m.handleKey("esc") // anything but y declines
+		return m.handleKey("esc") // anything but Enter or y declines
 	}
-	if m.focus = m.paneAt(mouse.X); m.focus == paneSections {
-		i := row
-		if i > len(settingsSections) {
-			i-- // the separator
-		} else if i == len(settingsSections) {
-			return m, nil
+	if m.paneAt(mouse.X) == paneAccounts {
+		i := m.leftStart(h) + row
+		if i == len(m.accounts) {
+			return m, nil // the separator
+		} else if i > len(m.accounts) {
+			i--
 		}
 		if i >= m.leftRows() {
 			return m, nil
 		}
-		m.section = i
-		return m.sectionsKey("enter")
-	}
-	i := window(m.sel, h) + row
-	if i > len(m.accounts) {
-		return m, nil
-	}
-	if m.section == sectionEmail {
-		if row == 0 {
-			return m.emailKey("enter")
+		if i != m.left {
+			m.sel = 0
 		}
+		m.focus, m.left = paneAccounts, i
+		return m.accountsKey("enter")
+	}
+	i := window(m.sel, h-itemsTop) + row - itemsTop
+	if i < 0 || i >= len(m.items()) {
 		return m, nil
 	}
-	m.sel = i
-	return m.accountsKey("enter")
+	m.focus, m.sel = paneItems, i
+	return m.itemsKey("enter")
 }
 
 func (m settingsModel) footer() string {
@@ -352,9 +355,8 @@ func (m settingsModel) footer() string {
 	switch {
 	case m.confirm != nil:
 		notice = m.confirmText
-	case notice == "" && m.focus == paneAccounts && m.section != sectionEmail &&
-		m.sel < len(m.accounts):
-		notice = m.accounts[m.sel].Snapshot().Notice
+	case notice == "" && m.selected() != nil:
+		notice = m.selected().Snapshot().Notice
 	}
 	return renderFooter(m.helpKeys(), m.fullHelp, notice, m.width)
 }
@@ -364,22 +366,22 @@ func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height
 func (m settingsModel) View() tea.View {
 	footer := m.footer()
 	h := max(4, m.height-lipgloss.Height(footer))
-	title, lines := "Accounts", m.accountLines
-	if m.section == sectionEmail {
-		title, lines = "Email", func(width, _ int) []string { return m.emailLines(width) }
+	title := "Settings"
+	if a := m.selected(); a != nil {
+		title = textfmt.Plain(a.Label())
 	}
 	var body string
 	switch {
 	case m.twoPane():
-		left := renderBox("Settings", m.sectionLines(sidebarWidth-4), sidebarWidth, h,
-			boxBorder(m.focus == paneSections))
-		right := renderBox(title, lines(m.width-sidebarWidth-4, h-2),
-			m.width-sidebarWidth, h, boxBorder(m.focus == paneAccounts))
+		left := renderBox("Settings", m.accountLines(sidebarWidth-4, h-2), sidebarWidth, h,
+			boxBorder(m.focus == paneAccounts))
+		right := renderBox(title, m.itemLines(m.width-sidebarWidth-4, h-2),
+			m.width-sidebarWidth, h, boxBorder(m.focus == paneItems))
 		body = joinColumns(left, right)
-	case m.focus == paneSections:
-		body = renderBox("Settings", m.sectionLines(m.width-4), m.width, h, colorAccent)
+	case m.focus == paneAccounts:
+		body = renderBox("Settings", m.accountLines(m.width-4, h-2), m.width, h, colorAccent)
 	default:
-		body = renderBox(title, lines(m.width-4, h-2), m.width, h, colorAccent)
+		body = renderBox(title, m.itemLines(m.width-4, h-2), m.width, h, colorAccent)
 	}
 	v := tea.NewView(body + "\n" + footer)
 	v.AltScreen = true
@@ -387,53 +389,87 @@ func (m settingsModel) View() tea.View {
 	return v
 }
 
-func (m settingsModel) sectionLines(width int) []string {
-	focused := m.focus == paneSections
-	var lines []string
-	for i, title := range settingsSections {
-		lines = append(lines, themedListRow(title, "", i == m.section, focused, width, colorAccent))
-	}
-	lines = append(lines, styleDim.Render(strings.Repeat("─", width)))
-	for i, title := range settingsActions {
-		lines = append(lines, themedListRow(styleSubtle.Render(title), "",
-			len(settingsSections)+i == m.section, focused, width, colorAccent))
-	}
-	return lines
-}
-
 func (m settingsModel) accountLines(width, height int) []string {
 	focused := m.focus == paneAccounts
 	var lines []string
-	for i := window(m.sel, height); i <= len(m.accounts) && len(lines) < height; i++ {
-		if i == len(m.accounts) {
-			lines = append(lines, themedListRow(styleSubtle.Render("+ Add account…"), "",
-				i == m.sel, focused, width, colorAccent))
-			break
-		}
+	for i := range m.accounts {
 		a := m.accounts[i]
-		s := a.Snapshot()
 		label := textfmt.Plain(a.Label())
 		if a == m.active {
 			label = styleTitle.Render(label)
 		}
-		text := fmt.Sprintf("%s %s %s", accountGlyph(s),
+		text := fmt.Sprintf("%s %s %s", accountGlyph(a.Snapshot()),
 			styleDim.Render(fmt.Sprintf("%s%d", backendTag(a.BackendType), i+1)), label)
-		if m.mgr.Agents != nil {
-			if name := m.mgr.Agents.AgentName(a); name != "" {
-				text += "  " + styleAgent.Render("agent: "+textfmt.Plain(name))
-			}
+		lines = append(lines, themedListRow(text, "", i == m.left, focused, width, colorAccent))
+	}
+	lines = append(lines, styleDim.Render(strings.Repeat("─", width)))
+	for i, title := range settingsActions {
+		lines = append(lines, themedListRow(styleSubtle.Render(title), "",
+			len(m.accounts)+i == m.left, focused, width, colorAccent))
+	}
+	return lines[min(m.leftStart(height), len(lines)):]
+}
+
+// leftStart is the first visible line of the left pane. The separator has no
+// row of its own, so the window follows the selection's line.
+func (m settingsModel) leftStart(height int) int {
+	line := m.left
+	if m.left >= len(m.accounts) {
+		line++
+	}
+	return window(line, height)
+}
+
+// itemLines is the selected account's summary line and its settings, or a
+// description of the selected action.
+func (m settingsModel) itemLines(width, height int) []string {
+	a := m.selected()
+	if a == nil {
+		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
+			"Bots that answer your direct messages.", "Leave wiregram."}
+		return []string{styleSubtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
+	}
+	s := a.Snapshot()
+	summary := fmt.Sprintf("%s%d · %s", backendTag(a.BackendType), m.left+1, s.Status)
+	if a == m.active {
+		summary += " · current"
+	}
+	if m.mgr.Agents != nil {
+		if name := m.mgr.Agents.AgentName(a); name != "" {
+			summary += " · agent: " + textfmt.Plain(name)
 		}
-		status := s.Status
-		if a == m.active {
-			status += " · current"
-		}
-		if digestSkipped(m.mgr, a) {
-			status += " · no digest"
-		}
-		lines = append(lines, themedListRow(text, styleSubtle.Render(status), i == m.sel,
+	}
+	lines := []string{styleSubtle.Render(textfmt.ClipLine(summary, width)), ""}
+	focused := m.focus == paneItems
+	items := m.items()
+	for i := window(m.sel, height-itemsTop); i < len(items) && len(lines) < height; i++ {
+		label, value := m.itemText(a, items[i])
+		lines = append(lines, themedListRow(label, styleSubtle.Render(value), i == m.sel,
 			focused, width, colorAccent))
 	}
 	return lines
+}
+
+func (m settingsModel) itemText(a *account.Account, item settingsItem) (string, string) {
+	switch item {
+	case itemOpen:
+		s := a.Snapshot()
+		if s.NeedsLogin || s.Identity.ID == 0 {
+			return "Sign in", ""
+		}
+		return "Open", ""
+	case itemReconnect:
+		return "Reconnect", ""
+	case itemDigest:
+		if digestSkipped(m.mgr, a) {
+			return "Unread digest", "hidden"
+		}
+		return "Unread digest", "shown"
+	case itemRetention:
+		return "Keep mail cached", retentionLabel(mail.RetentionDays(m.mgr.Store)) +
+			" (all email accounts)"
+	}
+	return styleError.Render("Remove account…"), ""
 }
 
 func (m settingsModel) helpKeys() []helpKey {
@@ -441,14 +477,13 @@ func (m settingsModel) helpKeys() []helpKey {
 	if !m.canGoBack() {
 		back = helpKey{"q", "quit"}
 	}
-	if m.focus == paneSections {
+	if m.confirm != nil {
+		return []helpKey{{"⏎", "remove"}, {"esc", "cancel"}}
+	}
+	if m.focus == paneAccounts {
 		return []helpKey{{"↑↓", "select"}, {"⏎", "open"}, back, {"?", "more"}}
 	}
-	if m.section == sectionEmail {
-		return []helpKey{{"⏎", "change"}, {"tab", "sections"}, back, {"?", "more"}}
-	}
-	return []helpKey{{"↑↓", "select"}, {"⏎", "switch"}, {"r", "reconnect"}, {"n", "add"},
-		{"x", "remove"}, {"d", "digest"}, {"tab", "sections"}, back, {"?", "more"}}
+	return []helpKey{{"↑↓", "select"}, {"⏎", "change"}, {"esc", "accounts"}, {"?", "more"}}
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil
