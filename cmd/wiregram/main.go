@@ -51,39 +51,62 @@ text with the terminal.
 Keyboard shortcuts:
 
   Anywhere
-    Alt+A             Chat Agents (from the chat list)
+    Alt+A             Chat Agents (from the chat list, or a chat with an empty input)
     Tab               Move between chat list and chat (wide terminals)
 
+  Accounts
+    Up/k, Down/j      Select account or menu row
+    Enter             Open the account, or the selected row (Chat Agents,
+                      Settings…, Add account, Quit)
+    r                 Reconnect the selected account
+    Esc               Back to the open account (when it is online)
+    q                 Quit
+
   Chat list
-    Up/k, Down/j     Select chat or account
+    Up/k, Down/j      Select chat or account
     Enter             Open chat, or switch to the selected account
     /                 Search users
     u                 Unread: cards for every chat with unread messages
-    a                 Manage accounts (add, sign in, retry; Settings… is listed there)
+    a                 Accounts (add, sign in, retry, Settings…)
     r                 Refresh chats
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)
     Esc               Close the open chat (wide terminals)
-    q                 Quit
+    q                 Quit (asks first)
+
+  Unread
+    Up/k, Down/j      Select card
+    Enter             Open the chat
+    r                 Reload
+    Esc               Back
+
+  Search users / Forward to
+    Type              Filter
+    Up/Ctrl+P, Down/Ctrl+N  Select
+    PgUp/PgDn         Page
+    Enter             Open the chat, or forward the message to it
+    Esc               Clear the query, then close
 
   Settings
-    Up/k, Down/j     Select an account on the left, or a setting on the right
+    Up/k, Down/j      Select an account on the left, or a setting on the right
     Enter             Show the account's settings, or change the selected one:
                       open or sign in, reconnect, unread digest shown/hidden,
                       how long mail stays cached (email), remove account
-    Esc               Back to the accounts, then to where Settings was opened
+    Tab, Right/l      Move to the account's settings
+    Space             Change the selected setting
+    Esc, Left/h       Back to the accounts, then to where Settings was opened
     q                 Quit
 
   Chat
-    Up/Down           Select message
+    Up/Down           Select message (Up at the top loads older ones)
     Enter             Send text
-    o                 Open selected media (when input is empty)
+    Alt+O             Open selected media in mpv
     Ctrl+U            Upload file (browse, or / to type a path)
-    Ctrl+F            Search messages
+    Ctrl+F            Search messages (Up/Down, Enter jumps, Esc cancels)
     Alt+R             Reply (toggle)
     Alt+G             Jump to the quoted message
     Alt+T             Open the selected message's thread
-    Alt+E             Edit outgoing message
+    Alt+E             Edit outgoing message (Enter saves, Esc cancels)
     Alt+M             React with emoji
     Alt+F             Forward message
     Alt+S             Save attachment to ~/Downloads
@@ -91,19 +114,31 @@ Keyboard shortcuts:
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
-    Delete            Delete message (you only)
+    Delete            Delete message (you only where the network allows,
+                      otherwise both sides; the prompt says which)
     Shift+Delete      Delete message (both sides)
-    Esc               Back to chat list
+    Esc               Cancel the reply, else back to chat list
     Ctrl+C            Close chat
+    Any key           Unlock after the inactivity lock
 
   Email chat
     Up/Down           Select mail
-    Enter             Read the whole mail (Up/Down, PgUp/PgDn scroll; Esc closes)
+    Enter             Read the whole mail
     Type              Write: Enter adds a line, Ctrl+S sends, Esc keeps the draft
     Alt+R             Reply to the selected mail
+    Alt+S             Save attachment to ~/Downloads
     Delete            Move the mail to Trash
                       A new mail's first line is its subject; a first line
                       "Subject: ..." starts a new conversation instead of a reply
+
+  Mail reader
+    Up/k, Down/j      Scroll
+    PgUp/b, PgDn/Space  Page
+    Home/g, End/G     Top, bottom
+    Alt+R             Reply
+    Alt+S             Save attachment
+    Delete            Move to Trash
+    Esc, q            Close
 
   Thread (opens by itself on a threaded message in wide terminals)
     Up/Down           Move through the chat's messages
@@ -112,12 +147,12 @@ Keyboard shortcuts:
 
   Upload
     Arrows, Enter     Browse folders and pick a file
-    /, ~              Type a path instead
+    /, ~              Type a path instead (Tab completes, Up/Down cycle matches)
     Enter             Send with the optional caption
     Esc               Back, then cancel
 
   Emoji picker
-    Type              Filter by name
+    Type              Filter by name (Backspace deletes, Ctrl+U clears)
     Up/Down           Select emoji
     Tab               Toggle reaction / draft insert
     Enter             Confirm
@@ -137,6 +172,7 @@ Keyboard shortcuts:
 
   Chat Agent wizard
     Enter             Answer or pick
+    Up/k, Down/j      Choose
     Space             Toggle an account
     Esc               Previous question
     Ctrl+C            Cancel

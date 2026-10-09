@@ -27,12 +27,14 @@ type chatListModel struct {
 	archived      bool
 	archiveUnread int
 	caps          backend.Capabilities
-	confirm       *chatDeleteConfirm
+	confirm       *chatListConfirm
 	offset        int
 	width, height int
 }
 
-type chatDeleteConfirm struct {
+// chatListConfirm is a pending y/n question: quit, or delete entry.
+type chatListConfirm struct {
+	quit   bool
 	entry  backend.ChatEntry
 	revoke bool
 }
@@ -149,6 +151,9 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			req := m.confirm
 			m.confirm = nil
 			if msg.String() == "y" || msg.String() == "Y" {
+				if req.quit {
+					return m, func() tea.Msg { return chatListQuit{} }
+				}
 				entry := req.entry
 				revoke := req.revoke
 				ctx := m.ctx
@@ -162,7 +167,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "q":
-			return m, func() tea.Msg { return chatListQuit{} }
+			m.confirm = &chatListConfirm{quit: true}
 		case "r":
 			return m, func() tea.Msg { return chatListRefresh{} }
 		case "/":
@@ -188,7 +193,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			if !entry.IsDM {
 				return m, nil
 			}
-			m.confirm = &chatDeleteConfirm{entry: entry, revoke: false}
+			m.confirm = &chatListConfirm{entry: entry, revoke: false}
 		case "ctrl+alt+d":
 			i, ok := m.chatIndex()
 			if !ok || !m.caps.DeleteChat {
@@ -198,7 +203,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			if !entry.IsDM || entry.IsSelf {
 				return m, nil
 			}
-			m.confirm = &chatDeleteConfirm{entry: entry, revoke: true}
+			m.confirm = &chatListConfirm{entry: entry, revoke: true}
 		case "enter":
 			above, below := m.others()
 			idx := m.selected
@@ -330,6 +335,9 @@ func (m chatListModel) notice() string {
 	if m.confirm == nil {
 		return ""
 	}
+	if m.confirm.quit {
+		return "Quit wiregram? y to confirm; any other key cancels."
+	}
 	scope := "only for you"
 	if m.confirm.revoke {
 		scope = "for both sides"
@@ -345,5 +353,6 @@ var chatListHelp = []helpKey{
 	{"u", "unread"},
 	{"a", "manage accounts"},
 	{"r", "refresh"},
+	{"M-d", "delete chat"},
 	{"q", "quit"},
 }

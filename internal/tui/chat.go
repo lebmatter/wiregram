@@ -988,14 +988,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if m.privateMode {
 			m.selected = len(m.messages) - 1
 		}
-	case "o":
+	case "alt+o", "alt+O":
 		if m.caps.MultilineCompose {
-			return m.startCompose(&msg)
-		}
-		if m.input.Value() != "" {
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
+			return m, nil
 		}
 		sel, ok := m.selectedMsg()
 		if !ok || !m.b.MediaPlayable(sel) {
@@ -1614,7 +1609,7 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})
 	}
-	keys = append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"}, helpKey{"o", "media"})
+	keys = append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"}, helpKey{"M-o", "media"})
 	if m.caps.Upload {
 		keys = append(keys, helpKey{"^U", "upload"})
 	}

@@ -124,7 +124,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.result = &accountChoice{quit: true}
 			return m, tea.Quit
 		case "esc", "ctrl+c":
-			if m.active != nil && m.active.Snapshot().Status == "online" {
+			if m.canGoBack() {
 				m.result = &accountChoice{index: -1}
 				return m, tea.Quit
 			}
@@ -276,19 +276,24 @@ func (m accountListModel) View() tea.View {
 	}
 	content := renderHeader(m.width) + "\n" +
 		renderBox("Accounts", rows, m.width, m.bodyHeight(), colorAccent) + "\n" +
-		renderFooter(accountListHelp, notice, m.width)
+		renderFooter(m.helpKeys(), notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
-var accountListHelp = []helpKey{
-	{"↑↓", "select"},
-	{"⏎", "switch"},
-	{"r", "reconnect"},
-	{"esc", "back"},
-	{"q", "quit"},
+// canGoBack reports whether Esc can return to the account it came from.
+func (m accountListModel) canGoBack() bool {
+	return m.active != nil && m.active.Snapshot().Status == "online"
+}
+
+func (m accountListModel) helpKeys() []helpKey {
+	keys := []helpKey{{"↑↓", "select"}, {"⏎", "switch"}, {"r", "reconnect"}}
+	if m.canGoBack() {
+		keys = append(keys, helpKey{"esc", "back"})
+	}
+	return append(keys, helpKey{"q", "quit"})
 }
 
 func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *account.Account) (*account.Account, error) {
