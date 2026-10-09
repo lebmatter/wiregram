@@ -176,6 +176,11 @@ func (m tuiModel) closeChat() tuiModel {
 }
 
 func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
+	// Closing a chat marks it read, so the list's counts are stale after it.
+	var reload tea.Cmd
+	if m.chatOpen {
+		reload = loadDialogs(m.ctx, m.b, m.archived)
+	}
 	m = m.closeChat()
 	h := m.histories[entry.ID]
 	if h == nil {
@@ -186,7 +191,7 @@ func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
 	m.chatOpen = true
 	m.focus = focusChat
 	m = m.sized()
-	return m, m.chat.Init()
+	return m, tea.Batch(m.chat.Init(), reload)
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
