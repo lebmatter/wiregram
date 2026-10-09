@@ -78,13 +78,14 @@ These are project constraints, not suggestions:
 - Startup shows the `wiregramLogo` splash (`internal/tui/splash.go`) for about a second.
 - There is no header bar. Inside an account the screen is the body and a
   `bubbles/help` footer with the notice on the right. Help hides keys the
-  backend's `capabilities` rule out.
+  backend's `capabilities` rule out. The footer is never expanded; the full
+  shortcut list lives only in `wiregram -h` (`usageText`).
 - The chat mode sidebar is an account tree (`internal/tui/list.go`): every
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label), the active one
-  expanded to its chats, archive and search. Enter on another account, or
-  Alt+N, switches to it. The agents mode sidebar lists the agents.
+  expanded to its chats, archive and search. Enter on another account
+  switches to it. The agents mode sidebar lists the agents.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
-  logo; its `Settings…` row, Alt+S from the chat list and the sidebar's last row
+  logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
   Chat Agents, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Removing an account logs out on the server
@@ -142,7 +143,7 @@ These are project constraints, not suggestions:
   default 90); pruning never touches the server, and deleting moves to Trash.
 - Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
   (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as
-  `[TG1]`: backend plus Alt+N number. Chat Agents are created through the
+  `[TG1]`: backend plus position in the account list. Chat Agents are created through the
   scripted bubble wizard (`internal/tui/wizard.go`): fixed options or typed
   values only, never free chat with a model. Adding an account (network,
   server URL, then the sign-in prompts) uses the same bubble style in copper.

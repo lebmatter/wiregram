@@ -120,7 +120,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q", "ctrl+d":
+		case "q":
 			m.result = &accountChoice{quit: true}
 			return m, tea.Quit
 		case "esc", "ctrl+c":
@@ -276,7 +276,7 @@ func (m accountListModel) View() tea.View {
 	}
 	content := renderHeader(m.width) + "\n" +
 		renderBox("Accounts", rows, m.width, m.bodyHeight(), colorAccent) + "\n" +
-		renderFooter(accountListHelp, false, notice, m.width)
+		renderFooter(accountListHelp, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -478,7 +478,7 @@ func (m addAccountModel) View() tea.View {
 	bodyHeight := max(4, m.height-2)
 	content := renderHeader(m.width) + "\n" +
 		m.wiz.view(m.width, bodyHeight) + "\n" +
-		renderFooter(m.wiz.helpKeys(), false, "", m.width)
+		renderFooter(m.wiz.helpKeys(), "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -618,13 +618,13 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if m.current == nil {
-			if msg.String() == "esc" || msg.String() == "ctrl+c" || msg.String() == "ctrl+d" {
+			if msg.String() == "esc" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
 			return m, nil
 		}
 		switch msg.String() {
-		case "esc", "ctrl+c", "ctrl+d":
+		case "esc", "ctrl+c":
 			m.current.Answer <- account.LoginAnswer{Err: context.Canceled}
 			m.current = nil
 			return m, tea.Quit
@@ -676,7 +676,7 @@ func (m loginModel) View() tea.View {
 	box := renderBox("Sign in — "+m.label, bottomLines(lines, bodyHeight-2),
 		m.width, bodyHeight, colorAccent)
 	content := renderHeader(m.width) + "\n" + box + "\n" +
-		renderFooter([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, false, "", m.width)
+		renderFooter([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
@@ -782,7 +782,7 @@ func (m connectingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyPressMsg:
-		if msg.String() == "esc" || msg.String() == "ctrl+c" || msg.String() == "ctrl+d" {
+		if msg.String() == "esc" || msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 	}

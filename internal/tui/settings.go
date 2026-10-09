@@ -77,7 +77,6 @@ type settingsModel struct {
 	confirmText string
 	busy        bool // a removal is running
 	notice      string
-	fullHelp    bool
 	width       int
 	height      int
 }
@@ -182,17 +181,8 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 	}
 	m.notice = ""
 	switch k {
-	case "?":
-		m.fullHelp = !m.fullHelp
-		return m, nil
-	case "q", "ctrl+d":
+	case "q":
 		return m, tea.Quit
-	case "alt+s":
-		if m.canGoBack() {
-			m.result.back = true
-			return m, tea.Quit
-		}
-		return m, nil
 	}
 	if m.focus == paneAccounts {
 		return m.accountsKey(k)
@@ -358,7 +348,7 @@ func (m settingsModel) footer() string {
 	case notice == "" && m.selected() != nil:
 		notice = m.selected().Snapshot().Notice
 	}
-	return renderFooter(m.helpKeys(), m.fullHelp, notice, m.width)
+	return renderFooter(m.helpKeys(), notice, m.width)
 }
 
 func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
@@ -481,9 +471,9 @@ func (m settingsModel) helpKeys() []helpKey {
 		return []helpKey{{"⏎", "remove"}, {"esc", "cancel"}}
 	}
 	if m.focus == paneAccounts {
-		return []helpKey{{"↑↓", "select"}, {"⏎", "open"}, back, {"?", "more"}}
+		return []helpKey{{"↑↓", "select"}, {"⏎", "open"}, back}
 	}
-	return []helpKey{{"↑↓", "select"}, {"⏎", "change"}, {"esc", "accounts"}, {"?", "more"}}
+	return []helpKey{{"↑↓", "select"}, {"⏎", "change"}, {"esc", "accounts"}}
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil

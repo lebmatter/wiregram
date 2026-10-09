@@ -156,7 +156,7 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc", "ctrl+c", "ctrl+d":
+		case "esc", "ctrl+c":
 			return m, func() tea.Msg { return unreadClosed{} }
 		case "r":
 			return m.load()

@@ -792,7 +792,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			return m, func() tea.Msg { return chatFocusSidebar{} }
 		}
 		return m, func() tea.Msg { return chatReturnToList{} }
-	case "ctrl+c", "ctrl+d":
+	case "ctrl+c":
 		return m, func() tea.Msg { return chatReturnToList{} }
 	case "up":
 		if m.privateMode {
@@ -1052,7 +1052,7 @@ func (m chatViewModel) handleEmojiPicked(msg emojiPicked) (chatViewModel, tea.Cm
 
 func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "ctrl+c", "ctrl+d":
+	case "esc", "ctrl+c":
 		m.subMode = chatSubNone
 		m.searchResults = nil
 		return m, nil
@@ -1126,7 +1126,7 @@ func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 func (m chatViewModel) handleEditKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "ctrl+c", "ctrl+d":
+	case "esc", "ctrl+c":
 		m.subMode = chatSubNone
 		m.editing = nil
 		return m, nil
@@ -1633,7 +1633,7 @@ func (m chatViewModel) helpKeys() []helpKey {
 		keys = append(keys, helpKey{"M-p", "pin"})
 	}
 	keys = append(keys, helpKey{"del", "delete"}, helpKey{"M-h", "private"},
-		helpKey{"M-1…9", "account"}, helpKey{"?", "more"}, helpKey{"esc", "back"})
+		helpKey{"esc", "back"})
 	return keys
 }
 
@@ -1646,8 +1646,7 @@ func (m chatViewModel) mailHelp() []helpKey {
 	}
 	return append(keys, helpKey{"M-r", "reply"}, helpKey{"M-t", "thread"},
 		helpKey{"^F", "search"}, helpKey{"M-g", "go to quote"}, helpKey{"M-s", "save"},
-		helpKey{"del", "trash"}, helpKey{"M-1…9", "account"}, helpKey{"?", "more"},
-		helpKey{"esc", "back"})
+		helpKey{"del", "trash"}, helpKey{"esc", "back"})
 }
 
 func (m chatViewModel) cleanup() {

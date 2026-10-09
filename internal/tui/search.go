@@ -231,7 +231,7 @@ func (m userSearchModel) finished(err error) (userSearchModel, tea.Cmd) {
 
 func (m userSearchModel) handleKey(msg tea.KeyPressMsg) (userSearchModel, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "ctrl+d":
+	case "ctrl+c":
 		return m, func() tea.Msg { return userSearchClosed{} }
 	case "esc":
 		if m.input.Value() == "" {

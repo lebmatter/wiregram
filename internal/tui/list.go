@@ -161,8 +161,6 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
-		case "ctrl+d":
-			return m, func() tea.Msg { return chatListAccounts{} }
 		case "q":
 			return m, func() tea.Msg { return chatListQuit{} }
 		case "r":

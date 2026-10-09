@@ -73,7 +73,6 @@ type agentModeModel struct {
 	confirm     func() error
 	confirmText string
 	notice      string
-	fullHelp    bool
 	width       int
 	height      int
 }
@@ -221,23 +220,12 @@ func (m agentModeModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
-		if i := int(k[4] - '1'); i < len(m.mgr.Accounts) {
-			m.switchTo = m.mgr.Accounts[i]
-			return m, tea.Quit
-		}
-		return m, nil
-	}
 	if m.screen == scrWizard {
 		var cmd tea.Cmd
 		m.wiz, cmd = m.wiz.Update(msg)
 		return m, cmd
 	}
 	m.notice = ""
-	if k == "?" {
-		m.fullHelp = !m.fullHelp
-		return m, nil
-	}
 	switch m.screen {
 	case scrAgents:
 		return m.agentsKey(k)
@@ -890,7 +878,7 @@ func (m agentModeModel) footer() string {
 	if m.confirm != nil {
 		notice = m.confirmText
 	}
-	return renderThemedFooter(m.helpKeys(), m.fullHelp, notice, m.width, colorAgent)
+	return renderThemedFooter(m.helpKeys(), notice, m.width, colorAgent)
 }
 
 func (m agentModeModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
@@ -1099,8 +1087,5 @@ func (m agentModeModel) helpKeys() []helpKey {
 	case scrProviders:
 		keys = []helpKey{{"↑↓", "select"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"esc", "agents"}}
 	}
-	if len(m.mgr.Accounts) > 1 {
-		keys = append(keys, helpKey{"M-1…9", "account"})
-	}
-	return append(keys, helpKey{"?", "more"})
+	return keys
 }

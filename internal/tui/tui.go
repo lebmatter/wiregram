@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"charm.land/bubbletea/v2"
@@ -48,7 +47,6 @@ type tuiModel struct {
 	unread        unreadModel
 	unreadOpen    bool
 	focus         tuiFocus
-	fullHelp      bool
 	result        *tuiResult
 	loadErr       error
 	width         int
@@ -429,22 +427,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	idle := !paneFocused || (chatFocused && m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
 
 	k := msg.String()
-	if len(k) == 5 && strings.HasPrefix(k, "alt+") && k[4] >= '1' && k[4] <= '9' {
-		i := int(k[4] - '1')
-		if m.mgr != nil && i < len(m.mgr.Accounts) && m.mgr.Accounts[i] != m.active {
-			m = m.closeChat()
-			return m.done(tuiResult{switchTo: m.mgr.Accounts[i]})
-		}
-		return m, nil
-	}
 	if k == "alt+a" && idle && m.mgr != nil && m.mgr.Agents != nil {
 		m = m.closeChat()
 		return m.done(tuiResult{agents: true})
-	}
-	// Inside a chat Alt+S saves the attachment.
-	if k == "alt+s" && !paneFocused && m.mgr != nil {
-		m = m.closeChat()
-		return m.done(tuiResult{settings: true})
 	}
 	switch {
 	case k == "tab" && m.twoPane() && m.paneOpen() && (!chatFocused || m.chat.subMode == chatSubNone):
@@ -453,9 +438,6 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		} else {
 			m.focus = focusChat
 		}
-		return m, nil
-	case k == "?" && idle:
-		m.fullHelp = !m.fullHelp
 		return m, nil
 	case k == "esc" && !paneFocused && m.paneOpen() && m.list.confirm == nil:
 		m = m.closeChat()
@@ -563,7 +545,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) footer() string {
-	if m.chatOpen && !m.searchOpen && !m.fullHelp && (m.focus == focusChat || m.chat.opening != nil) {
+	if m.chatOpen && !m.searchOpen && (m.focus == focusChat || m.chat.opening != nil) {
 		if line, ok := m.chat.footerLine(); ok {
 			return truncate(line, m.width)
 		}
@@ -598,18 +580,11 @@ func (m tuiModel) footer() string {
 				notice = m.chat.notice
 			}
 		}
-		if m.mgr != nil && len(m.mgr.Accounts) > 1 {
-			keys = append(keys, helpKey{"M-1…9", "account"})
-		}
 		if m.mgr != nil && m.mgr.Agents != nil {
 			keys = append(keys, helpKey{"M-a", "agents"})
 		}
-		if m.mgr != nil {
-			keys = append(keys, helpKey{"M-s", "settings"})
-		}
-		keys = append(keys, helpKey{"?", "more"})
 	}
-	return renderFooter(keys, m.fullHelp, notice, m.width)
+	return renderFooter(keys, notice, m.width)
 }
 
 func (m tuiModel) View() tea.View {

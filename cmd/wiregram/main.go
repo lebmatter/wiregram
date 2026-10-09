@@ -38,7 +38,7 @@ Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
-Enter on another account, or Alt+1..9, switches to it.
+Enter on another account switches to it; the last row opens Settings.
 The account list shows an unread digest below it: one card per connected
 account, with its busiest chats. Settings can leave an account out.
 
@@ -51,11 +51,8 @@ text with the terminal.
 Keyboard shortcuts:
 
   Anywhere
-    Alt+1..9          Switch to account N
     Alt+A             Chat Agents (from the chat list)
-    Alt+S             Settings (from the chat list)
     Tab               Move between chat list and chat (wide terminals)
-    ?                 Show all shortcuts
 
   Chat list
     Up/k, Down/j     Select chat or account
@@ -67,7 +64,7 @@ Keyboard shortcuts:
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)
     Esc               Close the open chat (wide terminals)
-    q, Ctrl+D         Quit
+    q                 Quit
 
   Settings
     Up/k, Down/j     Select an account on the left, or a setting on the right
@@ -75,7 +72,7 @@ Keyboard shortcuts:
                       open or sign in, reconnect, unread digest shown/hidden,
                       how long mail stays cached (email), remove account
     Esc               Back to the accounts, then to where Settings was opened
-    q, Ctrl+D         Quit
+    q                 Quit
 
   Chat
     Up/Down           Select message

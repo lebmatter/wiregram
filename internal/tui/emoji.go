@@ -46,7 +46,7 @@ func (m emojiPickerModel) Update(msg tea.Msg) (emojiPickerModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc", "ctrl+c", "ctrl+d":
+		case "esc", "ctrl+c":
 			return m, func() tea.Msg { return emojiCancelled{} }
 		case "up":
 			if m.selected > 0 {

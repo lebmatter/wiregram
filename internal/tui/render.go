@@ -95,26 +95,12 @@ func renderHelpBar(keys []helpKey, width int, accent color.Color) string {
 
 // renderFooter draws the key help with the notice on the right. A long notice
 // (such as a delete confirmation) takes the whole line so it is never cut.
-func renderFooter(keys []helpKey, full bool, notice string, width int) string {
-	return renderThemedFooter(keys, full, notice, width, colorAccent)
+func renderFooter(keys []helpKey, notice string, width int) string {
+	return renderThemedFooter(keys, notice, width, colorAccent)
 }
 
-func renderThemedFooter(keys []helpKey, full bool, notice string, width int, accent color.Color) string {
+func renderThemedFooter(keys []helpKey, notice string, width int, accent color.Color) string {
 	notice = textfmt.Plain(notice)
-	if full {
-		bindings := helpBindings(keys)
-		var groups [][]key.Binding
-		for len(bindings) > 0 {
-			n := min(5, len(bindings))
-			groups = append(groups, bindings[:n])
-			bindings = bindings[n:]
-		}
-		out := newHelpModel(width, accent).FullHelpView(groups)
-		if notice != "" {
-			out += "\n" + styleNotice.Render(truncate(notice, width))
-		}
-		return out
-	}
 	noticeWidth := textfmt.DisplayWidth(notice)
 	if notice != "" && noticeWidth > width/2 {
 		return styleNotice.Render(truncate(notice, width))
@@ -226,7 +212,7 @@ func accountLabel(a *account.Account) string {
 }
 
 // accountShort is the account's tag in agent mode, such as TG1: its backend
-// and its Alt+N number.
+// and its position in the account list.
 func accountShort(mgr *account.AccountManager, key string) string {
 	for i, a := range mgr.Accounts {
 		if mgr.AccountKey(a) == key {
