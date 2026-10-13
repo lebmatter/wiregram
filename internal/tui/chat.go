@@ -558,7 +558,7 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 	case spinner.TickMsg:
 		// Let the spinner stop once nothing is loading or uploading.
-		if m.messages != nil && len(m.uploads) == 0 && m.opening == nil {
+		if m.messages != nil && len(m.uploads) == 0 && m.opening == nil && !m.threadLoading() {
 			return m, nil
 		}
 		var cmd tea.Cmd

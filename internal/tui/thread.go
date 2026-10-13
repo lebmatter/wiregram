@@ -115,8 +115,10 @@ func (m chatViewModel) fetchThread(rootID string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		found, err := tf.Thread(ctx, entry, rootID)
-		if err != nil {
-			found = nil // the loaded part of the thread stays; not worth a notice
+		if err != nil || found == nil {
+			// The loaded part of the thread stays; an error is not worth a notice.
+			// Non-nil, so the thread no longer reads as loading.
+			found = []backend.Message{}
 		}
 		return threadLoaded{entry.ID, rootID, found}
 	}
@@ -166,7 +168,17 @@ func (m chatViewModel) openThread(sel backend.Message) (chatViewModel, tea.Cmd) 
 	m.threadInput = textinput.New()
 	m.threadInput.Prompt = ""
 	m.threadInput.Placeholder = "Reply in thread…"
-	return m, tea.Batch(m.threadInput.Focus(), m.fetchThread(root.ID))
+	cmds := []tea.Cmd{m.threadInput.Focus(), m.fetchThread(root.ID)}
+	if m.threadLoading() {
+		cmds = append(cmds, m.spin.Tick)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// threadLoading reports whether the open thread is still being fetched.
+func (m chatViewModel) threadLoading() bool {
+	full, asked := m.threads[m.threadRoot]
+	return m.threadRoot != "" && asked && full == nil
 }
 
 func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
@@ -261,6 +273,9 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 			}
 			rest := max(0, inner-2-textfmt.DisplayWidth(label))
 			add(-1, m.st.dim.Render("──"+label+strings.Repeat("─", rest)))
+			if m.threadLoading() {
+				add(-1, "", centerLines(inner, 1, m.spin.View()+m.st.subtle.Render("loading thread…"))[0], "")
+			}
 		}
 	}
 	return lines, owners, media
