@@ -526,8 +526,42 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		Preview:    mmPreview(p.Metadata),
 		Spans:      spans,
 		Source:     p.Message,
+		Mentioned:  !outgoing && mentionsName(p.Message, mb.Username),
 		Raw:        p,
 	}
+}
+
+// mentionsName reports whether text holds @name or a channel-wide mention,
+// matched as Mattermost does: case-insensitive, ending at a non-name rune.
+func mentionsName(text, name string) bool {
+	lower := strings.ToLower(text)
+	for _, n := range []string{strings.ToLower(name), "channel", "all", "here"} {
+		if n == "" {
+			continue
+		}
+		for rest := lower; ; {
+			i := strings.Index(rest, "@"+n)
+			if i < 0 {
+				break
+			}
+			end := i + 1 + len(n)
+			if i > 0 && mmNameByte(rest[i-1]) {
+				rest = rest[end:]
+				continue
+			}
+			if end == len(rest) || !mmNameByte(rest[end]) || rest[end] == '.' &&
+				(end+1 == len(rest) || !mmNameByte(rest[end+1])) {
+				return true
+			}
+			rest = rest[end:]
+		}
+	}
+	return false
+}
+
+// mmNameByte reports whether c can continue a Mattermost username.
+func mmNameByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-'
 }
 
 // mmAttachment is a Slack-style message attachment, which bots and webhooks
@@ -1000,6 +1034,69 @@ func (mb *MmBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 		}
 	}
 	return messages, nil
+}
+
+// Mentions searches every team for posts naming the user or the whole
+// channel, as Mattermost's own Recent Mentions does.
+func (mb *MmBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention, error) {
+	var teams []mmTeam
+	if err := mb.apiJSON(ctx, "GET", "/users/me/teams", nil, &teams); err != nil {
+		return nil, fmt.Errorf("load teams: %w", err)
+	}
+	body := map[string]any{
+		"terms":        "@" + mb.Username + " @channel @all @here",
+		"is_or_search": true,
+		"per_page":     limit,
+	}
+	var posts []mmPost
+	for _, team := range teams {
+		var result struct {
+			Order []string          `json:"order"`
+			Posts map[string]mmPost `json:"posts"`
+		}
+		path := fmt.Sprintf("/teams/%s/posts/search", team.ID)
+		if err := mb.apiJSON(ctx, "POST", path, body, &result); err != nil {
+			return nil, fmt.Errorf("search mentions: %w", err)
+		}
+		for _, id := range result.Order {
+			if p, ok := result.Posts[id]; ok && p.DeleteAt == 0 && p.UserID != mb.UserID {
+				posts = append(posts, p)
+			}
+		}
+	}
+	sort.SliceStable(posts, func(i, j int) bool { return posts[i].CreateAt > posts[j].CreateAt })
+	teamNames := make(map[string]string, len(teams))
+	for _, team := range teams {
+		teamNames[team.ID] = team.DisplayName
+	}
+	channels := make(map[string]*mmChannel)
+	var found []backend.Mention
+	for _, p := range posts {
+		if len(found) == limit {
+			break
+		}
+		ch, ok := channels[p.ChannelID]
+		if !ok {
+			var c mmChannel
+			if err := mb.apiJSON(ctx, "GET", "/channels/"+p.ChannelID, nil, &c); err == nil {
+				ch = &c
+			}
+			channels[p.ChannelID] = ch
+		}
+		if ch == nil || ch.Type == "D" || ch.Type == "G" {
+			continue
+		}
+		found = append(found, backend.Mention{
+			Chat: backend.ChatEntry{
+				ID:      backend.ChatID{Backend: "mattermost", Id: ch.ID},
+				Title:   mb.channelTitle(ctx, *ch, teamNames[ch.TeamID]),
+				IsGroup: true,
+				Raw:     *ch,
+			},
+			Message: mb.postToMessage(ctx, p),
+		})
+	}
+	return found, nil
 }
 
 func (mb *MmBackend) teamForChannel(ctx context.Context, ch backend.ChatEntry) string {

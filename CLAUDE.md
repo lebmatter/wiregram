@@ -112,6 +112,13 @@ These are project constraints, not suggestions:
 - Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
+- A message that mentions the user (`Message.Mentioned`: `@you` or a chat-wide
+  `@all`/`@channel`/`@here`/`@room`, never a plain reply) is tinted with the theme's
+  `mentionBg` in the chat and the thread pane; selection's tint wins. Backends with
+  `backend.MentionFetcher` get a Mentions row (`m`) under Unread: the same cards,
+  one per group or channel with recent mentions (Telegram's MyMentions search over
+  recent groups, Mattermost's mention search, Matrix highlight notifications,
+  WhatsApp's in-memory messages). Email has none.
 - At `twoPaneWidth` (100) columns and wider the chat list is a sidebar beside
   the chat and Tab moves focus; narrower terminals show one pane at a time.
 - The root `tuiModel` owns the screen's only bus subscription and routes

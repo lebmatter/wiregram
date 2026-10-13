@@ -7,12 +7,12 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-func (c *Client) searchMessages(ctx context.Context, entry chat, query string) ([]*tg.Message, error) {
+func (c *Client) searchMessages(ctx context.Context, entry chat, query string, filter tg.MessagesFilterClass, limit int) ([]*tg.Message, error) {
 	result, err := c.Api.MessagesSearch(ctx, &tg.MessagesSearchRequest{
 		Peer:   entry.peer,
 		Q:      query,
-		Filter: &tg.InputMessagesFilterEmpty{},
-		Limit:  20,
+		Filter: filter,
+		Limit:  limit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search messages: %w", err)

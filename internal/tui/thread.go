@@ -240,6 +240,11 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 		block, blockMedia := m.st.messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
 			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID], inner,
 			imageRows(height))
+		if bg := m.st.blockShade(msg, false); bg != "" {
+			for j := range block {
+				block[j] = shadeLine(block[j], bg, inner)
+			}
+		}
 		add(i, block...)
 		copy(media[len(media)-len(block):], blockMedia)
 		if i == 0 {

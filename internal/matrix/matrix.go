@@ -688,21 +688,25 @@ func (mx *MxBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 
 	result := make([]backend.ChatEntry, 0, len(entries))
 	for _, e := range entries {
-		mx.mu.Lock()
-		isDM := mx.dmRooms[e.Id]
-		unread := mx.unreads[e.Id]
-		mx.mu.Unlock()
-		memberCount := len(e.Room.members)
-		result = append(result, backend.ChatEntry{
-			ID:      backend.ChatID{Backend: "matrix", Id: e.Id},
-			Title:   mx.roomDisplayName(e.Id),
-			Unread:  unread,
-			LastAt:  e.Room.lastAt,
-			IsDM:    isDM && memberCount <= 2,
-			IsGroup: !isDM || memberCount > 2,
-		})
+		result = append(result, mx.roomEntry(e.Id, e.Room))
 	}
 	return result, 0, nil
+}
+
+func (mx *MxBackend) roomEntry(id string, room *mxRoom) backend.ChatEntry {
+	mx.mu.Lock()
+	isDM := mx.dmRooms[id]
+	unread := mx.unreads[id]
+	mx.mu.Unlock()
+	memberCount := len(room.members)
+	return backend.ChatEntry{
+		ID:      backend.ChatID{Backend: "matrix", Id: id},
+		Title:   mx.roomDisplayName(id),
+		Unread:  unread,
+		LastAt:  room.lastAt,
+		IsDM:    isDM && memberCount <= 2,
+		IsGroup: !isDM || memberCount > 2,
+	}
 }
 
 // History.
@@ -897,8 +901,33 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 		Multiline:  multiline,
 		Spans:      spans,
 		Source:     source,
+		Mentioned:  !outgoing && mx.mentionsMe(ev.Content, replyToID != ""),
 		Raw:        ev,
 	}
+}
+
+// mentionsMe reads m.mentions; clients that predate it are matched on the
+// user ID or @room in the body. A reply lists its original's sender in
+// m.mentions, so there the user must also be named in the text.
+func (mx *MxBackend) mentionsMe(content map[string]any, reply bool) bool {
+	body, _ := content["body"].(string)
+	formatted, _ := content["formatted_body"].(string)
+	named := strings.Contains(body, mx.UserID) || strings.Contains(formatted, mx.UserID) ||
+		strings.Contains(formatted, url.QueryEscape(mx.UserID))
+	mentions, ok := content["m.mentions"].(map[string]any)
+	if !ok {
+		return named || strings.Contains(body, "@room")
+	}
+	if room, _ := mentions["room"].(bool); room {
+		return true
+	}
+	ids, _ := mentions["user_ids"].([]any)
+	for _, id := range ids {
+		if id == mx.UserID {
+			return !reply || named
+		}
+	}
+	return false
 }
 
 // mxInlineImage reports whether an m.image can be fetched unencrypted and is
@@ -1249,6 +1278,47 @@ func (mx *MxBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 		messages = append(messages, mx.eventToMessage(r.Result))
 	}
 	return messages, nil
+}
+
+// Mentions lists the server's highlight notifications, which follow the
+// user's push rules: their ID, display name and @room. The server keeps
+// only recent ones.
+func (mx *MxBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention, error) {
+	var resp struct {
+		Notifications []struct {
+			RoomID string          `json:"room_id"`
+			Event  mxTimelineEvent `json:"event"`
+		} `json:"notifications"`
+	}
+	path := fmt.Sprintf("/notifications?only=highlight&limit=%d", limit)
+	if err := mx.apiJSON(ctx, "GET", path, nil, &resp); err != nil {
+		return nil, fmt.Errorf("load mentions: %w", err)
+	}
+	var found []backend.Mention
+	for _, n := range resp.Notifications {
+		if n.Event.Type != "m.room.message" || n.Event.Sender == mx.UserID {
+			continue
+		}
+		mx.mu.Lock()
+		room := mx.rooms[n.RoomID]
+		mx.mu.Unlock()
+		if room == nil {
+			continue
+		}
+		entry := mx.roomEntry(n.RoomID, room)
+		if entry.IsDM {
+			continue
+		}
+		msg := mx.eventToMessage(n.Event)
+		// Without m.mentions the server matched the display name, which
+		// mentionsMe cannot; with it, a plain reply to the user is no mention.
+		if _, ok := n.Event.Content["m.mentions"]; ok && !msg.Mentioned {
+			continue
+		}
+		msg.Mentioned = true
+		found = append(found, backend.Mention{Chat: entry, Message: msg})
+	}
+	return found, nil
 }
 
 // Real-time events.

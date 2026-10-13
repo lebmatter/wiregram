@@ -53,24 +53,28 @@ func (k chatKind) tag() (string, color.Color) {
 type unreadCard struct {
 	entry backend.ChatEntry
 	msgs  []backend.Message
+	count int // the pill: unread messages, or mentions in the Mentions view
 	err   error
 }
 
 type unreadLoaded struct {
 	gen   int
 	cards []unreadCard
+	err   error
 }
-type unreadPicked struct{ entry backend.ChatEntry }
+type unreadPicked struct{ card unreadCard }
 type unreadClosed struct{}
 
 // unreadModel is a column of full-width cards, one per chat with unread
-// messages.
+// messages or, in the Mentions view, with messages mentioning the user.
 type unreadModel struct {
 	st       *styles
 	ctx      context.Context
 	b        backend.Backend
+	mentions bool
 	entries  []backend.ChatEntry
 	cards    []unreadCard
+	err      error
 	loading  bool
 	gen      int
 	selected int
@@ -94,17 +98,23 @@ func (m unreadModel) load() (unreadModel, tea.Cmd) {
 	m.gen++
 	m.loading = true
 	ctx, b, entries, gen := m.ctx, m.b, m.entries, m.gen
+	if m.mentions {
+		return m, func() tea.Msg {
+			cards, err := mentionCards(ctx, b)
+			return unreadLoaded{gen, cards, err}
+		}
+	}
 	return m, func() tea.Msg {
 		cards := make([]unreadCard, len(entries))
 		var wg sync.WaitGroup
 		for i, e := range entries {
 			wg.Go(func() {
 				msgs, err := unreadMessages(ctx, b, e)
-				cards[i] = unreadCard{entry: e, msgs: msgs, err: err}
+				cards[i] = unreadCard{entry: e, msgs: msgs, count: e.Unread, err: err}
 			})
 		}
 		wg.Wait()
-		return unreadLoaded{gen, cards}
+		return unreadLoaded{gen, cards, nil}
 	}
 }
 
@@ -151,7 +161,7 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
-		m.cards = msg.cards
+		m.cards, m.err = msg.cards, msg.err
 		m.selected = min(m.selected, max(0, len(m.cards)-1))
 		return m.scrolled(), nil
 
@@ -167,8 +177,8 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 			m.selected = min(max(0, len(m.cards)-1), m.selected+1)
 		case "enter":
 			if m.selected < len(m.cards) {
-				entry := m.cards[m.selected].entry
-				return m, func() tea.Msg { return unreadPicked{entry} }
+				card := m.cards[m.selected]
+				return m, func() tea.Msg { return unreadPicked{card} }
 			}
 		}
 		return m.scrolled(), nil
@@ -176,21 +186,33 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 	return m, nil
 }
 
+func (m unreadModel) name() string {
+	if m.mentions {
+		return "Mentions"
+	}
+	return "Unread"
+}
+
 func (m unreadModel) view(focused bool) string {
-	title := "Unread"
+	title := m.name()
 	var body []string
+	if m.err != nil {
+		body = []string{styleError.Render(textfmt.CleanError(m.err))}
+	}
 	switch {
 	case m.loading && len(m.cards) == 0:
-		body = []string{m.st.subtle.Render("Loading…")}
+		body = append(body, m.st.subtle.Render("Loading…"))
+	case len(m.cards) == 0 && m.mentions:
+		body = append(body, m.st.subtle.Render("No mentions"))
 	case len(m.cards) == 0:
-		body = []string{m.st.subtle.Render("Nothing unread")}
+		body = append(body, m.st.subtle.Render("Nothing unread"))
 	default:
 		end := min(len(m.cards), m.offset+m.visibleRows())
 		for i := m.offset; i < end; i++ {
 			body = append(body, strings.Split(m.card(i, m.width-4, focused), "\n")...)
 		}
 		if m.loading {
-			title = "Unread · refreshing…"
+			title += " · refreshing…"
 		}
 	}
 	return renderBox(title, body, m.width, m.height, m.st.border(focused))
@@ -207,7 +229,7 @@ func (m unreadModel) card(i, width int, focused bool) string {
 			break
 		}
 	}
-	pill := m.st.badge.Render(fmt.Sprintf(" %d ", c.entry.Unread))
+	pill := m.st.badge.Render(fmt.Sprintf(" %d ", c.count))
 	inner := width - 4
 	head += strings.Repeat(" ", max(1, inner-lipgloss.Width(head)-lipgloss.Width(pill))) + pill
 

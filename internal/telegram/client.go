@@ -254,9 +254,9 @@ func (c *Client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 	case *tg.UpdateShort:
 		updates = []tg.UpdateClass{u.Update}
 	case *tg.UpdateShortMessage:
-		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerUser{UserID: u.UserID}, FromID: &tg.PeerUser{UserID: u.UserID}, Message: u.Message, Date: u.Date}, true)
+		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerUser{UserID: u.UserID}, FromID: &tg.PeerUser{UserID: u.UserID}, Message: u.Message, Date: u.Date, Entities: u.Entities}, true)
 	case *tg.UpdateShortChatMessage:
-		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerChat{ChatID: u.ChatID}, FromID: &tg.PeerUser{UserID: u.FromID}, Message: u.Message, Date: u.Date}, true)
+		c.accept(&tg.Message{ID: u.ID, Out: u.Out, PeerID: &tg.PeerChat{ChatID: u.ChatID}, FromID: &tg.PeerUser{UserID: u.FromID}, Message: u.Message, Date: u.Date, Entities: u.Entities}, true)
 	}
 	for _, value := range updates {
 		switch u := value.(type) {

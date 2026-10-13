@@ -73,15 +73,18 @@ Keyboard shortcuts:
     Enter             Open chat, or switch to the selected account
     /                 Search users (a modal over the screen)
     u                 Unread: cards for every chat with unread messages
+    m                 Mentions: cards for the groups and channels with the
+                      latest messages mentioning you (not email)
     a                 Accounts (add, sign in, retry, Settings…)
     r                 Refresh chats
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)
     Esc               Close the open chat (wide terminals), else back to Accounts
 
-  Unread
+  Unread / Mentions
     Up/k, Down/j      Select card
-    Enter             Open the chat
+    Enter             Open the chat; a mention opens selected, in its thread
+                      on Mattermost
     r                 Reload
     Esc               Back
 
@@ -119,7 +122,7 @@ Keyboard shortcuts:
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
-    Esc               Cancel the reply, else back to Unread
+    Esc               Cancel the reply, else back to Unread (or Mentions)
     Ctrl+C            Close chat
     Any key           Unlock after the inactivity lock
 

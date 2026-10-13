@@ -285,14 +285,26 @@ func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry, unr
 	return stamp + nick
 }
 
-// shadeLine paints line on the selection background, padded to width. The
+// shadeLine paints line on the background bg (an SGR), padded to width. The
 // background is re-applied after every reset, since nick colours, styles and
 // image rows all end with one.
-func (s *styles) shadeLine(line string, width int) string {
+func shadeLine(line, bg string, width int) string {
 	pad := strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(line)))
-	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+s.selBgSGR)
-	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+s.selBgSGR)
-	return s.selBgSGR + line + pad + "\x1b[0m"
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+bg)
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+bg)
+	return bg + line + pad + "\x1b[0m"
+}
+
+// blockShade is the background of a message block: selection wins over a
+// mention, and neither leaves it unshaded.
+func (s *styles) blockShade(msg backend.Message, selected bool) string {
+	switch {
+	case selected:
+		return s.selBgSGR
+	case msg.Mentioned:
+		return s.mentionBgSGR
+	}
+	return ""
 }
 
 // boldLine sets line in bold, re-applied after every reset as in shadeLine.

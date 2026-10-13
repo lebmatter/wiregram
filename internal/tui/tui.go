@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbletea/v2"
@@ -47,11 +48,14 @@ type tuiModel struct {
 	searchOpen    bool
 	unread        unreadModel
 	unreadOpen    bool
-	focus         tuiFocus
-	result        *tuiResult
-	loadErr       error
-	width         int
-	height        int
+	// backToMentions sends Esc from the open chat back to Mentions, the
+	// view it was opened from, rather than Unread.
+	backToMentions bool
+	focus          tuiFocus
+	result         *tuiResult
+	loadErr        error
+	width          int
+	height         int
 }
 
 type tuiDialogsLoaded struct {
@@ -174,6 +178,25 @@ func (m tuiModel) closeChat() tuiModel {
 }
 
 func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
+	return m.openChatAt(entry, nil)
+}
+
+// openCard opens the chat of a card in the Unread or Mentions view; a
+// mention opens with its newest message selected.
+func (m tuiModel) openCard(c unreadCard) (tuiModel, tea.Cmd) {
+	mentions := m.unread.mentions
+	var target *backend.Message
+	if mentions && len(c.msgs) > 0 {
+		target = &c.msgs[len(c.msgs)-1]
+	}
+	m, cmd := m.openChatAt(c.entry, target)
+	m.backToMentions = mentions
+	return m, cmd
+}
+
+// openChatAt opens entry with the message target selected, if loaded, and
+// its thread open on backends that keep threads on the server.
+func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (tuiModel, tea.Cmd) {
 	// Closing a chat marks it read, so the list's counts are stale after it.
 	var reload tea.Cmd
 	if m.chatOpen {
@@ -186,6 +209,8 @@ func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
 	}
 	m.histories[entry.ID] = h
 	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h)
+	m.chat.target = target
+	m.backToMentions = false
 	m.chatOpen = true
 	m.focus = focusChat
 	m = m.sized()
@@ -252,7 +277,11 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			}
 		}
 		var cmd tea.Cmd
-		m.unread, cmd = newUnread(m.ctx, m.st, m.b, entries)
+		if m.backToMentions {
+			m.unread, cmd = newMentions(m.ctx, m.st, m.b)
+		} else {
+			m.unread, cmd = newUnread(m.ctx, m.st, m.b, entries)
+		}
 		m.unreadOpen = true
 		m.focus = focusChat
 		return m.sized(), tea.Batch(cmd, loadDialogs(m.ctx, m.b, m.archived))
@@ -301,7 +330,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case unreadPicked:
-		return m.openChat(msg.entry)
+		return m.openCard(msg.card)
 
 	case unreadClosed:
 		m = m.closeChat()
@@ -431,7 +460,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	switch {
 	case m.unreadOpen:
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
-			return m.openChat(m.unread.cards[i].entry)
+			return m.openCard(m.unread.cards[i])
 		}
 	default:
 		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y, right})
@@ -478,7 +507,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
-		chatListArchiveToggle, chatListSearch, chatListUnread, chatListAccounts, chatListSettings, chatListSwitch,
+		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListAccounts, chatListSettings, chatListSwitch,
 		chatListDeleteDone:
 		return true
 	}
@@ -589,6 +618,14 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.focus = focusChat
 		return m.sized(), cmd
 
+	case chatListMentions:
+		m = m.closeChat()
+		var cmd tea.Cmd
+		m.unread, cmd = newMentions(m.ctx, m.st, m.b)
+		m.unreadOpen = true
+		m.focus = focusChat
+		return m.sized(), cmd
+
 	case chatListAccounts:
 		m = m.closeChat()
 		return m.done(tuiResult{accounts: true})
@@ -632,7 +669,8 @@ func (m tuiModel) footer() string {
 	default:
 		keys = append(keys, m.list.helpKeys()...)
 		if m.unreadOpen {
-			keys = append(keys, helpKey{"tab", "unread"}, helpKey{"esc", "close unread"})
+			name := strings.ToLower(m.unread.name())
+			keys = append(keys, helpKey{"tab", name}, helpKey{"esc", "close " + name})
 		}
 		if m.chatOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})

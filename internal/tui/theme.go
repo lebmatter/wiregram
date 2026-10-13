@@ -12,21 +12,23 @@ import (
 // theme is a palette of lipgloss colour specs. Colours that carry meaning,
 // such as status, chat kinds, links and nicks, are the same in every theme.
 type theme struct {
-	name    string // shown in Settings and stored as the setting's value
-	accent  string
-	subtle  string
-	dim     string
-	selBg   string
-	badgeFg string
-	agent   string // replaces accent in agent mode
+	name   string // shown in Settings and stored as the setting's value
+	accent string
+	subtle string
+	dim    string
+	selBg  string
+	// mentionBg tints messages that mention the user.
+	mentionBg string
+	badgeFg   string
+	agent     string // replaces accent in agent mode
 }
 
 // themes is fixed; the first is the default. A new theme is one more entry.
 var themes = [...]theme{
 	{name: "Zest", accent: "#E8FE96", subtle: "#9a92b5", dim: "#6b6188", selBg: "#3a2d5e",
-		badgeFg: "#2b1f4a", agent: "#af87ff"},
-	{name: "Copper", accent: "214", subtle: "245", dim: "240", selBg: "237", badgeFg: "16",
-		agent: "141"},
+		mentionBg: "#33401f", badgeFg: "#2b1f4a", agent: "#af87ff"},
+	{name: "Copper", accent: "214", subtle: "245", dim: "240", selBg: "237", mentionBg: "58",
+		badgeFg: "16", agent: "141"},
 }
 
 const themeSetting = "theme"
@@ -61,9 +63,10 @@ type styles struct {
 	selectedRow lipgloss.Style
 	agent       lipgloss.Style
 
-	// selBgSGR is the selection background as a raw SGR, re-applied after
-	// resets by shadeLine.
-	selBgSGR string
+	// selBgSGR and mentionBgSGR are the selection and mention backgrounds as
+	// raw SGRs, re-applied after resets by shadeLine.
+	selBgSGR     string
+	mentionBgSGR string
 }
 
 func newStyles(t theme) *styles {
@@ -85,6 +88,8 @@ func newAccentStyles(t theme, accent string) *styles {
 		selectedRow: lipgloss.NewStyle().Bold(true).Background(selBg),
 		agent:       lipgloss.NewStyle().Foreground(lipgloss.Color(t.agent)),
 		selBgSGR:    ansi.NewStyle().BackgroundColor(selBg).String(),
+		mentionBgSGR: ansi.NewStyle().
+			BackgroundColor(lipgloss.Color(t.mentionBg)).String(),
 	}
 }
 

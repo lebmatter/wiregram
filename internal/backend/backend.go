@@ -63,7 +63,9 @@ type Message struct {
 	// Source is the text as written, markup included, when Text has had the
 	// markup taken out; an edit starts from it.
 	Source string
-	Raw    any
+	// Mentioned marks a message that mentions the user or the whole chat.
+	Mentioned bool
+	Raw       any
 }
 
 // MaxInlineImage is the largest image file, in bytes, drawn inline.
@@ -218,6 +220,19 @@ type UnreadFetcher interface {
 	// UnreadMessages returns at most limit of the newest incoming unread
 	// messages, oldest first.
 	UnreadMessages(ctx context.Context, ch ChatEntry, limit int) ([]Message, error)
+}
+
+// MentionFetcher is implemented by backends that can list recent messages
+// mentioning the user outside DMs.
+type MentionFetcher interface {
+	// Mentions returns at most limit mentions, newest first.
+	Mentions(ctx context.Context, limit int) ([]Mention, error)
+}
+
+// Mention is one message that mentions the user, with the chat it is in.
+type Mention struct {
+	Chat    ChatEntry
+	Message Message
 }
 
 // QuoteFetcher is implemented by backends that can load messages by ID, so a

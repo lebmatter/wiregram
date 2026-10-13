@@ -74,7 +74,8 @@ type chatViewModel struct {
 	reads    *genericReadReporter
 	replying *backend.Message
 	typing   bool
-	early    []backend.Event // arrived while the first history page was loading
+	early    []backend.Event  // arrived while the first history page was loading
+	target   *backend.Message // selected once the first history page is in
 
 	subMode chatSubMode
 	notice  string
@@ -759,6 +760,20 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 		cmds = append(cmds, cmd)
 	}
 	m.early = nil
+	if t := m.target; t != nil {
+		m.target = nil
+		for i, msg := range m.messages {
+			if msg.ID == t.ID {
+				m.selected = i
+			}
+		}
+		// The reply's root may be older than the page; the server has it.
+		if _, ok := m.b.(backend.ThreadFetcher); ok && t.ReplyToID != "" {
+			var cmd tea.Cmd
+			m, cmd = m.openThread(backend.Message{ID: t.ReplyToID})
+			cmds = append(cmds, cmd)
+		}
+	}
 	return m, tea.Batch(cmds...)
 }
 

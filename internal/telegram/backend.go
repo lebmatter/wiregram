@@ -7,8 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/gotd/td/tg"
 
@@ -121,8 +124,48 @@ func tgToMessage(c *Client, m *tg.Message) backend.Message {
 		Reactions:  reactions,
 		Preview:    webPagePreview(m.Media),
 		Spans:      tgSpans(m.Message, m.Entities),
+		Mentioned:  !m.Out && c.mentionsMe(m),
 		Raw:        m,
 	}
+}
+
+// mentionsMe reports whether m names the user in a mention entity. The
+// server's Mentioned flag is not enough: it is also set on replies to them.
+func (c *Client) mentionsMe(m *tg.Message) bool {
+	if len(m.Entities) == 0 {
+		return false
+	}
+	c.mu.Lock()
+	username := ""
+	if u := c.users[c.AccountID]; u != nil {
+		username = u.Username
+	}
+	c.mu.Unlock()
+	var units []uint16
+	for _, e := range m.Entities {
+		switch e := e.(type) {
+		case *tg.MessageEntityMentionName:
+			if e.UserID == c.AccountID {
+				return true
+			}
+		case *tg.MessageEntityMention:
+			if username == "" {
+				continue
+			}
+			if units == nil {
+				units = utf16.Encode([]rune(m.Message))
+			}
+			start, end := e.Offset, e.Offset+e.Length
+			if start < 0 || end > len(units) || start >= end {
+				continue
+			}
+			name := string(utf16.Decode(units[start:end]))
+			if strings.EqualFold(strings.TrimPrefix(name, "@"), username) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // tgSpans turns a message's entities into spans. Entities count UTF-16 code
@@ -395,11 +438,46 @@ func (tb *TelegramBackend) Pin(ctx context.Context, ch backend.ChatEntry, msg ba
 }
 
 func (tb *TelegramBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, query string) ([]backend.Message, error) {
-	msgs, err := tb.C.searchMessages(ctx, entryToChat(ch), query)
+	msgs, err := tb.C.searchMessages(ctx, entryToChat(ch), query, &tg.InputMessagesFilterEmpty{}, 20)
 	if err != nil {
 		return nil, err
 	}
 	return tgMessagesToMessages(tb.C, msgs), nil
+}
+
+// mentionChats bounds how many recent groups Mentions asks, one request
+// each, so a long chat list does not run into flood waits.
+const mentionChats = 20
+
+// Mentions asks each recent group for the messages the server files as
+// mentions, keeping those that name the user rather than reply to them.
+func (tb *TelegramBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention, error) {
+	chats, _, err := tb.C.dialogs(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	var found []backend.Mention
+	asked := 0
+	for _, ch := range chats {
+		if ch.key.kind == 'u' || ch.broadcast || asked == mentionChats {
+			continue
+		}
+		asked++
+		msgs, err := tb.C.searchMessages(ctx, ch, "", &tg.InputMessagesFilterMyMentions{}, 3)
+		if err != nil {
+			return found, err
+		}
+		entry := chatToChatEntry(ch)
+		for _, m := range msgs {
+			if msg := tgToMessage(tb.C, m); msg.Mentioned {
+				found = append(found, backend.Mention{Chat: entry, Message: msg})
+			}
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		return found[i].Message.Timestamp.After(found[j].Message.Timestamp)
+	})
+	return found[:min(len(found), limit)], nil
 }
 
 func (tb *TelegramBackend) SetActive(ch backend.ChatEntry) {

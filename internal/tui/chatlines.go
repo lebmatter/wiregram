@@ -153,9 +153,9 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 			return lines
 		}
 		lines, media := messageLines(i)
-		if i == selected {
+		if bg := s.blockShade(messages[i], i == selected); bg != "" {
 			for j := range lines {
-				lines[j] = s.shadeLine(lines[j], lineWidth)
+				lines[j] = shadeLine(lines[j], bg, lineWidth)
 			}
 		}
 		var top []string

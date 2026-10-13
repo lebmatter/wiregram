@@ -472,22 +472,75 @@ func (wa *WaBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 
 	entries := make([]backend.ChatEntry, 0, len(cache))
 	for _, c := range cache {
-		title := c.name
-		if title == "" {
-			title = wa.contactName(c.jid)
-		}
-		isDM := c.jid.Server == types.DefaultUserServer
-		entries = append(entries, backend.ChatEntry{
-			ID:      backend.ChatID{Backend: "whatsapp", Id: c.jid.String()},
-			Title:   title,
-			Unread:  c.unread,
-			LastAt:  c.lastAt,
-			IsDM:    isDM,
-			IsGroup: c.isGroup,
-			Raw:     c.jid,
-		})
+		entries = append(entries, wa.chatEntry(c))
 	}
 	return entries, 0, nil
+}
+
+func (wa *WaBackend) chatEntry(c waChatEntry) backend.ChatEntry {
+	title := c.name
+	if title == "" {
+		title = wa.contactName(c.jid)
+	}
+	return backend.ChatEntry{
+		ID:      backend.ChatID{Backend: "whatsapp", Id: c.jid.String()},
+		Title:   title,
+		Unread:  c.unread,
+		LastAt:  c.lastAt,
+		IsDM:    c.jid.Server == types.DefaultUserServer,
+		IsGroup: c.isGroup,
+		Raw:     c.jid,
+	}
+}
+
+// Mentions scans the messages held this session: WhatsApp has no server
+// search.
+func (wa *WaBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention, error) {
+	wa.mu.Lock()
+	cache := make([]waChatEntry, len(wa.chatCache))
+	copy(cache, wa.chatCache)
+	msgs := make(map[types.JID][]backend.Message, len(cache))
+	for _, c := range cache {
+		if c.isGroup {
+			msgs[c.jid] = wa.msgCache[c.jid]
+		}
+	}
+	wa.mu.Unlock()
+	var found []backend.Mention
+	for _, c := range cache {
+		if !c.isGroup {
+			continue
+		}
+		entry := wa.chatEntry(c)
+		for _, msg := range msgs[c.jid] {
+			if msg.Mentioned {
+				found = append(found, backend.Mention{Chat: entry, Message: msg})
+			}
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		return found[i].Message.Timestamp.After(found[j].Message.Timestamp)
+	})
+	return found[:min(len(found), limit)], nil
+}
+
+// mentionsMe reports whether m mentions the user, by phone number or by the
+// LID newer groups mention with.
+func (wa *WaBackend) mentionsMe(m *waE2E.Message) bool {
+	lid := ""
+	if wa.Client != nil && wa.Client.Store != nil {
+		lid = wa.Client.Store.LID.User
+	}
+	for _, s := range replyContext(m).GetMentionedJID() {
+		jid, err := types.ParseJID(s)
+		if err != nil {
+			continue
+		}
+		if jid.User == wa.Jid.User || lid != "" && jid.User == lid {
+			return true
+		}
+	}
+	return false
 }
 
 // Message history.
@@ -1242,6 +1295,7 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 		Preview:    waPreview(evt.Message),
 		Spans:      spans,
 		Source:     source,
+		Mentioned:  !outgoing && wa.mentionsMe(evt.Message),
 		Raw:        evt,
 	}
 }
@@ -1289,6 +1343,7 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 		Preview:    waPreview(m),
 		Spans:      spans,
 		Source:     source,
+		Mentioned:  !outgoing && wa.mentionsMe(m),
 	}
 }
 
