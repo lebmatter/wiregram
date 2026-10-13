@@ -438,7 +438,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
-		chatListArchiveToggle, chatListSearch, chatListUnread, chatListAccounts, chatListSettings, chatListQuit, chatListSwitch,
+		chatListArchiveToggle, chatListSearch, chatListUnread, chatListAccounts, chatListSettings, chatListSwitch,
 		chatListDeleteDone:
 		return true
 	}
@@ -563,9 +563,6 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m.done(tuiResult{switchTo: msg.to})
 
-	case chatListQuit:
-		m = m.closeChat()
-		return m.done(tuiResult{})
 	}
 
 	var cmd tea.Cmd
@@ -610,6 +607,9 @@ func (m tuiModel) footer() string {
 			if notice == "" {
 				notice = m.chat.notice
 			}
+		}
+		if !m.paneOpen() {
+			keys = append(keys, helpKey{"esc", "home"})
 		}
 		if m.mgr != nil && m.mgr.Agents != nil {
 			keys = append(keys, helpKey{"M-a", "agents"})

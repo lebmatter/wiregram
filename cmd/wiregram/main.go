@@ -61,7 +61,7 @@ Keyboard shortcuts:
                       Settings…, Add account, Quit)
     r                 Reconnect the selected account
     Esc               Back to the open account (when it is online)
-    q                 Quit
+    q, Ctrl+C         Quit (asks first)
 
   Chat list
     Up/k, Down/j      Select chat or account
@@ -72,8 +72,7 @@ Keyboard shortcuts:
     r                 Refresh chats
     Alt+D             Delete private chat (you only)
     Ctrl+Alt+D        Delete private chat (both sides)
-    Esc               Close the open chat (wide terminals)
-    q                 Quit (asks first)
+    Esc               Close the open chat (wide terminals), else back to Accounts
 
   Unread
     Up/k, Down/j      Select card

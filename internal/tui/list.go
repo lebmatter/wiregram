@@ -32,9 +32,8 @@ type chatListModel struct {
 	width, height int
 }
 
-// chatListConfirm is a pending y/n question: quit, or delete entry.
+// chatListConfirm is a pending y/n question: delete entry.
 type chatListConfirm struct {
-	quit   bool
 	entry  backend.ChatEntry
 	revoke bool
 }
@@ -47,7 +46,6 @@ type chatListSettings struct{}
 type chatListSearch struct{}
 type chatListUnread struct{}
 type chatListArchiveToggle struct{}
-type chatListQuit struct{}
 type chatListDeleteDone struct{ err error }
 
 func newChatListModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
@@ -151,9 +149,6 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			req := m.confirm
 			m.confirm = nil
 			if msg.String() == "y" || msg.String() == "Y" {
-				if req.quit {
-					return m, func() tea.Msg { return chatListQuit{} }
-				}
 				entry := req.entry
 				revoke := req.revoke
 				ctx := m.ctx
@@ -166,8 +161,8 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
-		case "q":
-			m.confirm = &chatListConfirm{quit: true}
+		case "esc":
+			return m, func() tea.Msg { return chatListAccounts{} }
 		case "r":
 			return m, func() tea.Msg { return chatListRefresh{} }
 		case "/":
@@ -335,9 +330,6 @@ func (m chatListModel) notice() string {
 	if m.confirm == nil {
 		return ""
 	}
-	if m.confirm.quit {
-		return "Quit wiregram? y to confirm; any other key cancels."
-	}
 	scope := "only for you"
 	if m.confirm.revoke {
 		scope = "for both sides"
@@ -352,5 +344,5 @@ func (m chatListModel) helpKeys() []helpKey {
 	if m.caps.DeleteChat {
 		keys = append(keys, helpKey{"M-d", "delete chat"})
 	}
-	return append(keys, helpKey{"q", "quit"})
+	return keys
 }

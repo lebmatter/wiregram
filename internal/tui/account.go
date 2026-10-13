@@ -35,6 +35,7 @@ type accountListModel struct {
 	notice   string
 	result   *accountChoice
 	digest   digestModel
+	quitting *quitModal
 	width    int
 	height   int
 }
@@ -105,6 +106,16 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			break
 		}
+		if m.quitting != nil {
+			x, y, w, h := m.quitRect()
+			if msg.X < x || msg.X >= x+w || msg.Y < y || msg.Y >= y+h {
+				m.quitting = nil
+			} else if q, ok := m.quitting.hit(msg.Y - y); ok {
+				m.quitting = &q
+				return m.Update(keyPress(tea.KeyEnter))
+			}
+			return m, nil
+		}
 		if i, ok := m.itemAt(msg.Y); ok {
 			m.selected = i
 			return m.Update(keyPress(tea.KeyEnter))
@@ -119,11 +130,22 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		if m.quitting != nil {
+			q, quit, done := m.quitting.key(msg)
+			m.quitting = &q
+			switch {
+			case quit:
+				m.result = &accountChoice{quit: true}
+				return m, tea.Quit
+			case done:
+				m.quitting = nil
+			}
+			return m, nil
+		}
 		switch msg.String() {
-		case "q":
-			m.result = &accountChoice{quit: true}
-			return m, tea.Quit
-		case "esc", "ctrl+c":
+		case "q", "ctrl+c":
+			m.quitting = &quitModal{}
+		case "esc":
 			if m.canGoBack() {
 				m.result = &accountChoice{index: -1}
 				return m, tea.Quit
@@ -142,8 +164,8 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.selected == len(m.accounts)+3 {
-				m.result = &accountChoice{quit: true}
-				return m, tea.Quit
+				m.quitting = &quitModal{}
+				return m, nil
 			}
 			if m.selected == len(m.accounts)+2 {
 				m.result = &accountChoice{add: true}
@@ -274,13 +296,25 @@ func (m accountListModel) View() tea.View {
 	if m.selected < len(m.accounts) {
 		notice = m.accounts[m.selected].Snapshot().Notice
 	}
-	content := renderHeader(m.width) + "\n" +
-		renderBox("Accounts", rows, m.width, m.bodyHeight(), colorAccent) + "\n" +
-		renderFooter(m.helpKeys(), notice, m.width)
+	body := renderHeader(m.width) + "\n" +
+		renderBox("Accounts", rows, m.width, m.bodyHeight(), colorAccent)
+	keys := m.helpKeys()
+	if m.quitting != nil {
+		x, y, _, _ := m.quitRect()
+		body = fadeUnder(body, m.quitting.View(), x, y)
+		keys, notice = quitModalHelp, ""
+	}
+	content := body + "\n" + renderFooter(keys, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+// quitRect is where the quit modal sits: centred over the screen.
+func (m accountListModel) quitRect() (x, y, w, h int) {
+	w, h = m.quitting.size()
+	return max(0, (m.width-w)/2), max(0, (m.bodyHeight()+1-h)/2), w, h
 }
 
 // canGoBack reports whether Esc can return to the account it came from.
