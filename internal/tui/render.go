@@ -40,6 +40,7 @@ var (
 	colorYellow = lipgloss.Color("220")
 	colorRed    = lipgloss.Color("203")
 	colorQuote  = lipgloss.Color("75")
+	colorGroup  = lipgloss.Color("67")
 	colorSelBg  = lipgloss.Color("237")
 	colorBadge  = lipgloss.Color("16")
 	// colorAgent replaces colorAccent throughout agent mode.

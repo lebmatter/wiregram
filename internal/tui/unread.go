@@ -47,7 +47,7 @@ func (k chatKind) tag() (string, color.Color) {
 	case kindChannel:
 		return "▶ Channel", colorYellow
 	}
-	return "# Group", colorQuote
+	return "# Group", colorGroup
 }
 
 type unreadCard struct {
