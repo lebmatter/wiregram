@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -16,11 +17,12 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Themes…", "Chat Agents…", "Quit"}
+var settingsActions = []string{"+ Add account…", "Themes…", "Plugins…", "Chat Agents…", "Quit"}
 
 const (
 	actionAdd = iota
 	actionThemes
+	actionPlugins
 	actionAgents
 	actionQuit
 )
@@ -78,6 +80,8 @@ type settingsModel struct {
 	confirm     func() tea.Cmd
 	confirmText string
 	busy        bool // a removal is running
+	edit        textinput.Model
+	editing     bool // a plugin's text setting is being typed
 	notice      string
 	width       int
 	height      int
@@ -111,10 +115,16 @@ func (m settingsModel) selected() *account.Account {
 // onThemes reports whether the Themes row is chosen, whose pane lists themes.
 func (m settingsModel) onThemes() bool { return m.left == len(m.accounts)+actionThemes }
 
+// onPlugins reports whether the Plugins row is chosen, whose pane lists plugins.
+func (m settingsModel) onPlugins() bool { return m.left == len(m.accounts)+actionPlugins }
+
 // rightRows is how many rows the right pane selects among.
 func (m settingsModel) rightRows() int {
 	if m.onThemes() {
 		return len(themes)
+	}
+	if m.onPlugins() {
+		return len(m.pluginRows())
 	}
 	return len(m.items())
 }
@@ -139,7 +149,7 @@ func (m *settingsModel) reload() {
 	m.accounts = m.mgr.List()
 	m.left = clampIndex(m.left, m.leftRows())
 	m.sel = clampIndex(m.sel, m.rightRows())
-	if m.selected() == nil && !m.onThemes() {
+	if m.selected() == nil && !m.onThemes() && !m.onPlugins() {
 		m.focus = paneAccounts
 	}
 }
@@ -166,7 +176,16 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tea.KeyPressMsg:
+		if m.editing {
+			return m.editKey(msg)
+		}
 		return m.handleKey(msg.String())
+	case tea.PasteMsg:
+		if m.editing {
+			var cmd tea.Cmd
+			m.edit, cmd = m.edit.Update(msg)
+			return m, cmd
+		}
 	case tea.MouseWheelMsg:
 		if k, ok := wheelKey(msg); ok && msg.Y < m.bodyHeight() {
 			if m.twoPane() {
@@ -227,6 +246,12 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 			m.focus = paneItems
 			return m, nil
 		}
+		if m.onPlugins() {
+			if m.rightRows() > 0 {
+				m.focus = paneItems
+			}
+			return m, nil
+		}
 		if k != "enter" {
 			return m, nil
 		}
@@ -244,6 +269,9 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 func (m settingsModel) itemsKey(k string) (tea.Model, tea.Cmd) {
 	if m.onThemes() {
 		return m.themesKey(k)
+	}
+	if m.onPlugins() {
+		return m.pluginsKey(k)
 	}
 	items := m.items()
 	switch k {
@@ -365,6 +393,7 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.confirm != nil {
 		return m.handleKey("esc") // anything but Enter or y declines
 	}
+	m.editing = false
 	if m.paneAt(mouse.X) == paneAccounts {
 		i := m.leftStart(h) + row
 		if i == len(m.accounts) {
@@ -394,7 +423,7 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 		return m.themesKey("enter")
 	}
 	i := window(m.sel, h-itemsTop) + row - itemsTop
-	if i < 0 || i >= len(m.items()) {
+	if i < 0 || i >= m.rightRows() {
 		return m, nil
 	}
 	m.focus, m.sel = paneItems, i
@@ -422,6 +451,8 @@ func (m settingsModel) View() tea.View {
 		title = textfmt.Plain(a.Label())
 	} else if m.onThemes() {
 		title = "Themes"
+	} else if m.onPlugins() {
+		title = "Plugins"
 	}
 	var body string
 	switch {
@@ -479,11 +510,14 @@ func (m settingsModel) itemLines(width, height int) []string {
 	a := m.selected()
 	if a == nil {
 		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
-			"The colours of the whole app.", "Bots that answer your direct messages.",
-			"Leave wiregram."}
+			"The colours of the whole app.", "Lua scripts that add widgets to the account list.",
+			"Bots that answer your direct messages.", "Leave wiregram."}
 		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
 		if m.onThemes() {
 			lines = append(append(lines, ""), m.themeLines(width)...)
+		}
+		if m.onPlugins() {
+			lines = append(append(lines, ""), m.pluginLines(width, height-itemsTop)...)
 		}
 		return lines
 	}
@@ -613,6 +647,9 @@ func (m settingsModel) helpKeys() []helpKey {
 	}
 	if m.onThemes() {
 		return []helpKey{{"←→", "select"}, {"⏎", "apply"}, {"esc", "accounts"}}
+	}
+	if m.editing {
+		return []helpKey{{"⏎", "save"}, {"esc", "cancel"}}
 	}
 	return []helpKey{{"↑↓", "select"}, {"⏎", "change"}, {"esc", "accounts"}}
 }

@@ -56,7 +56,8 @@ These are project constraints, not suggestions:
   renderer), and
   golang.org/x/image for scaling and WebP decoding of inline images, and
   for the email backend github.com/emersion/go-imap/v2 (pinned beta, with
-  its go-message and go-sasl) and golang.org/x/oauth2 for Google sign-in.
+  its go-message and go-sasl) and golang.org/x/oauth2 for Google sign-in,
+  and github.com/yuin/gopher-lua (pure Go Lua 5.1) for plugins.
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -89,7 +90,7 @@ These are project constraints, not suggestions:
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Themes, Chat Agents, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Plugins, Chat Agents, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
   binding; the primary account's directory is the config directory, so only its
@@ -98,6 +99,15 @@ These are project constraints, not suggestions:
   a grid of cards, one per online account, each fetched once when the account comes
   online, showing its unread total and busiest chats. An account's Unread digest
   setting leaves it out (`store.DigestSkip` in `account_data`). Clicking a card opens the account.
+- Lua plugins (`internal/plugin`, `docs/PLUGINS.md`) each run in their own
+  sandboxed VM: no `os`/`io`/`debug`/`require`, every call under a deadline,
+  HTTPS only to the hosts the plugin declares. Built-ins are embedded from
+  `internal/plugin/builtin` and start off; user plugins in
+  `~/.config/wiregram/plugins/` start on. Enabled plugins with a widget draw
+  a card in the chooser's `── Widgets` section under the digest, which
+  gives way to the digest when space is short (`internal/tui/widgets.go`).
+  Settings' Plugins… row switches them and edits their settings
+  (`internal/tui/plugins.go`). Weather (Open-Meteo) is the first.
 - Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
@@ -203,6 +213,8 @@ internal/
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache tables
   agent/             SQLite store for agents, providers and message history
+  plugin/            Lua plugin VMs, their API (settings, kv, http, widgets)
+                     and the embedded built-in plugins
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime
   tui/               BubbleTea screens and the account/mode loop (run.go)
@@ -238,7 +250,9 @@ lowest package that needs them rather than importing sideways.
 - `wiregram.db` — the single SQLite database (`internal/store`): `settings`
   (API credentials, autolock, mail retention, theme), `account_data` (identity,
   Telegram session and Matrix sync token per account key), the Chat Agent
-  tables and the email cache (`mail_messages`, `mail_sync`)
+  tables, the email cache (`mail_messages`, `mail_sync`) and plugins'
+  key-value rows (`plugin_kv`); plugin settings are `plugin.NAME.*` settings
+- `plugins/` — user Lua plugins (`NAME.lua` or `NAME/init.lua`)
 - `accounts/<backend>-*/` — one directory per added account; its name is the
   account key (`primary` for the original Telegram account). WhatsApp keeps
   whatsmeow's own `whatsapp.db` here.

@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS account_data (
 	value   BLOB NOT NULL,
 	PRIMARY KEY (account, name)
 );
+CREATE TABLE IF NOT EXISTS plugin_kv (
+	plugin TEXT NOT NULL,
+	key    TEXT NOT NULL,
+	value  TEXT NOT NULL,
+	PRIMARY KEY (plugin, key)
+);
 `
 
 type DB struct {
@@ -119,4 +125,55 @@ func (d *DB) DeleteAccount(account string) error {
 		return fmt.Errorf("delete account data: %w", err)
 	}
 	return nil
+}
+
+// PluginGet reads one value of a plugin's key-value store.
+func (d *DB) PluginGet(plugin, key string) (string, error) {
+	var value string
+	err := d.db.QueryRow(`SELECT value FROM plugin_kv WHERE plugin = ? AND key = ?`,
+		plugin, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("read plugin value %s: %w", key, err)
+	}
+	return value, nil
+}
+
+func (d *DB) PluginPut(plugin, key, value string) error {
+	_, err := d.db.Exec(`INSERT INTO plugin_kv (plugin, key, value) VALUES (?, ?, ?)
+		ON CONFLICT (plugin, key) DO UPDATE SET value = excluded.value`, plugin, key, value)
+	if err != nil {
+		return fmt.Errorf("save plugin value %s: %w", key, err)
+	}
+	return nil
+}
+
+func (d *DB) PluginDelete(plugin, key string) error {
+	if _, err := d.db.Exec(`DELETE FROM plugin_kv WHERE plugin = ? AND key = ?`,
+		plugin, key); err != nil {
+		return fmt.Errorf("delete plugin value %s: %w", key, err)
+	}
+	return nil
+}
+
+func (d *DB) PluginKeys(plugin string) ([]string, error) {
+	rows, err := d.db.Query(`SELECT key FROM plugin_kv WHERE plugin = ? ORDER BY key`, plugin)
+	if err != nil {
+		return nil, fmt.Errorf("list plugin values: %w", err)
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("list plugin values: %w", err)
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list plugin values: %w", err)
+	}
+	return keys, nil
 }

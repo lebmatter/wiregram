@@ -36,6 +36,7 @@ type accountListModel struct {
 	notice   string
 	result   *accountChoice
 	digest   digestModel
+	widgets  widgetsModel
 	quitting *quitModal
 	width    int
 	height   int
@@ -67,6 +68,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 		active:   active,
 		selected: selected,
 		digest:   newDigest(ctx, st, mgr),
+		widgets:  newWidgets(ctx, st, mgr.Plugins),
 		width:    w,
 		height:   h,
 	}
@@ -75,7 +77,8 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 func (m accountListModel) maxIndex() int { return len(m.accounts) + 3 }
 
 func (m accountListModel) Init() tea.Cmd {
-	return tea.Batch(listenAccounts(m.mgr), func() tea.Msg { return digestSync{} })
+	_, widgets := m.widgets.start(m.width - 4)
+	return tea.Batch(listenAccounts(m.mgr), func() tea.Msg { return digestSync{} }, widgets)
 }
 
 func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -100,6 +103,14 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case digestLoaded:
 		m.digest = m.digest.loaded(msg)
 
+	case widgetTick:
+		var cmd tea.Cmd
+		m.widgets, cmd = m.widgets.tick(m.width - 4)
+		return m, cmd
+
+	case widgetUpdated:
+		m.widgets = m.widgets.updated(msg)
+
 	case tea.MouseWheelMsg:
 		if k, ok := wheelKey(msg); ok {
 			return m.Update(k)
@@ -123,7 +134,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = i
 			return m.Update(keyPress(tea.KeyEnter))
 		}
-		_, shift, digest := m.layout()
+		_, shift, digest, _ := m.layout()
 		top := 2 + shift + len(m.accounts) + 5 + digestGap // the cards' first screen row
 		if a, ok := m.digest.cardAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < digest {
 			if i := slices.Index(m.accounts, a); i >= 0 {
@@ -199,35 +210,47 @@ func (m accountListModel) bodyHeight() int { return max(4, m.height-2) }
 // digestGap is the blank line and the divider above the digest's cards.
 const digestGap = 2
 
-// layout returns the logo when it fits above the rows and the digest, and how
-// far the rows are moved down to make room for it, or up to keep the
-// selection in view; digest is the height left for the cards under them.
-func (m accountListModel) layout() (logo []string, shift, digest int) {
+// layout returns the logo when it fits above the rows, the digest and the
+// widgets, and how far the rows are moved down to make room for it, or up to
+// keep the selection in view; digest and widgets are the heights left for
+// their cards under the rows. The widgets give way to the digest.
+func (m accountListModel) layout() (logo []string, shift, digest, widgets int) {
 	rows := len(m.accounts) + 5 // the accounts, a separator and four actions
 	limit := m.bodyHeight() - 2
 	cards := m.digest.height(m.width - 4)
+	wants := m.widgets.height(m.width - 4)
 	logo = strings.Split(m.st.logo(m.width-4), "\n")
 	section := 0
 	if cards > 0 {
 		section = digestGap + cards
 	}
+	if wants > 0 {
+		section += digestGap + wants
+	}
 	if rows+len(logo)+2+section <= limit {
-		return logo, len(logo) + 2, cards
+		return logo, len(logo) + 2, cards, wants
 	}
 	selRow := m.selected
 	if m.selected >= len(m.accounts) {
 		selRow++
 	}
-	shift = -max(0, selRow-limit+1)
-	if digest = limit - rows - digestGap; shift < 0 || cards == 0 || digest < digestCardH {
-		digest = 0
+	if shift = -max(0, selRow-limit+1); shift < 0 {
+		return nil, shift, 0, 0
 	}
-	return nil, shift, digest
+	left := limit - rows
+	if cards > 0 && left-digestGap >= digestCardH {
+		digest = min(cards, left-digestGap)
+		left -= digestGap + digest
+	}
+	if wants > 0 && left-digestGap >= wants {
+		widgets = wants
+	}
+	return nil, 0, digest, widgets
 }
 
 // itemAt maps a screen row to an account or action; the separator is none.
 func (m accountListModel) itemAt(y int) (int, bool) {
-	_, shift, _ := m.layout()
+	_, shift, _, _ := m.layout()
 	r := y - 2 - shift // under the header and the box's top edge
 	switch {
 	case r < 0 || y >= m.bodyHeight():
@@ -278,12 +301,14 @@ func (m accountListModel) View() tea.View {
 			rows = append(rows, m.st.subtle.Render("  "+label))
 		}
 	}
-	logo, shift, digest := m.layout()
+	logo, shift, digest, widgets := m.layout()
 	if digest > 0 {
-		label := "── Unread "
-		rule := strings.Repeat("─", max(0, inner-textfmt.DisplayWidth(label)))
-		rows = append(rows, "", m.st.dim.Render(label+rule))
+		rows = append(rows, "", m.st.dim.Render(sectionRule("── Unread ", inner)))
 		rows = append(rows, strings.Split(m.digest.view(inner, digest), "\n")...)
+	}
+	if widgets > 0 {
+		rows = append(rows, "", m.st.dim.Render(sectionRule("── Widgets ", inner)))
+		rows = append(rows, strings.Split(m.widgets.view(inner, widgets), "\n")...)
 	}
 	if shift > 0 {
 		var top []string
@@ -299,6 +324,9 @@ func (m accountListModel) View() tea.View {
 	if m.selected < len(m.accounts) {
 		notice = m.accounts[m.selected].Snapshot().Notice
 	}
+	if p := m.mgr.Plugins; notice == "" && p != nil && len(p.Errors) > 0 {
+		notice = textfmt.CleanError(p.Errors[0])
+	}
 	body := m.st.header(m.width) + "\n" +
 		renderBox("Accounts", rows, m.width, m.bodyHeight(), m.st.accentColor)
 	keys := m.helpKeys()
@@ -312,6 +340,11 @@ func (m accountListModel) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+// sectionRule is a divider that names the section under it.
+func sectionRule(label string, width int) string {
+	return label + strings.Repeat("─", max(0, width-textfmt.DisplayWidth(label)))
 }
 
 // quitRect is where the quit modal sits: centred over the screen.

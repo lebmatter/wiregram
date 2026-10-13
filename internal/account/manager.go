@@ -22,6 +22,7 @@ import (
 	"wiregram/internal/mail"
 	"wiregram/internal/matrix"
 	"wiregram/internal/mattermost"
+	"wiregram/internal/plugin"
 	"wiregram/internal/store"
 	"wiregram/internal/telegram"
 	"wiregram/internal/textfmt"
@@ -94,6 +95,7 @@ type AccountManager struct {
 	Store    *store.DB
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
+	Plugins  *plugin.Manager
 	Changed  chan struct{}
 	// agentChanged and inboxChanged mirror Changed for the agent runtime and
 	// the inbox watcher, so no listener takes another's signal.

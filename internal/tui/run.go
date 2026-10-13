@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
 	"wiregram/internal/backend"
+	"wiregram/internal/plugin"
 	"wiregram/internal/textfmt"
 )
 
@@ -36,6 +38,9 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		m.Agents.Start()
 		defer m.Agents.Stop()
 	}
+
+	m.Plugins = plugin.Load(m.Store, filepath.Join(m.Dir, "plugins"))
+	defer m.Plugins.Close()
 
 	inboxCtx, stopInbox := context.WithCancel(ctx)
 	defer stopInbox()
