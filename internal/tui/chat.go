@@ -96,6 +96,8 @@ type chatViewModel struct {
 
 	threadRoot  string
 	threadInput textinput.Model
+	// threadScroll is how many lines the thread pane is scrolled up from its end.
+	threadScroll int
 
 	confirmRevoke bool
 
@@ -965,16 +967,26 @@ func (m chatViewModel) mentionAllowed() bool {
 	if !ok || !mn.CanMention(m.entry) {
 		return false
 	}
-	before := []rune(m.input.Value())[:m.input.Position()]
+	in := m.activeInput()
+	before := []rune(in.Value())[:in.Position()]
 	return len(before) == 0 || unicode.IsSpace(before[len(before)-1])
+}
+
+// activeInput is the input being typed in: the thread's while it is open.
+func (m *chatViewModel) activeInput() *textinput.Model {
+	if m.subMode == chatSubThread {
+		return &m.threadInput
+	}
+	return &m.input
 }
 
 // insertMention puts text into the composer at the cursor.
 func (m chatViewModel) insertMention(text string) chatViewModel {
-	value := []rune(m.input.Value())
-	pos := m.input.Position()
-	m.input.SetValue(string(value[:pos]) + text + string(value[pos:]))
-	m.input.SetCursor(pos + len([]rune(text)))
+	in := m.activeInput()
+	value := []rune(in.Value())
+	pos := in.Position()
+	in.SetValue(string(value[:pos]) + text + string(value[pos:]))
+	in.SetCursor(pos + len([]rune(text)))
 	return m
 }
 

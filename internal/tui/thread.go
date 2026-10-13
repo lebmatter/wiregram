@@ -161,6 +161,7 @@ func (m chatViewModel) openThread(sel backend.Message) (chatViewModel, tea.Cmd) 
 	root := m.threadRootOf(sel)
 	m.threadRoot = root.ID
 	m.subMode = chatSubThread
+	m.threadScroll = 0
 	m.threadInput = textinput.New()
 	m.threadInput.Prompt = ""
 	m.threadInput.Placeholder = "Reply in thread…"
@@ -185,7 +186,11 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 			return m.openMenu()
 		}
 		m.threadInput.SetValue("")
+		m.threadScroll = 0
 		return m, m.sendMessage(chatOutgoing{text: text, replyTo: m.threadRoot})
+	}
+	if msg.Text == "@" && m.mentionAllowed() {
+		return m, func() tea.Msg { return chatMentionReq{} }
 	}
 	var cmd tea.Cmd
 	m.threadInput, cmd = m.threadInput.Update(msg)
@@ -195,8 +200,9 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 func (m chatViewModel) threadBox(width, height int, focused bool) string {
 	inner := width - 4
 	composer := m.threadComposer(inner, focused)
-	lines, _, _ := m.threadLines(inner, height-2-len(composer))
-	body := append(bottomLines(lines, height-2-len(composer)), composer...)
+	rows := height - 2 - len(composer)
+	lines, _, _ := m.threadLines(inner, rows)
+	body := append(screenRows(scrolled(lines, rows, m.threadScroll), rows, ""), composer...)
 	return renderBox("Thread", body, width, height, m.st.border(focused))
 }
 
@@ -252,7 +258,36 @@ func (m chatViewModel) threadOwners(width int) ([]int, []bool) {
 	inner := width - 4
 	height := m.height - 2 - len(m.threadComposer(inner, false))
 	_, owners, media := m.threadLines(inner, height)
-	return screenRows(owners, height, -1), screenRows(media, height, false)
+	return screenRows(scrolled(owners, height, m.threadScroll), height, -1),
+		screenRows(scrolled(media, height, m.threadScroll), height, false)
+}
+
+// scrolled drops the rows the thread pane is scrolled past, so the last of
+// the rest sits at the bottom of a pane height rows tall.
+func scrolled[T any](rows []T, height, scroll int) []T {
+	return rows[:len(rows)-min(scroll, max(0, len(rows)-height))]
+}
+
+// overThread reports whether column x of the chat pane is in the thread pane.
+func (m chatViewModel) overThread(x int) bool {
+	if m.subMode != chatSubThread {
+		return false
+	}
+	left, split := m.threadSplit()
+	return !split || x >= left
+}
+
+// scrollThread moves the thread pane by delta lines, up when positive.
+func (m chatViewModel) scrollThread(delta int) chatViewModel {
+	width := m.width
+	if left, split := m.threadSplit(); split {
+		width -= left
+	}
+	inner := width - 4
+	height := m.height - 2 - len(m.threadComposer(inner, false))
+	lines, _, _ := m.threadLines(inner, height)
+	m.threadScroll = min(max(0, m.threadScroll+delta), max(0, len(lines)-height))
+	return m
 }
 
 // threadMessageAt returns the thread message drawn at column x and row y

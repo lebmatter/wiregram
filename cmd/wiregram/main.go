@@ -42,7 +42,8 @@ Enter on another account switches to it; the last row opens Settings.
 The account list shows an unread digest below it: one card per connected
 account, with its busiest chats. Settings can leave an account out.
 
-The mouse wheel scrolls the list under the pointer. Clicking a chat,
+The mouse wheel scrolls the list under the pointer, or the thread pane.
+Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
 message selects it; right-clicking it opens its actions. Clicking its
 attachment (the image or the [tag] row) downloads it and opens it with
@@ -136,6 +137,7 @@ Keyboard shortcuts:
     Up/Down           Move through the chat's messages
     Enter             Reply in thread; with an empty input, open the
                       selected message's actions
+    @                 Mention a member, as in the chat
     Esc               Close thread
 
   Upload

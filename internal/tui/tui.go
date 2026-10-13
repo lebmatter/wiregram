@@ -357,6 +357,14 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 }
 
 // overList reports whether column x of the body shows the chat list.
+// chatX turns screen column x into a column of the chat pane.
+func (m tuiModel) chatX(x int) int {
+	if m.twoPane() {
+		return x - sidebarWidth
+	}
+	return x
+}
+
 func (m tuiModel) overList(x int) bool {
 	if m.twoPane() {
 		return x < sidebarWidth
@@ -419,10 +427,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	m.focus = focusChat
-	x := mouse.X
-	if m.twoPane() {
-		x -= sidebarWidth
-	}
+	x := m.chatX(mouse.X)
 	switch {
 	case m.unreadOpen:
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
@@ -454,6 +459,12 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		}
 	case m.unreadOpen:
 		m.unread, cmd = m.unread.Update(k)
+	case m.chatOpen && m.chat.overThread(m.chatX(mouse.X)):
+		lines := 3
+		if k.Code == tea.KeyDown {
+			lines = -lines
+		}
+		m.chat = m.chat.scrollThread(lines)
 	case m.chatOpen:
 		switch m.chat.subMode {
 		case chatSubNone, chatSubThread, chatSubMenu, chatSubSearch, chatSubUpload, chatSubReader:
