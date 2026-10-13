@@ -27,6 +27,7 @@ type accountChoice struct {
 }
 
 type accountListModel struct {
+	st       *styles
 	ctx      context.Context
 	mgr      *account.AccountManager
 	accounts []*account.Account
@@ -57,13 +58,15 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 			selected = i
 		}
 	}
+	st := newStyles(loadTheme(mgr.Store))
 	return accountListModel{
+		st:       st,
 		ctx:      ctx,
 		mgr:      mgr,
 		accounts: mgr.Accounts,
 		active:   active,
 		selected: selected,
-		digest:   newDigest(ctx, mgr),
+		digest:   newDigest(ctx, st, mgr),
 		width:    w,
 		height:   h,
 	}
@@ -144,7 +147,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "q", "ctrl+c":
-			m.quitting = &quitModal{}
+			m.quitting = &quitModal{st: m.st}
 		case "esc":
 			if m.canGoBack() {
 				m.result = &accountChoice{index: -1}
@@ -164,7 +167,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.selected == len(m.accounts)+3 {
-				m.quitting = &quitModal{}
+				m.quitting = &quitModal{st: m.st}
 				return m, nil
 			}
 			if m.selected == len(m.accounts)+2 {
@@ -203,7 +206,7 @@ func (m accountListModel) layout() (logo []string, shift, digest int) {
 	rows := len(m.accounts) + 5 // the accounts, a separator and four actions
 	limit := m.bodyHeight() - 2
 	cards := m.digest.height(m.width - 4)
-	logo = strings.Split(renderLogo(m.width-4), "\n")
+	logo = strings.Split(m.st.logo(m.width-4), "\n")
 	section := 0
 	if cards > 0 {
 		section = digestGap + cards
@@ -244,7 +247,7 @@ func (m accountListModel) View() tea.View {
 		s := a.Snapshot()
 		marker := "  "
 		if i == m.selected {
-			marker = styleAccent.Render("> ")
+			marker = m.st.accent.Render("> ")
 		}
 		label := truncate(textfmt.Plain(a.Label()), max(8, inner/2))
 		if a == m.active {
@@ -254,32 +257,32 @@ func (m accountListModel) View() tea.View {
 		if a == m.active {
 			status += " · current"
 		}
-		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, accountGlyph(s), label,
-			styleDim.Render(backendTag(a.BackendType)), styleSubtle.Render(status))
+		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, m.st.accountGlyph(s), label,
+			m.st.dim.Render(backendTag(a.BackendType)), m.st.subtle.Render(status))
 		if m.mgr.Agents != nil {
 			if name := m.mgr.Agents.AgentName(a); name != "" {
-				row += "  " + styleAgent.Render("agent: "+textfmt.Plain(name))
+				row += "  " + m.st.agent.Render("agent: "+textfmt.Plain(name))
 			}
 		}
 		if i == m.selected {
-			row = styleSelectedRow.Render(row)
+			row = m.st.selectedRow.Render(row)
 		}
 		rows = append(rows, row)
 	}
-	rows = append(rows, styleDim.Render(strings.Repeat("─", inner)))
+	rows = append(rows, m.st.dim.Render(strings.Repeat("─", inner)))
 	for i, label := range []string{"Chat Agents…", "Settings…", "Add account…", "Quit"} {
 		index := len(m.accounts) + i
 		if index == m.selected {
-			rows = append(rows, styleSelectedRow.Render(styleAccent.Render("> ")+label))
+			rows = append(rows, m.st.selectedRow.Render(m.st.accent.Render("> ")+label))
 		} else {
-			rows = append(rows, styleSubtle.Render("  "+label))
+			rows = append(rows, m.st.subtle.Render("  "+label))
 		}
 	}
 	logo, shift, digest := m.layout()
 	if digest > 0 {
 		label := "── Unread "
 		rule := strings.Repeat("─", max(0, inner-textfmt.DisplayWidth(label)))
-		rows = append(rows, "", styleDim.Render(label+rule))
+		rows = append(rows, "", m.st.dim.Render(label+rule))
 		rows = append(rows, strings.Split(m.digest.view(inner, digest), "\n")...)
 	}
 	if shift > 0 {
@@ -296,15 +299,15 @@ func (m accountListModel) View() tea.View {
 	if m.selected < len(m.accounts) {
 		notice = m.accounts[m.selected].Snapshot().Notice
 	}
-	body := renderHeader(m.width) + "\n" +
-		renderBox("Accounts", rows, m.width, m.bodyHeight(), colorAccent)
+	body := m.st.header(m.width) + "\n" +
+		renderBox("Accounts", rows, m.width, m.bodyHeight(), m.st.accentColor)
 	keys := m.helpKeys()
 	if m.quitting != nil {
 		x, y, _, _ := m.quitRect()
-		body = fadeUnder(body, m.quitting.View(), x, y)
+		body = m.st.fadeUnder(body, m.quitting.View(), x, y)
 		keys, notice = quitModalHelp, ""
 	}
-	content := body + "\n" + renderFooter(keys, notice, m.width)
+	content := body + "\n" + m.st.footer(keys, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -367,6 +370,7 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 }
 
 type addAccountModel struct {
+	st      *styles
 	wiz     wizardModel
 	answers wizardAnswers // nil when cancelled
 	width   int
@@ -385,7 +389,7 @@ var addAccountOptions = []struct {
 }
 
 // addAccountSteps asks for Telegram API credentials only when none are configured.
-func addAccountSteps(needsAPI bool) []wizardStep {
+func addAccountSteps(st *styles, needsAPI bool) []wizardStep {
 	needsServer := func(a wizardAnswers) bool {
 		return a["network"] == "mattermost" || a["network"] == "matrix" || a["network"] == "email"
 	}
@@ -398,7 +402,7 @@ func addAccountSteps(needsAPI bool) []wizardStep {
 			options: func(wizardAnswers) []wizardOption {
 				var opts []wizardOption
 				for _, o := range addAccountOptions {
-					label := o.label + "  " + styleDim.Render(backendTag(o.key))
+					label := o.label + "  " + st.dim.Render(backendTag(o.key))
 					opts = append(opts, wizardOption{label: label, value: o.key})
 				}
 				return opts
@@ -474,10 +478,11 @@ func withScheme(s string) string {
 	return "https://" + s
 }
 
-func newAddAccountModel(needsAPI bool) addAccountModel {
+func newAddAccountModel(st *styles, needsAPI bool) addAccountModel {
 	w, h := termSize()
 	return addAccountModel{
-		wiz:    newWizard("Add account", colorAccent, addAccountSteps(needsAPI), nil),
+		st:     st,
+		wiz:    newWizard(st, "Add account", addAccountSteps(st, needsAPI), nil),
 		width:  w,
 		height: h,
 	}
@@ -515,9 +520,9 @@ func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m addAccountModel) View() tea.View {
 	bodyHeight := max(4, m.height-2)
-	content := renderHeader(m.width) + "\n" +
+	content := m.st.header(m.width) + "\n" +
 		m.wiz.view(m.width, bodyHeight) + "\n" +
-		renderFooter(m.wiz.helpKeys(), "", m.width)
+		m.st.footer(m.wiz.helpKeys(), "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -525,7 +530,7 @@ func (m addAccountModel) View() tea.View {
 }
 
 func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.Account, error) {
-	m := newAddAccountModel(!mgr.HasTelegramCredentials())
+	m := newAddAccountModel(newStyles(loadTheme(mgr.Store)), !mgr.HasTelegramCredentials())
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	result, err := p.Run()
 	if err != nil {
@@ -554,6 +559,7 @@ func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.A
 }
 
 type loginModel struct {
+	st       *styles
 	ctx      context.Context
 	mgr      *account.AccountManager
 	a        *account.Account
@@ -580,6 +586,7 @@ type loginDoneMsg struct{}
 func newLoginModel(ctx context.Context, mgr *account.AccountManager, a *account.Account, requests chan account.LoginPrompt) loginModel {
 	w, h := termSize()
 	return loginModel{
+		st:       newStyles(loadTheme(mgr.Store)),
 		ctx:      ctx,
 		mgr:      mgr,
 		a:        a,
@@ -699,23 +706,23 @@ func (m loginModel) View() tea.View {
 	bubbleWidth := wizardBubbleWidth(inner)
 	var lines []string
 	for _, t := range m.turns {
-		lines = wizardAsk(lines, t.ask, bubbleWidth, colorAccent)
-		lines = wizardReply(lines, t.reply, inner, bubbleWidth)
+		lines = wizardAsk(lines, t.ask, bubbleWidth, m.st.accentColor)
+		lines = m.st.wizardReply(lines, t.reply, inner, bubbleWidth)
 	}
 	if m.current != nil {
-		lines = wizardAsk(lines, loginLabel(m.current.Label), bubbleWidth, colorAccent)
+		lines = wizardAsk(lines, loginLabel(m.current.Label), bubbleWidth, m.st.accentColor)
 		m.input.SetWidth(max(10, inner-4))
-		lines = append(lines, styleAccent.Render("› ")+m.input.View())
+		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
 	} else {
-		lines = append(lines, styleSubtle.Render("Waiting for server…"))
+		lines = append(lines, m.st.subtle.Render("Waiting for server…"))
 	}
 	if m.notice != "" {
 		lines = append(lines, styleError.Render(textfmt.Plain(m.notice)))
 	}
 	box := renderBox("Sign in — "+m.label, bottomLines(lines, bodyHeight-2),
-		m.width, bodyHeight, colorAccent)
-	content := renderHeader(m.width) + "\n" + box + "\n" +
-		renderFooter([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, "", m.width)
+		m.width, bodyHeight, m.st.accentColor)
+	content := m.st.header(m.width) + "\n" + box + "\n" +
+		m.st.footer([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
@@ -777,6 +784,7 @@ func tuiLogin(ctx context.Context, mgr *account.AccountManager, a *account.Accou
 }
 
 type connectingModel struct {
+	st     *styles
 	ctx    context.Context
 	mgr    *account.AccountManager
 	a      *account.Account
@@ -790,8 +798,9 @@ type connectingDone struct{}
 
 func newConnectingModel(ctx context.Context, mgr *account.AccountManager, a *account.Account) connectingModel {
 	w, h := termSize()
-	spin := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styleAccent))
-	return connectingModel{ctx: ctx, mgr: mgr, a: a, spin: spin, width: w, height: h}
+	st := newStyles(loadTheme(mgr.Store))
+	spin := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(st.accent))
+	return connectingModel{st: st, ctx: ctx, mgr: mgr, a: a, spin: spin, width: w, height: h}
 }
 
 func (m connectingModel) Init() tea.Cmd {
@@ -830,11 +839,11 @@ func (m connectingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m connectingModel) View() tea.View {
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		renderLogo(m.width),
+		m.st.logo(m.width),
 		"",
 		m.spin.View()+"Connecting to "+textfmt.Plain(m.a.Label())+"…",
 		"",
-		styleDim.Render("esc to go back"),
+		m.st.dim.Render("esc to go back"),
 	)
 	v := tea.NewView(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
 	v.AltScreen = true

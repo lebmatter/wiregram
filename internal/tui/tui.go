@@ -30,6 +30,7 @@ type tuiResult struct {
 // tuiModel is one account's main screen: header, chat list, chat, footer.
 // At twoPaneWidth columns and wider the list and chat sit side by side.
 type tuiModel struct {
+	st            *styles
 	ctx           context.Context
 	mgr           *account.AccountManager
 	active        *account.Account
@@ -91,6 +92,7 @@ func chipsTick() tea.Cmd {
 func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, events *backend.Subscription, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) tuiModel {
 	w, h := termSize()
 	m := tuiModel{
+		st:            newStyles(loadTheme(mgr.Store)),
 		ctx:           ctx,
 		mgr:           mgr,
 		active:        active,
@@ -102,7 +104,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		width:         w,
 		height:        h,
 	}
-	m.list = newChatListModel(ctx, mgr, active, b, entries, false, archiveUnread)
+	m.list = newChatListModel(ctx, m.st, mgr, active, b, entries, false, archiveUnread)
 	return m.sized()
 }
 
@@ -183,7 +185,7 @@ func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
 		h = make([]string, 0)
 	}
 	m.histories[entry.ID] = h
-	m.chat = newChatViewModel(m.ctx, m.b, entry, &h)
+	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h)
 	m.chatOpen = true
 	m.focus = focusChat
 	m = m.sized()
@@ -250,14 +252,14 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			}
 		}
 		var cmd tea.Cmd
-		m.unread, cmd = newUnread(m.ctx, m.b, entries)
+		m.unread, cmd = newUnread(m.ctx, m.st, m.b, entries)
 		m.unreadOpen = true
 		m.focus = focusChat
 		return m.sized(), tea.Batch(cmd, loadDialogs(m.ctx, m.b, m.archived))
 
 	case chatForwardReq:
 		var cmd tea.Cmd
-		m.search, cmd = newForwardSearch(m.ctx, m.b, m.entries, msg.req)
+		m.search, cmd = newForwardSearch(m.ctx, m.st, m.b, m.entries, msg.req)
 		m.searchOpen = true
 		return m, cmd
 
@@ -267,7 +269,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			break
 		}
 		var cmd tea.Cmd
-		m.search, cmd = newMentionSearch(m.ctx, m.b, mn, m.chat.entry)
+		m.search, cmd = newMentionSearch(m.ctx, m.st, m.b, mn, m.chat.entry)
 		m.searchOpen = true
 		return m, cmd
 
@@ -540,7 +542,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		selected, offset := m.list.selected, m.list.offset
 		m.entries = msg.entries
 		m.archiveUnread = msg.archiveUnread
-		m.list = newChatListModel(m.ctx, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
+		m.list = newChatListModel(m.ctx, m.st, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
 		m.list.selected = min(selected, m.list.maxIndex())
 		m.list.offset = offset
 		return m, nil
@@ -564,14 +566,14 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case chatListSearch:
 		var cmd tea.Cmd
-		m.search, cmd = newUserSearch(m.ctx, m.b, m.entries)
+		m.search, cmd = newUserSearch(m.ctx, m.st, m.b, m.entries)
 		m.searchOpen = true
 		return m, cmd
 
 	case chatListUnread:
 		m = m.closeChat()
 		var cmd tea.Cmd
-		m.unread, cmd = newUnread(m.ctx, m.b, m.entries)
+		m.unread, cmd = newUnread(m.ctx, m.st, m.b, m.entries)
 		m.unreadOpen = true
 		m.focus = focusChat
 		return m.sized(), cmd
@@ -634,7 +636,7 @@ func (m tuiModel) footer() string {
 			keys = append(keys, helpKey{"M-a", "agents"})
 		}
 	}
-	return renderFooter(keys, notice, m.width)
+	return m.st.footer(keys, notice, m.width)
 }
 
 func (m tuiModel) View() tea.View {
@@ -656,12 +658,12 @@ func (m tuiModel) render() string {
 	switch {
 	case m.loadErr != nil && !m.paneOpen():
 		msg := styleError.Render("Error: "+textfmt.CleanError(m.loadErr)) + "\n" +
-			styleSubtle.Render("Press any key to retry.")
+			m.st.subtle.Render("Press any key to retry.")
 		body = renderBox(m.list.title(), centerLines(m.width-4, bodyHeight-2, msg),
 			m.width, bodyHeight, colorRed)
 	case m.twoPane():
 		list := renderBox(m.list.title(), m.list.body(sidebarWidth-4, bodyHeight-2, listFocused),
-			sidebarWidth, bodyHeight, boxBorder(listFocused))
+			sidebarWidth, bodyHeight, m.st.border(listFocused))
 		right := m.emptyPane(m.width-sidebarWidth, bodyHeight)
 		switch {
 		case m.unreadOpen:
@@ -676,15 +678,15 @@ func (m tuiModel) render() string {
 		body = m.chat.View()
 	default:
 		body = renderBox(m.list.title(), m.list.body(m.width-4, bodyHeight-2, true),
-			m.width, bodyHeight, colorAccent)
+			m.width, bodyHeight, m.st.accentColor)
 	}
 	if m.menuShown() {
 		x, y, _, _ := m.menuRect()
-		body = fadeUnder(body, m.chat.menu.View(m.chat.width), x, y)
+		body = m.st.fadeUnder(body, m.chat.menu.View(m.chat.width), x, y)
 	}
 	if m.searchOpen {
 		x, y, _, _ := m.searchRect()
-		body = fadeUnder(body, m.search.View(), x, y)
+		body = m.st.fadeUnder(body, m.search.View(), x, y)
 	}
 	return body + "\n" + m.footer()
 }
@@ -725,12 +727,12 @@ func (m tuiModel) searchRect() (x, y, w, h int) {
 
 func (m tuiModel) emptyPane(width, height int) string {
 	hint := lipgloss.JoinVertical(lipgloss.Center,
-		renderLogo(width-4),
+		m.st.logo(width-4),
 		"",
-		styleSubtle.Render("Pick a chat and press ⏎"),
-		styleDim.Render(textfmt.Plain(m.b.AccountLabel())),
+		m.st.subtle.Render("Pick a chat and press ⏎"),
+		m.st.dim.Render(textfmt.Plain(m.b.AccountLabel())),
 	)
-	return renderBox("", centerLines(width-4, height-2, hint), width, height, colorDim)
+	return renderBox("", centerLines(width-4, height-2, hint), width, height, m.st.dimColor)
 }
 
 // tuiSelectChat runs one account's main screen until the user quits (nil),

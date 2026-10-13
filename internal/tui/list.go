@@ -18,6 +18,7 @@ import (
 // accounts above, chats, archive and search, accounts below, then
 // "Settings…".
 type chatListModel struct {
+	st            *styles
 	ctx           context.Context
 	mgr           *account.AccountManager
 	active        *account.Account
@@ -48,9 +49,10 @@ type chatListUnread struct{}
 type chatListArchiveToggle struct{}
 type chatListDeleteDone struct{ err error }
 
-func newChatListModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
+func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
 	w, h := termSize()
 	m := chatListModel{
+		st:            st,
 		ctx:           ctx,
 		mgr:           mgr,
 		active:        active,
@@ -254,7 +256,7 @@ func (m chatListModel) accountRow(a *account.Account, expanded, selected, focuse
 		marker = "> "
 	}
 	state := a.Snapshot()
-	text := marker + arrow + accountGlyph(state) + " " + tag + " " + label
+	text := marker + arrow + m.st.accountGlyph(state) + " " + tag + " " + label
 	if !expanded && state.Unseen > 0 {
 		text += fmt.Sprintf(" (%d)", state.Unseen)
 	}
@@ -262,13 +264,13 @@ func (m chatListModel) accountRow(a *account.Account, expanded, selected, focuse
 	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(row)))
 	switch {
 	case selected && focused:
-		return styleSelectedRow.Render(row)
+		return m.st.selectedRow.Render(row)
 	case selected:
 		return styleTitle.Render(row)
 	case expanded:
-		return styleTitle.Foreground(colorAccent).Render(row)
+		return styleTitle.Foreground(m.st.accentColor).Render(row)
 	}
-	return styleSubtle.Render(row)
+	return m.st.subtle.Render(row)
 }
 
 // body renders the tree rows for a width×height area.
@@ -284,13 +286,13 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(m.active, true, false, focused, width))
 	}
 	for _, entry := range m.entries {
-		rows = append(rows, "    "+chatListLine(entry, index == m.selected, focused, max(1, width-4)))
+		rows = append(rows, "    "+m.st.chatListLine(entry, index == m.selected, focused, max(1, width-4)))
 		index++
 	}
 	if len(m.entries) == 0 {
-		rows = append(rows, styleSubtle.Render("      No chats here"))
+		rows = append(rows, m.st.subtle.Render("      No chats here"))
 	}
-	rows = append(rows, "    "+styleDim.Render(strings.Repeat("─", max(1, width-4))))
+	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
 
 	archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}
 	if m.archived {
@@ -301,9 +303,9 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		unread.Unread += e.Unread
 	}
 	for _, a := range []backend.ChatEntry{unread, archive, {Title: "Search users…"}} {
-		line := chatListLine(a, index == m.selected, focused, max(1, width-4))
+		line := m.st.chatListLine(a, index == m.selected, focused, max(1, width-4))
 		if index != m.selected {
-			line = styleSubtle.Render(line)
+			line = m.st.subtle.Render(line)
 		}
 		rows = append(rows, "    "+line)
 		index++
@@ -312,9 +314,9 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
 		index++
 	}
-	manage := chatListLine(backend.ChatEntry{Title: "Settings…"}, index == m.selected, focused, width)
+	manage := m.st.chatListLine(backend.ChatEntry{Title: "Settings…"}, index == m.selected, focused, width)
 	if index != m.selected {
-		manage = styleDim.Render(manage)
+		manage = m.st.dim.Render(manage)
 	}
 	rows = append(rows, manage)
 	if m.offset < len(rows) {

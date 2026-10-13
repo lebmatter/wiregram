@@ -61,7 +61,7 @@ func imageRows(height int) int {
 
 // imageCard draws a loaded image in a rounded card titled with its media
 // label, the caption wrapped below it, or nothing when it does not fit.
-func imageCard(msg backend.Message, c *chatImage, indent, lineWidth, maxRows int) []string {
+func (s *styles) imageCard(msg backend.Message, c *chatImage, indent, lineWidth, maxRows int) []string {
 	avail := lineWidth - indent
 	if c == nil || c.img == nil || avail < 12 {
 		return nil
@@ -82,7 +82,7 @@ func imageCard(msg backend.Message, c *chatImage, indent, lineWidth, maxRows int
 	}
 	title := mediaTitle(msg.MediaLabel)
 	pad := strings.Repeat(" ", indent)
-	lines := strings.Split(renderBox(title, body, width, len(body)+2, colorDim), "\n")
+	lines := strings.Split(renderBox(title, body, width, len(body)+2, s.dimColor), "\n")
 	for i := range lines {
 		lines[i] = pad + lines[i]
 	}
@@ -91,16 +91,16 @@ func imageCard(msg backend.Message, c *chatImage, indent, lineWidth, maxRows int
 
 // imageText returns the message text to print after the prefix and the
 // lines drawn below it: a loaded image moves the caption into its card.
-func imageText(msg backend.Message, c *chatImage, indent, lineWidth,
+func (s *styles) imageText(msg backend.Message, c *chatImage, indent, lineWidth,
 	maxRows int) (string, []string) {
 	text := messageText(msg)
 	if !msg.Image || c == nil || c.failed {
 		return text, nil
 	}
 	if c.img == nil {
-		return text, []string{strings.Repeat(" ", indent) + styleSubtle.Render("loading image…")}
+		return text, []string{strings.Repeat(" ", indent) + s.subtle.Render("loading image…")}
 	}
-	card := imageCard(msg, c, indent, lineWidth, maxRows)
+	card := s.imageCard(msg, c, indent, lineWidth, maxRows)
 	if card == nil {
 		return text, nil
 	}

@@ -76,10 +76,10 @@ func (m chatViewModel) startUpload() (chatViewModel, tea.Cmd) {
 	p.AutoHeight = false
 	// Esc belongs to the panel (back/cancel), not to directory navigation.
 	p.KeyMap.Back = key.NewBinding(key.WithKeys("h", "backspace", "left"))
-	p.Styles.Cursor = styleAccent
-	p.Styles.Selected = styleAccent.Bold(true)
+	p.Styles.Cursor = m.st.accent
+	p.Styles.Selected = m.st.accent.Bold(true)
 	p.Styles.Directory = styleQuoteBar
-	p.Styles.EmptyDirectory = styleDim.SetString("  This folder is empty")
+	p.Styles.EmptyDirectory = m.st.dim.SetString("  This folder is empty")
 	p.SetHeight(max(3, m.height-5))
 	m.upload = uploadPanel{step: uploadPick, picker: p, lastDir: dir}
 	m.subMode = chatSubUpload
@@ -238,34 +238,34 @@ func (m chatViewModel) pickUpload(value string) (chatViewModel, tea.Cmd) {
 
 func (m chatViewModel) uploadBody(width, height int) []string {
 	u := m.upload
-	heading := styleTitle.Render("Upload") + styleSubtle.Render(" to "+textfmt.Plain(m.entry.Title))
+	heading := styleTitle.Render("Upload") + m.st.subtle.Render(" to "+textfmt.Plain(m.entry.Title))
 	var lines []string
 	switch u.step {
 	case uploadPick:
-		lines = []string{heading, styleDim.Render(truncate(u.picker.CurrentDirectory, width)), ""}
+		lines = []string{heading, m.st.dim.Render(truncate(u.picker.CurrentDirectory, width)), ""}
 		lines = append(lines, strings.Split(u.picker.View(), "\n")...)
 	case uploadTyping:
 		lines = []string{heading, ""}
-		lines = append(lines, composerBox("Path", nil, "file › ", u.input, width, colorQuote)...)
+		lines = append(lines, m.st.composerBox("Path", nil, "file › ", u.input, width, colorQuote)...)
 		limit := max(1, height-len(lines))
 		start := max(0, u.matchIdx-limit+1)
 		for i := start; i < min(len(u.matches), start+limit); i++ {
 			if i == u.matchIdx {
-				lines = append(lines, styleSelectedRow.Render(styleAccent.Render("> ")+u.matches[i]))
+				lines = append(lines, m.st.selectedRow.Render(m.st.accent.Render("> ")+u.matches[i]))
 			} else {
-				lines = append(lines, "  "+styleSubtle.Render(u.matches[i]))
+				lines = append(lines, "  "+m.st.subtle.Render(u.matches[i]))
 			}
 		}
 	case uploadCaption:
 		card := []string{
 			styleTitle.Render(filepath.Base(u.path)),
-			styleSubtle.Render(u.kind + " · " + u.mime + " · " + textfmt.FormatSize(u.size)),
-			styleDim.Render(truncate(filepath.Dir(u.path), width-4)),
+			m.st.subtle.Render(u.kind + " · " + u.mime + " · " + textfmt.FormatSize(u.size)),
+			m.st.dim.Render(truncate(filepath.Dir(u.path), width-4)),
 		}
 		lines = []string{heading, ""}
 		lines = append(lines, strings.Split(renderBox("Ready to send", card, width, len(card)+2, colorQuote), "\n")...)
 		lines = append(lines, "")
-		lines = append(lines, composerBox("Caption", m.replyBar(), "› ", u.input, width, colorAccent)...)
+		lines = append(lines, m.st.composerBox("Caption", m.replyBar(), "› ", u.input, width, m.st.accentColor)...)
 	}
 	if len(lines) > height {
 		lines = lines[:height]

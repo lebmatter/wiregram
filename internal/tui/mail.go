@@ -97,9 +97,9 @@ func (m chatViewModel) draftBox(width int, border color.Color) []string {
 	case m.draft.Value() != "":
 		m.draft.SetHeight(min(3, draftRows))
 		lines = strings.Split(m.draft.View(), "\n")
-		lines = append(lines, styleSubtle.Render("draft · type to continue · ^S sends"))
+		lines = append(lines, m.st.subtle.Render("draft · type to continue · ^S sends"))
 	default:
-		lines = []string{styleSubtle.Render("Type to write a mail · ⏎ acts on the selected one")}
+		lines = []string{m.st.subtle.Render("Type to write a mail · ⏎ acts on the selected one")}
 	}
 	lines = append(m.replyBar(), lines...)
 	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
@@ -157,10 +157,10 @@ func (m chatViewModel) readerLines(width int) []string {
 		}
 	}
 	for _, h := range headers {
-		lines = append(lines, styleSubtle.Render(textfmt.ClipLine(textfmt.Plain(h), width)))
+		lines = append(lines, m.st.subtle.Render(textfmt.ClipLine(textfmt.Plain(h), width)))
 	}
 	if len(lines) > 0 {
-		lines = append(lines, styleDim.Render(strings.Repeat("─", width)))
+		lines = append(lines, m.st.dim.Render(strings.Repeat("─", width)))
 	}
 	var text []string
 	for _, para := range strings.Split(body, "\n") {

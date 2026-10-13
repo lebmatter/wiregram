@@ -16,10 +16,11 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Chat Agents…", "Quit"}
+var settingsActions = []string{"+ Add account…", "Themes…", "Chat Agents…", "Quit"}
 
 const (
 	actionAdd = iota
+	actionThemes
 	actionAgents
 	actionQuit
 )
@@ -60,6 +61,7 @@ type settingsRemoved struct {
 // settingsModel is the two-pane Settings screen: accounts on the left, the
 // selected account's settings on the right.
 type settingsModel struct {
+	st       *styles
 	ctx      context.Context
 	mgr      *account.AccountManager
 	accounts []*account.Account
@@ -70,7 +72,7 @@ type settingsModel struct {
 
 	focus settingsPane
 	left  int // left row: an account, then the actions
-	sel   int // right row: an item of the selected account
+	sel   int // right row: an item of the selected account, or a theme
 
 	result      settingsResult
 	confirm     func() tea.Cmd
@@ -83,7 +85,8 @@ type settingsModel struct {
 
 func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, fromAccounts bool) settingsModel {
 	w, h := termSize()
-	m := settingsModel{ctx: ctx, mgr: mgr, accounts: mgr.List(), active: active,
+	m := settingsModel{st: newStyles(loadTheme(mgr.Store)), ctx: ctx, mgr: mgr,
+		accounts: mgr.List(), active: active,
 		fromAccounts: fromAccounts, width: w, height: h}
 	for i, a := range m.accounts {
 		if a == active {
@@ -105,6 +108,17 @@ func (m settingsModel) selected() *account.Account {
 	return nil
 }
 
+// onThemes reports whether the Themes row is chosen, whose pane lists themes.
+func (m settingsModel) onThemes() bool { return m.left == len(m.accounts)+actionThemes }
+
+// rightRows is how many rows the right pane selects among.
+func (m settingsModel) rightRows() int {
+	if m.onThemes() {
+		return len(themes)
+	}
+	return len(m.items())
+}
+
 func (m settingsModel) items() []settingsItem {
 	a := m.selected()
 	if a == nil {
@@ -124,8 +138,8 @@ func (m settingsModel) canGoBack() bool {
 func (m *settingsModel) reload() {
 	m.accounts = m.mgr.List()
 	m.left = clampIndex(m.left, m.leftRows())
-	m.sel = clampIndex(m.sel, len(m.items()))
-	if m.selected() == nil {
+	m.sel = clampIndex(m.sel, m.rightRows())
+	if m.selected() == nil && !m.onThemes() {
 		m.focus = paneAccounts
 	}
 }
@@ -202,7 +216,14 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.left, m.sel = min(m.leftRows()-1, m.left+1), 0
 	case "enter", "tab", "right", "l":
-		if m.selected() != nil {
+		if m.onThemes() {
+			for i, t := range themes {
+				if t.name == m.st.theme.name {
+					m.sel = i
+				}
+			}
+		}
+		if m.selected() != nil || m.onThemes() {
 			m.focus = paneItems
 			return m, nil
 		}
@@ -221,6 +242,9 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 }
 
 func (m settingsModel) itemsKey(k string) (tea.Model, tea.Cmd) {
+	if m.onThemes() {
+		return m.themesKey(k)
+	}
 	items := m.items()
 	switch k {
 	case "esc", "ctrl+c", "tab", "left", "h":
@@ -233,6 +257,31 @@ func (m settingsModel) itemsKey(k string) (tea.Model, tea.Cmd) {
 		if m.sel < len(items) {
 			return m.apply(items[m.sel])
 		}
+	}
+	return m, nil
+}
+
+// themesKey moves between the theme cards, which may sit side by side, so
+// every arrow moves; Left on the first card goes back to the accounts.
+func (m settingsModel) themesKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case "esc", "ctrl+c", "tab":
+		m.focus = paneAccounts
+	case "left", "h", "up", "k":
+		if m.sel == 0 && (k == "left" || k == "h") {
+			m.focus = paneAccounts
+		}
+		m.sel = max(0, m.sel-1)
+	case "right", "l", "down", "j":
+		m.sel = min(len(themes)-1, m.sel+1)
+	case "enter", "space", " ":
+		t := themes[m.sel]
+		if err := saveTheme(m.mgr.Store, t); err != nil {
+			m.notice = textfmt.CleanError(err)
+			return m, nil
+		}
+		m.st = newStyles(t)
+		m.notice = "Theme: " + t.name
 	}
 	return m, nil
 }
@@ -332,6 +381,18 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 		m.focus, m.left = paneAccounts, i
 		return m.accountsKey("enter")
 	}
+	if m.onThemes() {
+		x := mouse.X - 2 // inside the box's left edge and padding
+		if m.twoPane() {
+			x -= sidebarWidth
+		}
+		i, ok := themeAt(x, row-itemsTop, m.rightWidth()-4)
+		if !ok {
+			return m, nil
+		}
+		m.focus, m.sel = paneItems, i
+		return m.themesKey("enter")
+	}
 	i := window(m.sel, h-itemsTop) + row - itemsTop
 	if i < 0 || i >= len(m.items()) {
 		return m, nil
@@ -348,7 +409,7 @@ func (m settingsModel) footer() string {
 	case notice == "" && m.selected() != nil:
 		notice = m.selected().Snapshot().Notice
 	}
-	return renderFooter(m.helpKeys(), notice, m.width)
+	return m.st.footer(m.helpKeys(), notice, m.width)
 }
 
 func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
@@ -359,19 +420,21 @@ func (m settingsModel) View() tea.View {
 	title := "Settings"
 	if a := m.selected(); a != nil {
 		title = textfmt.Plain(a.Label())
+	} else if m.onThemes() {
+		title = "Themes"
 	}
 	var body string
 	switch {
 	case m.twoPane():
 		left := renderBox("Settings", m.accountLines(sidebarWidth-4, h-2), sidebarWidth, h,
-			boxBorder(m.focus == paneAccounts))
-		right := renderBox(title, m.itemLines(m.width-sidebarWidth-4, h-2),
-			m.width-sidebarWidth, h, boxBorder(m.focus == paneItems))
+			m.st.border(m.focus == paneAccounts))
+		right := renderBox(title, m.itemLines(m.rightWidth()-4, h-2),
+			m.rightWidth(), h, m.st.border(m.focus == paneItems))
 		body = joinColumns(left, right)
 	case m.focus == paneAccounts:
-		body = renderBox("Settings", m.accountLines(m.width-4, h-2), m.width, h, colorAccent)
+		body = renderBox("Settings", m.accountLines(m.width-4, h-2), m.width, h, m.st.accentColor)
 	default:
-		body = renderBox(title, m.itemLines(m.width-4, h-2), m.width, h, colorAccent)
+		body = renderBox(title, m.itemLines(m.width-4, h-2), m.width, h, m.st.accentColor)
 	}
 	v := tea.NewView(body + "\n" + footer)
 	v.AltScreen = true
@@ -388,14 +451,14 @@ func (m settingsModel) accountLines(width, height int) []string {
 		if a == m.active {
 			label = styleTitle.Render(label)
 		}
-		text := fmt.Sprintf("%s %s %s", accountGlyph(a.Snapshot()),
-			styleDim.Render(fmt.Sprintf("%s%d", backendTag(a.BackendType), i+1)), label)
-		lines = append(lines, themedListRow(text, "", i == m.left, focused, width, colorAccent))
+		text := fmt.Sprintf("%s %s %s", m.st.accountGlyph(a.Snapshot()),
+			m.st.dim.Render(fmt.Sprintf("%s%d", backendTag(a.BackendType), i+1)), label)
+		lines = append(lines, m.st.listRow(text, "", i == m.left, focused, width))
 	}
-	lines = append(lines, styleDim.Render(strings.Repeat("─", width)))
+	lines = append(lines, m.st.dim.Render(strings.Repeat("─", width)))
 	for i, title := range settingsActions {
-		lines = append(lines, themedListRow(styleSubtle.Render(title), "",
-			len(m.accounts)+i == m.left, focused, width, colorAccent))
+		lines = append(lines, m.st.listRow(m.st.subtle.Render(title), "",
+			len(m.accounts)+i == m.left, focused, width))
 	}
 	return lines[min(m.leftStart(height), len(lines)):]
 }
@@ -416,8 +479,13 @@ func (m settingsModel) itemLines(width, height int) []string {
 	a := m.selected()
 	if a == nil {
 		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
-			"Bots that answer your direct messages.", "Leave wiregram."}
-		return []string{styleSubtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
+			"The colours of the whole app.", "Bots that answer your direct messages.",
+			"Leave wiregram."}
+		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
+		if m.onThemes() {
+			lines = append(append(lines, ""), m.themeLines(width)...)
+		}
+		return lines
 	}
 	s := a.Snapshot()
 	summary := fmt.Sprintf("%s%d · %s", backendTag(a.BackendType), m.left+1, s.Status)
@@ -429,13 +497,13 @@ func (m settingsModel) itemLines(width, height int) []string {
 			summary += " · agent: " + textfmt.Plain(name)
 		}
 	}
-	lines := []string{styleSubtle.Render(textfmt.ClipLine(summary, width)), ""}
+	lines := []string{m.st.subtle.Render(textfmt.ClipLine(summary, width)), ""}
 	focused := m.focus == paneItems
 	items := m.items()
 	for i := window(m.sel, height-itemsTop); i < len(items) && len(lines) < height; i++ {
 		label, value := m.itemText(a, items[i])
-		lines = append(lines, themedListRow(label, styleSubtle.Render(value), i == m.sel,
-			focused, width, colorAccent))
+		lines = append(lines, m.st.listRow(label, m.st.subtle.Render(value), i == m.sel,
+			focused, width))
 	}
 	return lines
 }
@@ -462,6 +530,76 @@ func (m settingsModel) itemText(a *account.Account, item settingsItem) (string, 
 	return styleError.Render("Remove account…"), ""
 }
 
+func (m settingsModel) rightWidth() int {
+	if m.twoPane() {
+		return m.width - sidebarWidth
+	}
+	return m.width
+}
+
+// Theme cards are laid out in rows of as many as fit, a blank line between rows.
+const (
+	themeCardWidth  = 26
+	themeCardHeight = 6
+)
+
+func themesPerRow(width int) int { return max(1, (width+1)/(themeCardWidth+1)) }
+
+// themeLines draws every theme as a card, the chosen one's border lit.
+func (m settingsModel) themeLines(width int) []string {
+	perRow := themesPerRow(width)
+	var lines []string
+	for start := 0; start < len(themes); start += perRow {
+		if start > 0 {
+			lines = append(lines, "")
+		}
+		row := make([]string, themeCardHeight)
+		for i := start; i < min(start+perRow, len(themes)); i++ {
+			card := themeCard(themes[i], themes[i].name == m.st.theme.name,
+				m.focus == paneItems && i == m.sel)
+			for j, line := range card {
+				if i > start {
+					row[j] += " "
+				}
+				row[j] += line
+			}
+		}
+		lines = append(lines, row...)
+	}
+	return lines
+}
+
+// themeAt is the theme whose card covers column x and row y of the cards.
+func themeAt(x, y, width int) (int, bool) {
+	perRow := themesPerRow(width)
+	col, row := x/(themeCardWidth+1), y/(themeCardHeight+1)
+	if x < 0 || y < 0 || col >= perRow || x%(themeCardWidth+1) == themeCardWidth ||
+		y%(themeCardHeight+1) == themeCardHeight {
+		return 0, false
+	}
+	i := row*perRow + col
+	return i, i < len(themes)
+}
+
+// themeCard is a small sample of the app drawn in t: a chat list with a
+// selected row and an unread badge, a message header and the footer keys.
+func themeCard(t theme, current, selected bool) []string {
+	st := newStyles(t)
+	inner := themeCardWidth - 4
+	body := []string{
+		st.listRow("General", st.badge.Render(" 3 "), true, true, inner),
+		st.listRow("Alice", "", false, true, inner),
+		st.dim.Render("[12:04] ") + st.subtle.Render("you") + " hi!",
+		st.helpBar([]helpKey{{"⏎", "open"}, {"esc", "back"}}, inner),
+	}
+	title := t.name
+	if current {
+		title += " ✓"
+	}
+	return strings.Split(renderBox(title, body, themeCardWidth, themeCardHeight,
+		st.border(selected)), "\n")
+}
+
 func (m settingsModel) helpKeys() []helpKey {
 	back := helpKey{"esc", "back"}
 	if !m.canGoBack() {
@@ -472,6 +610,9 @@ func (m settingsModel) helpKeys() []helpKey {
 	}
 	if m.focus == paneAccounts {
 		return []helpKey{{"↑↓", "select"}, {"⏎", "open"}, back}
+	}
+	if m.onThemes() {
+		return []helpKey{{"←→", "select"}, {"⏎", "apply"}, {"esc", "accounts"}}
 	}
 	return []helpKey{{"↑↓", "select"}, {"⏎", "change"}, {"esc", "accounts"}}
 }

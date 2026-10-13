@@ -66,6 +66,7 @@ type unreadClosed struct{}
 // unreadModel is a column of full-width cards, one per chat with unread
 // messages.
 type unreadModel struct {
+	st       *styles
 	ctx      context.Context
 	b        backend.Backend
 	entries  []backend.ChatEntry
@@ -78,14 +79,14 @@ type unreadModel struct {
 	height   int
 }
 
-func newUnread(ctx context.Context, b backend.Backend, entries []backend.ChatEntry) (unreadModel, tea.Cmd) {
+func newUnread(ctx context.Context, st *styles, b backend.Backend, entries []backend.ChatEntry) (unreadModel, tea.Cmd) {
 	var unread []backend.ChatEntry
 	for _, e := range entries {
 		if e.Unread > 0 && len(unread) < unreadMaxChats {
 			unread = append(unread, e)
 		}
 	}
-	m := unreadModel{ctx: ctx, b: b, entries: unread}
+	m := unreadModel{st: st, ctx: ctx, b: b, entries: unread}
 	return m.load()
 }
 
@@ -180,9 +181,9 @@ func (m unreadModel) view(focused bool) string {
 	var body []string
 	switch {
 	case m.loading && len(m.cards) == 0:
-		body = []string{styleSubtle.Render("Loading…")}
+		body = []string{m.st.subtle.Render("Loading…")}
 	case len(m.cards) == 0:
-		body = []string{styleSubtle.Render("Nothing unread")}
+		body = []string{m.st.subtle.Render("Nothing unread")}
 	default:
 		end := min(len(m.cards), m.offset+m.visibleRows())
 		for i := m.offset; i < end; i++ {
@@ -192,7 +193,7 @@ func (m unreadModel) view(focused bool) string {
 			title = "Unread · refreshing…"
 		}
 	}
-	return renderBox(title, body, m.width, m.height, boxBorder(focused))
+	return renderBox(title, body, m.width, m.height, m.st.border(focused))
 }
 
 func (m unreadModel) card(i, width int, focused bool) string {
@@ -202,11 +203,11 @@ func (m unreadModel) card(i, width int, focused bool) string {
 	head := lipgloss.NewStyle().Bold(true).Foreground(border).Render(tag)
 	for _, msg := range c.msgs {
 		if msg.ReplyToID != "" {
-			head += styleDim.Render(" · ") + styleQuoteBar.Render("thread")
+			head += m.st.dim.Render(" · ") + styleQuoteBar.Render("thread")
 			break
 		}
 	}
-	pill := styleBadge.Render(fmt.Sprintf(" %d ", c.entry.Unread))
+	pill := m.st.badge.Render(fmt.Sprintf(" %d ", c.entry.Unread))
 	inner := width - 4
 	head += strings.Repeat(" ", max(1, inner-lipgloss.Width(head)-lipgloss.Width(pill))) + pill
 
@@ -217,7 +218,7 @@ func (m unreadModel) card(i, width int, focused bool) string {
 	for _, msg := range c.msgs {
 		prefix := ""
 		if msg.ReplyToID != "" {
-			prefix = styleDim.Render("↳ ")
+			prefix = m.st.dim.Render("↳ ")
 		}
 		sender := backend.GenericMessageSender(msg)
 		text := textfmt.ShortExcerpt(backend.GenericMessageText(msg))
@@ -225,11 +226,11 @@ func (m unreadModel) card(i, width int, focused bool) string {
 			text = textfmt.ShortExcerpt(textfmt.Plain(msg.Subject))
 		}
 		lines = append(lines, prefix+textfmt.NickColor(sender)+sender+"\x1b[0m"+
-			styleSubtle.Render(": ")+text)
+			m.st.subtle.Render(": ")+text)
 	}
 	if i == m.selected {
 		if focused {
-			border = colorAccent
+			border = m.st.accentColor
 		}
 		title = "> " + title
 	}

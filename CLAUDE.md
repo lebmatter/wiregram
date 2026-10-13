@@ -89,7 +89,7 @@ These are project constraints, not suggestions:
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Chat Agents, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Chat Agents, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
   binding; the primary account's directory is the config directory, so only its
@@ -166,8 +166,14 @@ These are project constraints, not suggestions:
   to text and nothing it references is fetched. Mail is cached in
   `wiregram.db` for the Keep mail cached setting of an email account's Settings (`mail_retention_days`,
   default 90); pruning never touches the server, and deleting moves to Trash.
-- Agent mode (Alt+A, `internal/tui/agent.go`) swaps the copper accent
-  (`colorAccent`, 214) for violet (`colorAgent`, 141) and tags accounts as
+- Themes live in `internal/tui/theme.go`: a fixed `themes` table (Zest, the
+  default, from the website's lime and purples, then Copper), one entry per theme.
+  The accent, subtle, dim, selection and badge colours come from a `*styles`
+  that each screen loads from the `theme` setting and passes down; status,
+  chat-kind, link and nick colours are the same in every theme. Settings'
+  Themes… row shows a sample card per theme and Enter applies one.
+- Agent mode (Alt+A, `internal/tui/agent.go`) swaps the theme's accent for its
+  agent colour (violet, `styles.forAgents`) and tags accounts as
   `[TG1]`: backend plus position in the account list. Chat Agents are created through the
   scripted bubble wizard (`internal/tui/wizard.go`): fixed options or typed
   values only, never free chat with a model. Adding an account (network,
@@ -228,7 +234,7 @@ lowest package that needs them rather than importing sideways.
 
 `os.UserConfigDir()/wiregram/` (typically `~/.config/wiregram/`):
 - `wiregram.db` — the single SQLite database (`internal/store`): `settings`
-  (API credentials, autolock, mail retention), `account_data` (identity,
+  (API credentials, autolock, mail retention, theme), `account_data` (identity,
   Telegram session and Matrix sync token per account key), the Chat Agent
   tables and the email cache (`mail_messages`, `mail_sync`)
 - `accounts/<backend>-*/` — one directory per added account; its name is the

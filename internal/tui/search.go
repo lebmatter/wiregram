@@ -21,6 +21,7 @@ import (
 // list. The list's fuzzy filter narrows known people as you type, and
 // server results are merged in as items when they arrive.
 type userSearchModel struct {
+	st      *styles
 	ctx     context.Context
 	b       backend.Backend
 	input   textinput.Model
@@ -87,15 +88,15 @@ type userSearchClosed struct{ insert string }
 type userMentionPicked struct{ text string }
 
 // newForwardSearch picks the recipient for req instead of opening a chat.
-func newForwardSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry, req forwardRequest) (userSearchModel, tea.Cmd) {
-	m, cmd := newUserSearch(ctx, b, recent)
+func newForwardSearch(ctx context.Context, st *styles, b backend.Backend, recent []backend.ChatEntry, req forwardRequest) (userSearchModel, tea.Cmd) {
+	m, cmd := newUserSearch(ctx, st, b, recent)
 	m.forward = &req
 	return m, cmd
 }
 
 // newMentionSearch picks a member of ch to mention in it.
-func newMentionSearch(ctx context.Context, b backend.Backend, mn backend.Mentioner, ch backend.ChatEntry) (userSearchModel, tea.Cmd) {
-	m := newSearchModel(ctx, b)
+func newMentionSearch(ctx context.Context, st *styles, b backend.Backend, mn backend.Mentioner, ch backend.ChatEntry) (userSearchModel, tea.Cmd) {
+	m := newSearchModel(ctx, st, b)
 	m.mention = &ch
 	m.input.Placeholder = "Name…"
 	load := func() tea.Msg {
@@ -105,8 +106,8 @@ func newMentionSearch(ctx context.Context, b backend.Backend, mn backend.Mention
 	return m, tea.Batch(m.input.Focus(), load)
 }
 
-func newUserSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry) (userSearchModel, tea.Cmd) {
-	m := newSearchModel(ctx, b)
+func newUserSearch(ctx context.Context, st *styles, b backend.Backend, recent []backend.ChatEntry) (userSearchModel, tea.Cmd) {
+	m := newSearchModel(ctx, st, b)
 	load := func() tea.Msg {
 		base, err := b.UserSearchBase(ctx, recent)
 		return userSearchLoaded{base, err}
@@ -114,7 +115,7 @@ func newUserSearch(ctx context.Context, b backend.Backend, recent []backend.Chat
 	return m, tea.Batch(m.input.Focus(), load)
 }
 
-func newSearchModel(ctx context.Context, b backend.Backend) userSearchModel {
+func newSearchModel(ctx context.Context, st *styles, b backend.Backend) userSearchModel {
 	// The list only filters and keeps the selection; View draws the rows.
 	l := list.New(nil, rowDelegate{}, 0, 0)
 	l.SetShowHelp(false)
@@ -125,7 +126,7 @@ func newSearchModel(ctx context.Context, b backend.Backend) userSearchModel {
 	in.Prompt = ""
 	in.Placeholder = "Name or username…"
 
-	return userSearchModel{ctx: ctx, b: b, input: in, list: l, busy: true}
+	return userSearchModel{st: st, ctx: ctx, b: b, input: in, list: l, busy: true}
 }
 
 // rowDelegate gives the list one-line items without drawing them.
@@ -364,23 +365,23 @@ func (m userSearchModel) click(y int) (userSearchModel, tea.Cmd) {
 func (m userSearchModel) View() string {
 	inner := m.width - 4
 	m.input.SetWidth(max(1, inner-3))
-	body := []string{styleAccent.Render("@ ") + m.input.View(), m.heading()}
+	body := []string{m.st.accent.Render("@ ") + m.input.View(), m.heading()}
 	items := m.list.VisibleItems()
 	first := m.firstRow()
 	for i := first; i < min(len(items), first+m.rows()); i++ {
 		item := items[i].(userItem)
 		name, desc := item.Title(), item.Description()
 		if desc != "" {
-			desc = " " + styleDim.Render(desc)
+			desc = " " + m.st.dim.Render(desc)
 		}
 		if i == m.list.Index() {
-			body = append(body, styleAccent.Render("> ")+styleSelectedRow.Render(name)+desc)
+			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(name)+desc)
 		} else {
 			body = append(body, "  "+name+desc)
 		}
 	}
 	if len(items) == 0 && !m.busy {
-		body = append(body, styleDim.Render("  no one found"))
+		body = append(body, m.st.dim.Render("  no one found"))
 	}
 	title := "Search users"
 	switch {
@@ -389,7 +390,7 @@ func (m userSearchModel) View() string {
 	case m.mention != nil:
 		title = "Mention"
 	}
-	return renderBox(title, body, m.width, m.height, colorAccent)
+	return renderBox(title, body, m.width, m.height, m.st.accentColor)
 }
 
 // heading names the list and counts it, or shows the last error.
@@ -401,12 +402,12 @@ func (m userSearchModel) heading() string {
 	if m.query != "" {
 		heading = "Results"
 	}
-	line := styleSubtle.Render(heading)
+	line := m.st.subtle.Render(heading)
 	if n := len(m.list.VisibleItems()); n > 0 {
-		line += styleDim.Render(fmt.Sprintf(" · %d", n))
+		line += m.st.dim.Render(fmt.Sprintf(" · %d", n))
 	}
 	if m.busy {
-		line += styleDim.Render(" · searching…")
+		line += m.st.dim.Render(" · searching…")
 	}
 	return line
 }

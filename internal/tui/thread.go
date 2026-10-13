@@ -151,11 +151,11 @@ func (m chatViewModel) threadBox(width, height int, focused bool) string {
 	composer := m.threadComposer(inner, focused)
 	lines, _, _ := m.threadLines(inner, height-2-len(composer))
 	body := append(bottomLines(lines, height-2-len(composer)), composer...)
-	return renderBox("Thread", body, width, height, boxBorder(focused))
+	return renderBox("Thread", body, width, height, m.st.border(focused))
 }
 
 func (m chatViewModel) threadComposer(inner int, focused bool) []string {
-	return composerBox("", nil, "› ", m.threadInput, inner, boxBorder(focused))
+	return m.st.composerBox("", nil, "› ", m.threadInput, inner, m.st.border(focused))
 }
 
 // threadLines lays out the thread inner columns wide and returns, for each
@@ -174,7 +174,7 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 		}
 	}
 	if len(thread) == 0 {
-		add(-1, styleSubtle.Render("The thread's first message is no longer loaded."))
+		add(-1, m.st.subtle.Render("The thread's first message is no longer loaded."))
 	}
 	replies := make(map[string]int)
 	for _, msg := range thread {
@@ -185,7 +185,7 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 	for i, msg := range thread {
 		// The thread is the chain itself, so replies are drawn without a quote.
 		msg.ReplyToID = ""
-		block, blockMedia := messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
+		block, blockMedia := m.st.messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
 			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID], inner,
 			imageRows(height))
 		add(i, block...)
@@ -193,7 +193,7 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))
-			add(-1, styleDim.Render("──"+label+strings.Repeat("─", max(0, inner-2-len(label)))))
+			add(-1, m.st.dim.Render("──"+label+strings.Repeat("─", max(0, inner-2-len(label)))))
 		}
 	}
 	return lines, owners, media

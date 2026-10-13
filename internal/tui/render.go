@@ -33,34 +33,20 @@ const twoPaneWidth = 100
 // sidebarWidth is the chat list width in two-pane mode, borders included.
 const sidebarWidth = 30
 
+// Colours that mean the same in every theme; the rest come from styles.
 var (
-	colorAccent = lipgloss.Color("214")
-	colorSubtle = lipgloss.Color("245")
-	colorDim    = lipgloss.Color("240")
 	colorGreen  = lipgloss.Color("42")
 	colorYellow = lipgloss.Color("220")
 	colorRed    = lipgloss.Color("203")
 	colorQuote  = lipgloss.Color("75")
 	colorGroup  = lipgloss.Color("67")
-	colorSelBg  = lipgloss.Color("237")
-	colorBadge  = lipgloss.Color("16")
-	// colorAgent replaces colorAccent throughout agent mode.
-	colorAgent = lipgloss.Color("141")
 )
 
 var (
-	styleTitle       = lipgloss.NewStyle().Bold(true)
-	styleBrand       = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
-	styleAccent      = lipgloss.NewStyle().Foreground(colorAccent)
-	styleSubtle      = lipgloss.NewStyle().Foreground(colorSubtle)
-	styleDim         = lipgloss.NewStyle().Foreground(colorDim)
-	styleUnread      = lipgloss.NewStyle().Foreground(colorAccent)
-	styleNotice      = lipgloss.NewStyle().Foreground(colorYellow)
-	styleError       = lipgloss.NewStyle().Foreground(colorRed)
-	styleQuoteBar    = lipgloss.NewStyle().Foreground(colorQuote)
-	styleBadge       = lipgloss.NewStyle().Bold(true).Background(colorAccent).Foreground(colorBadge)
-	styleSelectedRow = lipgloss.NewStyle().Bold(true).Background(colorSelBg)
-	styleAgent       = lipgloss.NewStyle().Foreground(colorAgent)
+	styleTitle    = lipgloss.NewStyle().Bold(true)
+	styleNotice   = lipgloss.NewStyle().Foreground(colorYellow)
+	styleError    = lipgloss.NewStyle().Foreground(colorRed)
+	styleQuoteBar = lipgloss.NewStyle().Foreground(colorQuote)
 )
 
 type helpKey struct {
@@ -68,17 +54,16 @@ type helpKey struct {
 	desc string
 }
 
-func newHelpModel(width int, accent color.Color) help.Model {
-	keyStyle := lipgloss.NewStyle().Foreground(accent)
+func (s *styles) newHelpModel(width int) help.Model {
 	h := help.New()
 	h.ShortSeparator = "  "
-	h.Styles.ShortKey = keyStyle
-	h.Styles.ShortDesc = styleSubtle
-	h.Styles.ShortSeparator = styleDim
-	h.Styles.FullKey = keyStyle
-	h.Styles.FullDesc = styleSubtle
-	h.Styles.FullSeparator = styleDim
-	h.Styles.Ellipsis = styleDim
+	h.Styles.ShortKey = s.accent
+	h.Styles.ShortDesc = s.subtle
+	h.Styles.ShortSeparator = s.dim
+	h.Styles.FullKey = s.accent
+	h.Styles.FullDesc = s.subtle
+	h.Styles.FullSeparator = s.dim
+	h.Styles.Ellipsis = s.dim
 	h.SetWidth(width)
 	return h
 }
@@ -91,26 +76,22 @@ func helpBindings(keys []helpKey) []key.Binding {
 	return bindings
 }
 
-func renderHelpBar(keys []helpKey, width int, accent color.Color) string {
-	return newHelpModel(width, accent).ShortHelpView(helpBindings(keys))
+func (s *styles) helpBar(keys []helpKey, width int) string {
+	return s.newHelpModel(width).ShortHelpView(helpBindings(keys))
 }
 
-// renderFooter draws the key help with the notice on the right. A long notice
+// footer draws the key help with the notice on the right. A long notice
 // (such as a delete confirmation) takes the whole line so it is never cut.
-func renderFooter(keys []helpKey, notice string, width int) string {
-	return renderThemedFooter(keys, notice, width, colorAccent)
-}
-
-func renderThemedFooter(keys []helpKey, notice string, width int, accent color.Color) string {
+func (s *styles) footer(keys []helpKey, notice string, width int) string {
 	notice = textfmt.Plain(notice)
 	noticeWidth := textfmt.DisplayWidth(notice)
 	if notice != "" && noticeWidth > width/2 {
 		return styleNotice.Render(truncate(notice, width))
 	}
 	if notice == "" {
-		return renderHelpBar(keys, width, accent)
+		return s.helpBar(keys, width)
 	}
-	left := renderHelpBar(keys, width-noticeWidth-2, accent)
+	left := s.helpBar(keys, width-noticeWidth-2)
 	gap := max(1, width-textfmt.DisplayWidth(left)-noticeWidth)
 	return left + strings.Repeat(" ", gap) + styleNotice.Render(notice)
 }
@@ -131,7 +112,7 @@ func backendTag(backendType string) string {
 	return "??"
 }
 
-func accountGlyph(s account.AccountState) string {
+func (st *styles) accountGlyph(s account.AccountState) string {
 	switch {
 	case s.Status == "online":
 		return lipgloss.NewStyle().Foreground(colorGreen).Render("●")
@@ -140,12 +121,12 @@ func accountGlyph(s account.AccountState) string {
 	case s.NeedsLogin || s.Notice != "":
 		return lipgloss.NewStyle().Foreground(colorRed).Render("✕")
 	}
-	return styleDim.Render("○")
+	return st.dim.Render("○")
 }
 
-// renderHeader is the wordmark line on the screens outside an account.
-func renderHeader(width int) string {
-	return textfmt.ClipLine(styleBrand.Render(" wiregram "), width) + "\x1b[0m"
+// header is the wordmark line on the screens outside an account.
+func (s *styles) header(width int) string {
+	return textfmt.ClipLine(s.brand.Render(" wiregram "), width) + "\x1b[0m"
 }
 
 // renderBox draws a rounded box exactly width×height cells with the title in
@@ -179,14 +160,14 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 
 // fadeUnder draws box over bg with its top-left corner at column x and row
 // y, with bg reduced to plain dim text so the box is all that stands out.
-func fadeUnder(bg, box string, x, y int) string {
+func (s *styles) fadeUnder(bg, box string, x, y int) string {
 	lines := strings.Split(bg, "\n")
 	rows := strings.Split(box, "\n")
 	for i, line := range lines {
 		line = ansi.Strip(line)
 		r := i - y
 		if r < 0 || r >= len(rows) {
-			lines[i] = styleDim.Render(line)
+			lines[i] = s.dim.Render(line)
 			continue
 		}
 		left := ansi.TruncateWc(line, x, "")
@@ -196,7 +177,7 @@ func fadeUnder(bg, box string, x, y int) string {
 		// A wide character cut by the box's right edge leaves a gap.
 		right = strings.Repeat(" ",
 			max(0, textfmt.DisplayWidth(line)-end-textfmt.DisplayWidth(right))) + right
-		lines[i] = styleDim.Render(left) + rows[r] + "\x1b[0m" + styleDim.Render(right)
+		lines[i] = s.dim.Render(left) + rows[r] + "\x1b[0m" + s.dim.Render(right)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -248,11 +229,12 @@ func accountShort(mgr *account.AccountManager, key string) string {
 	return "??"
 }
 
-func boxBorder(focused bool) color.Color {
+// border is a box's border colour: the accent when it has focus.
+func (s *styles) border(focused bool) color.Color {
 	if focused {
-		return colorAccent
+		return s.accentColor
 	}
-	return colorDim
+	return s.dimColor
 }
 
 // bottomLines keeps the last height lines, padding at the top so content
@@ -266,12 +248,12 @@ func bottomLines(lines []string, height int) []string {
 	return append(out, lines...)
 }
 
-func renderQuote(orig *backend.Message, entry backend.ChatEntry) string {
+func (s *styles) quote(orig *backend.Message) string {
 	bar := styleQuoteBar.Render("┃ ")
 	if orig == nil {
-		return bar + styleSubtle.Render("earlier message")
+		return bar + s.subtle.Render("earlier message")
 	}
-	return bar + styleSubtle.Render(backend.GenericMessageSender(*orig)+": "+
+	return bar + s.subtle.Render(backend.GenericMessageSender(*orig)+": "+
 		textfmt.ShortExcerpt(backend.GenericMessageText(*orig)))
 }
 
@@ -287,13 +269,13 @@ func textIndent(entry backend.ChatEntry) int {
 // messageHeader is "[HH:MM] <nick>", or just the time in channels, where
 // every post comes from the channel itself. The time is dim unless the
 // message is unread, when the whole block is bold instead.
-func messageHeader(msg backend.Message, entry backend.ChatEntry, unread bool) string {
+func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry, unread bool) string {
 	stamp := msg.Timestamp.Format("[15:04]")
 	if msg.Timestamp.IsZero() {
 		stamp = "[--:--]" // a WhatsApp quote carries no time
 	}
 	if !unread {
-		stamp = styleDim.Render(stamp)
+		stamp = s.dim.Render(stamp)
 	}
 	if kind, _ := kindOf(entry); kind == kindChannel {
 		return stamp
@@ -306,11 +288,11 @@ func messageHeader(msg backend.Message, entry backend.ChatEntry, unread bool) st
 // shadeLine paints line on the selection background, padded to width. The
 // background is re-applied after every reset, since nick colours, styles and
 // image rows all end with one.
-func shadeLine(line string, width int) string {
+func (s *styles) shadeLine(line string, width int) string {
 	pad := strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(line)))
-	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+selBgSGR)
-	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+selBgSGR)
-	return selBgSGR + line + pad + "\x1b[0m"
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+s.selBgSGR)
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+s.selBgSGR)
+	return s.selBgSGR + line + pad + "\x1b[0m"
 }
 
 // boldLine sets line in bold, re-applied after every reset as in shadeLine.
@@ -322,8 +304,8 @@ func boldLine(line string) string {
 	return "\x1b[1m" + line + "\x1b[22m"
 }
 
-// styleMediaTag dims the leading "[tag]" of a media label.
-func styleMediaTag(text string) string {
+// dimTag dims the leading "[tag]" of a media label.
+func (s *styles) dimTag(text string) string {
 	if !strings.HasPrefix(text, "[") {
 		return text
 	}
@@ -331,7 +313,7 @@ func styleMediaTag(text string) string {
 	if end < 0 {
 		return text
 	}
-	return styleSubtle.Render(text[:end+1]) + text[end+1:]
+	return s.subtle.Render(text[:end+1]) + text[end+1:]
 }
 
 // Links are underlined in the quote colour. linkOff resets only underline
@@ -344,9 +326,6 @@ const (
 	oscLink    = "\x1b]8;;"
 	oscLinkEnd = "\x1b]8;;\a"
 )
-
-// selBgSGR is colorSelBg as a raw SGR, re-applied after resets by shadeLine.
-const selBgSGR = "\x1b[48;5;237m"
 
 // Message text styles. Each ends with its own SGR rather than a full reset,
 // so a selection tint or an unread bold survives it.
@@ -546,10 +525,10 @@ func truncate(text string, width int) string {
 	return textfmt.ClipLine(text, width-1) + "…"
 }
 
-func chatListLine(entry backend.ChatEntry, selected, focused bool, width int) string {
+func (s *styles) chatListLine(entry backend.ChatEntry, selected, focused bool, width int) string {
 	pill := ""
 	if entry.Unread > 0 {
-		pill = " " + styleBadge.Render(fmt.Sprintf(" %d ", entry.Unread))
+		pill = " " + s.badge.Render(fmt.Sprintf(" %d ", entry.Unread))
 	}
 	marker := "  "
 	if selected {
@@ -558,7 +537,7 @@ func chatListLine(entry backend.ChatEntry, selected, focused bool, width int) st
 	row := marker + truncate(textfmt.Plain(entry.Title), max(1, width-2-textfmt.DisplayWidth(pill)))
 	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(pill)-textfmt.DisplayWidth(row)))
 	if selected && focused {
-		row = styleSelectedRow.Render(row)
+		row = s.selectedRow.Render(row)
 	} else if selected {
 		row = styleTitle.Render(row)
 	}
@@ -569,10 +548,10 @@ const wiregramLogo = `╦ ╦╦╦═╗╔═╗╔═╗╦═╗╔═╗╔
 ║║║║╠╦╝║╣ ║ ╦╠╦╝╠═╣║║║
 ╚╩╝╩╩╚═╚═╝╚═╝╩╚═╩ ╩╩ ╩`
 
-// renderLogo returns the block logo, or the plain wordmark when it won't fit.
-func renderLogo(width int) string {
+// logo returns the block logo, or the plain wordmark when it won't fit.
+func (s *styles) logo(width int) string {
 	if width < lipgloss.Width(wiregramLogo)+4 {
-		return styleBrand.Render("wiregram")
+		return s.brand.Render("wiregram")
 	}
-	return styleAccent.Render(wiregramLogo)
+	return s.accent.Render(wiregramLogo)
 }

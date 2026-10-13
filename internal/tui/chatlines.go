@@ -72,7 +72,7 @@ func (r *genericReadReporter) Close(ctx context.Context) error {
 }
 
 // Generic search result lines.
-func genericSearchResultLines(b backend.Backend, results []backend.Message, selected int, entry backend.ChatEntry, query string, width, height int) []string {
+func (s *styles) genericSearchResultLines(b backend.Backend, results []backend.Message, selected int, entry backend.ChatEntry, query string, width, height int) []string {
 	width = min(width, textfmt.MaxChatLineWidth)
 	available := max(1, height-2)
 	var lines []string
@@ -88,7 +88,7 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 		for i := start; i < min(len(results), start+available); i++ {
 			marker := "  "
 			if i == selected {
-				marker = styleAccent.Render("> ")
+				marker = s.accent.Render("> ")
 			}
 			text := backend.GenericMessageLine(results[i], entry, nil)
 			lines = append(lines, textfmt.ClipLine(marker+text, width))
@@ -104,7 +104,7 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 // Day and unread dividers sit above the message they introduce; firstUnread
 // is the ID of the oldest message unread when the chat opened ("" for none)
 // and unread holds the IDs of all of them, drawn in bold.
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, quotes map[string]*backend.Message, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int, []bool) {
+func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, quotes map[string]*backend.Message, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int, []bool) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -131,7 +131,7 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		if quoted == nil {
 			quoted = msg.Quote
 		}
-		return messageBlock(b, msg, entry, quoted, replies[msg.ID],
+		return s.messageBlock(b, msg, entry, quoted, replies[msg.ID],
 			changed[msg.ID], unread[msg.ID], images[msg.ID],
 			lineWidth, imageRows(height))
 	}
@@ -155,16 +155,16 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		lines, media := messageLines(i)
 		if i == selected {
 			for j := range lines {
-				lines[j] = shadeLine(lines[j], lineWidth)
+				lines[j] = s.shadeLine(lines[j], lineWidth)
 			}
 		}
 		var top []string
 		day := messages[i].Timestamp
 		if i == 0 || !sameDay(messages[i-1].Timestamp, day) {
-			top = append(top, dividerLine(dayLabel(day, now), styleSubtle, lineWidth))
+			top = append(top, s.dividerLine(dayLabel(day, now), s.subtle, lineWidth))
 		}
 		if firstUnread != "" && messages[i].ID == firstUnread {
-			top = append(top, dividerLine("unread", styleAccent, lineWidth))
+			top = append(top, s.dividerLine("unread", s.accent, lineWidth))
 		}
 		dividers[i] = len(top)
 		lines = append(top, lines...)
@@ -225,11 +225,11 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 }
 
 // dividerLine centres label in a rule across the chat, like ── yesterday ──.
-func dividerLine(label string, style lipgloss.Style, width int) string {
+func (s *styles) dividerLine(label string, style lipgloss.Style, width int) string {
 	label = " " + label + " "
 	side := max(2, (width-textfmt.DisplayWidth(label))/2)
 	rule := strings.Repeat("─", side)
-	return textfmt.ClipLine(styleDim.Render(rule)+style.Render(label)+styleDim.Render(rule), width)
+	return textfmt.ClipLine(s.dim.Render(rule)+style.Render(label)+s.dim.Render(rule), width)
 }
 
 func sameDay(a, b time.Time) bool {
@@ -266,7 +266,7 @@ func dayLabel(t, now time.Time) string {
 // a meta row. Nothing in it depends on selection, so columns never move.
 // An unread message has its header and text in bold. Alongside the lines it
 // marks those that draw the attachment: its image card or its [tag] row.
-func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
+func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
 	quoted *backend.Message, replies int, edited, unread bool, img *chatImage,
 	lineWidth, maxImageRows int) ([]string, []bool) {
 	gutter := "  "
@@ -274,16 +274,16 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 		gutter = "* "
 	}
 	indent := textIndent(entry)
-	body, below := imageText(msg, img, indent, lineWidth, maxImageRows)
-	prefix := gutter + messageHeader(msg, entry, unread) + " "
+	body, below := s.imageText(msg, img, indent, lineWidth, maxImageRows)
+	prefix := gutter + s.messageHeader(msg, entry, unread) + " "
 	var lines []string
 	if msg.Multiline || msg.Subject != "" {
-		lines = paragraphLines(msg, body, prefix, quoted, entry, lineWidth, indent)
-	} else if body = styleLinks(styleMediaTag(body)); msg.ReplyToID == "" {
+		lines = s.paragraphLines(msg, body, prefix, quoted, entry, lineWidth, indent)
+	} else if body = styleLinks(s.dimTag(body)); msg.ReplyToID == "" {
 		lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
 	} else {
 		// Replies put the quoted original on the header row and the text below it.
-		quote := textfmt.ClipLine(prefix+renderQuote(quoted, entry), lineWidth)
+		quote := textfmt.ClipLine(prefix+s.quote(quoted), lineWidth)
 		lines = append([]string{quote},
 			textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 	}
@@ -303,8 +303,8 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 	for range below {
 		media = append(media, true)
 	}
-	lines = append(lines, previewCard(msg.Preview, indent, lineWidth)...)
-	if meta := metaRow(b, msg, entry, replies); meta != "" {
+	lines = append(lines, s.previewCard(msg.Preview, indent, lineWidth)...)
+	if meta := s.metaRow(b, msg, entry, replies); meta != "" {
 		lines = append(lines, textfmt.ClipLine(strings.Repeat(" ", indent)+meta, lineWidth))
 	}
 	return lines, append(media, make([]bool, len(lines)-len(media))...)
@@ -327,7 +327,7 @@ const mailPreviewLines = 12
 // paragraphLines lays out a message that keeps its line breaks: an email's
 // bold subject, then each line of the text wrapped on its own. Mails longer
 // than mailPreviewLines end with a hint to open the reader.
-func paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Message,
+func (s *styles) paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Message,
 	entry backend.ChatEntry, lineWidth, indent int) []string {
 	pad := strings.Repeat(" ", indent)
 	var text []string
@@ -337,16 +337,16 @@ func paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Me
 		}
 	}
 	for _, para := range bodyParagraphs(msg, body) {
-		para = styleLinks(styleMediaTag(para))
+		para = styleLinks(s.dimTag(para))
 		text = append(text, textfmt.WrapLineIndent(pad+para, lineWidth, indent)...)
 	}
 	if msg.Subject != "" && len(text) > mailPreviewLines {
 		more := len(text) - mailPreviewLines + 1
-		text = append(text[:mailPreviewLines-1], pad+styleSubtle.Render(
+		text = append(text[:mailPreviewLines-1], pad+s.subtle.Render(
 			fmt.Sprintf("… %d more %s (⏎ to read)", more, plural(more, "line", "lines"))))
 	}
 	if msg.ReplyToID != "" {
-		quote := textfmt.ClipLine(prefix+renderQuote(quoted, entry), lineWidth)
+		quote := textfmt.ClipLine(prefix+s.quote(quoted), lineWidth)
 		return append([]string{quote}, text...)
 	}
 	first := strings.TrimPrefix(text[0], pad)
@@ -391,7 +391,7 @@ func messageText(msg backend.Message) string {
 
 // metaRow joins a message's reactions, reply count, pin and read ticks into
 // one dim row, or "" when there is nothing to show.
-func metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry, replies int) string {
+func (s *styles) metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry, replies int) string {
 	var reactions []string
 	for _, r := range msg.Reactions {
 		if r.Emoji == "" || r.Count < 1 {
@@ -399,9 +399,9 @@ func metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry, re
 		}
 		count := fmt.Sprint(r.Count)
 		if r.Chosen {
-			count = styleAccent.Render(count)
+			count = s.accent.Render(count)
 		} else {
-			count = styleSubtle.Render(count)
+			count = s.subtle.Render(count)
 		}
 		reactions = append(reactions, r.Emoji+" "+count)
 	}
@@ -410,21 +410,21 @@ func metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry, re
 		parts = append(parts, strings.Join(reactions, "  "))
 	}
 	if replies > 0 {
-		parts = append(parts, styleSubtle.Render(fmt.Sprintf("%d %s", replies,
+		parts = append(parts, s.subtle.Render(fmt.Sprintf("%d %s", replies,
 			plural(replies, "reply", "replies"))))
 	}
 	if msg.Pinned {
-		parts = append(parts, styleSubtle.Render("pinned"))
+		parts = append(parts, s.subtle.Render("pinned"))
 	}
 	if tick := strings.TrimSpace(b.ReadMarker(entry, msg)); tick != "" {
-		parts = append(parts, styleSubtle.Render(tick))
+		parts = append(parts, s.subtle.Render(tick))
 	}
-	return strings.Join(parts, styleDim.Render(" · "))
+	return strings.Join(parts, s.dim.Render(" · "))
 }
 
 // previewCard draws a link preview as a small box under the message text,
 // or nothing when there is no preview or too little room.
-func previewCard(p *backend.LinkPreview, indent, lineWidth int) []string {
+func (s *styles) previewCard(p *backend.LinkPreview, indent, lineWidth int) []string {
 	width := min(60, lineWidth-indent)
 	if p == nil || width < 20 {
 		return nil
@@ -441,7 +441,7 @@ func previewCard(p *backend.LinkPreview, indent, lineWidth int) []string {
 			if i == 1 && len(desc) > 2 {
 				line = textfmt.ClipLine(line, inner-1) + "…"
 			}
-			body = append(body, styleSubtle.Render(line))
+			body = append(body, s.subtle.Render(line))
 		}
 	}
 	site := p.Site
@@ -449,7 +449,7 @@ func previewCard(p *backend.LinkPreview, indent, lineWidth int) []string {
 		site = p.URL
 	}
 	pad := strings.Repeat(" ", indent)
-	lines := strings.Split(renderBox(site, body, width, len(body)+2, colorDim), "\n")
+	lines := strings.Split(renderBox(site, body, width, len(body)+2, s.dimColor), "\n")
 	for i := range lines {
 		lines[i] = pad + lines[i]
 	}

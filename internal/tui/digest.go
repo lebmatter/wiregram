@@ -41,14 +41,15 @@ type digestLoaded struct {
 // digestModel is the account chooser's unread digest: one card per online
 // account, fetched once when the account comes online.
 type digestModel struct {
+	st      *styles
 	ctx     context.Context
 	mgr     *account.AccountManager
 	cards   map[*account.Account]digestCard
 	fetched map[*account.Account]backend.Backend
 }
 
-func newDigest(ctx context.Context, mgr *account.AccountManager) digestModel {
-	return digestModel{ctx: ctx, mgr: mgr, cards: make(map[*account.Account]digestCard),
+func newDigest(ctx context.Context, st *styles, mgr *account.AccountManager) digestModel {
+	return digestModel{st: st, ctx: ctx, mgr: mgr, cards: make(map[*account.Account]digestCard),
 		fetched: make(map[*account.Account]backend.Backend)}
 }
 
@@ -174,19 +175,19 @@ func (m digestModel) view(width, height int) string {
 func (m digestModel) card(a *account.Account, width int) string {
 	c := m.cards[a]
 	title := accountShort(m.mgr, m.mgr.AccountKey(a)) + " " + accountLabel(a)
-	border := colorDim
+	border := m.st.dimColor
 	var lines []string
 	switch {
 	case c.err != nil:
 		lines = []string{styleError.Render(textfmt.CleanError(c.err))}
 	case c.total == 0:
-		lines = []string{styleSubtle.Render("Nothing unread")}
+		lines = []string{m.st.subtle.Render("Nothing unread")}
 	default:
-		border = colorAccent
+		border = m.st.accentColor
 		lines = []string{fmt.Sprintf("%d unread in %d %s", c.total, c.count,
 			plural(c.count, "chat", "chats"))}
 		for _, e := range c.chats {
-			lines = append(lines, chatListLine(e, false, false, width-4))
+			lines = append(lines, m.st.chatListLine(e, false, false, width-4))
 		}
 	}
 	return renderBox(title, lines, width, digestCardH, border)

@@ -46,8 +46,8 @@ type wizardStep struct {
 }
 
 type wizardModel struct {
+	st      *styles // its accent colours the wizard
 	title   string
-	accent  color.Color
 	steps   []wizardStep
 	initial wizardAnswers
 	answers wizardAnswers
@@ -68,9 +68,9 @@ func say(text string) func(wizardAnswers) string {
 }
 
 func newWizard(
-	title string, accent color.Color, steps []wizardStep, initial wizardAnswers,
+	st *styles, title string, steps []wizardStep, initial wizardAnswers,
 ) wizardModel {
-	m := wizardModel{title: title, accent: accent, steps: steps, initial: initial}
+	m := wizardModel{st: st, title: title, steps: steps, initial: initial}
 	return m.restart()
 }
 
@@ -275,7 +275,6 @@ func (m wizardModel) helpKeys() []helpKey {
 func (m wizardModel) view(width, height int) string {
 	inner := width - 4
 	bubbleWidth := wizardBubbleWidth(inner)
-	accent := lipgloss.NewStyle().Foreground(m.accent)
 	var lines []string
 	for _, i := range m.done {
 		step := m.steps[i]
@@ -286,32 +285,32 @@ func (m wizardModel) view(width, height int) string {
 		if reply == "" {
 			reply = "(skip)"
 		}
-		lines = wizardAsk(lines, step.ask(m.answers), bubbleWidth, m.accent)
-		lines = wizardReply(lines, reply, inner, bubbleWidth)
+		lines = wizardAsk(lines, step.ask(m.answers), bubbleWidth, m.st.accentColor)
+		lines = m.st.wizardReply(lines, reply, inner, bubbleWidth)
 	}
 	if m.cur < len(m.steps) {
 		step := m.steps[m.cur]
-		lines = wizardAsk(lines, step.ask(m.answers), bubbleWidth, m.accent)
+		lines = wizardAsk(lines, step.ask(m.answers), bubbleWidth, m.st.accentColor)
 		switch step.kind {
 		case wizText:
 			m.input.SetWidth(max(10, inner-4))
-			lines = append(lines, accent.Render("› ")+m.input.View())
+			lines = append(lines, m.st.accent.Render("› ")+m.input.View())
 		default:
 			for j, o := range step.options(m.answers) {
 				marker := "  "
 				if j == m.cursor {
-					marker = accent.Render("> ")
+					marker = m.st.accent.Render("> ")
 				}
 				box := ""
 				if step.kind == wizMulti {
 					box = "[ ] "
 					if m.picked[o.value] {
-						box = accent.Render("[x] ")
+						box = m.st.accent.Render("[x] ")
 					}
 				}
 				row := marker + box + o.label
 				if o.blocked != "" {
-					row = marker + box + styleDim.Render(o.label+" — "+o.blocked)
+					row = marker + box + m.st.dim.Render(o.label+" — "+o.blocked)
 				} else if j == m.cursor {
 					row = marker + box + styleTitle.Render(o.label)
 				}
@@ -322,7 +321,7 @@ func (m wizardModel) view(width, height int) string {
 			lines = append(lines, styleError.Render(m.err))
 		}
 	}
-	return renderBox(m.title, bottomLines(lines, height-2), width, height, m.accent)
+	return renderBox(m.title, bottomLines(lines, height-2), width, height, m.st.accentColor)
 }
 
 func wizardBubbleWidth(inner int) int { return min(64, max(20, inner*3/4)) }
@@ -334,9 +333,9 @@ func wizardAsk(lines []string, text string, width int, accent color.Color) []str
 }
 
 // wizardReply appends the user's right-aligned answer bubble and a gap to lines.
-func wizardReply(lines []string, text string, inner, width int) []string {
-	lines = append(lines, lipgloss.PlaceHorizontal(inner, lipgloss.Right, styleSubtle.Render("you")))
-	bubble := lipgloss.PlaceHorizontal(inner, lipgloss.Right, wizardBubble(text, width, colorDim))
+func (s *styles) wizardReply(lines []string, text string, inner, width int) []string {
+	lines = append(lines, lipgloss.PlaceHorizontal(inner, lipgloss.Right, s.subtle.Render("you")))
+	bubble := lipgloss.PlaceHorizontal(inner, lipgloss.Right, wizardBubble(text, width, s.dimColor))
 	return append(append(lines, strings.Split(bubble, "\n")...), "")
 }
 

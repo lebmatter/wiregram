@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"image/color"
 	"os"
 	"strconv"
 	"strings"
@@ -19,7 +18,7 @@ import (
 )
 
 // Agent mode manages Chat Agents: AI bots bound to whole accounts that answer
-// incoming DMs only. It shares the account header but uses colorAgent.
+// incoming DMs only. It shares the account header but uses the agent colour.
 
 type agentScreen int
 
@@ -44,6 +43,7 @@ const (
 const agentSidebarWidth = 40
 
 type agentModeModel struct {
+	st   *styles
 	ctx  context.Context
 	mgr  *account.AccountManager
 	quit bool
@@ -95,7 +95,8 @@ func listenAgents(ctx context.Context, mgr *account.AccountManager) tea.Cmd {
 // to go back to wherever it was opened from.
 func tuiAgentMode(ctx context.Context, mgr *account.AccountManager) (*account.Account, error) {
 	w, h := termSize()
-	m := agentModeModel{ctx: ctx, mgr: mgr, width: w, height: h}
+	st := newStyles(loadTheme(mgr.Store)).forAgents()
+	m := agentModeModel{st: st, ctx: ctx, mgr: mgr, width: w, height: h}
 	m = m.reload()
 	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil {
@@ -399,7 +400,7 @@ func (m agentModeModel) startWizard(purpose wizardPurpose, target int64) (tea.Mo
 	m.purpose, m.target = purpose, target
 	switch purpose {
 	case wizNewProvider:
-		m.wiz = newWizard("Connect an AI provider", colorAgent, m.providerSteps(false), nil)
+		m.wiz = newWizard(m.st, "Connect an AI provider", m.providerSteps(false), nil)
 	case wizEditProvider:
 		initial := wizardAnswers{"preset": "custom"}
 		for _, p := range m.providers {
@@ -408,14 +409,14 @@ func (m agentModeModel) startWizard(purpose wizardPurpose, target int64) (tea.Mo
 				initial["env"], initial["model"] = p.APIKeyEnv, p.Model
 			}
 		}
-		m.wiz = newWizard("Edit provider", colorAgent, m.providerSteps(true), initial)
+		m.wiz = newWizard(m.st, "Edit provider", m.providerSteps(true), initial)
 	case wizNewAgent:
-		m.wiz = newWizard("New Chat Agent", colorAgent, m.agentSteps(0), nil)
+		m.wiz = newWizard(m.st, "New Chat Agent", m.agentSteps(0), nil)
 	case wizEditAgent:
-		m.wiz = newWizard("Edit Chat Agent", colorAgent, m.agentSteps(target), m.agentAnswers(target))
+		m.wiz = newWizard(m.st, "Edit Chat Agent", m.agentSteps(target), m.agentAnswers(target))
 	case wizConnect:
 		initial := wizardAnswers{"accounts": m.boundKeys(target)}
-		m.wiz = newWizard("Connect accounts", colorAgent, []wizardStep{m.accountsStep(target)}, initial)
+		m.wiz = newWizard(m.st, "Connect accounts", []wizardStep{m.accountsStep(target)}, initial)
 	}
 	m.screen = scrWizard
 	return m, m.wiz.Init()
@@ -878,7 +879,7 @@ func (m agentModeModel) footer() string {
 	if m.confirm != nil {
 		notice = m.confirmText
 	}
-	return renderThemedFooter(m.helpKeys(), notice, m.width, colorAgent)
+	return m.st.footer(m.helpKeys(), notice, m.width)
 }
 
 func (m agentModeModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
@@ -892,15 +893,15 @@ func (m agentModeModel) render() string {
 		body = m.wiz.view(m.width, bodyHeight)
 	case m.screen == scrProviders:
 		body = renderBox("AI providers", m.providerLines(m.width-4, bodyHeight-2),
-			m.width, bodyHeight, colorAgent)
+			m.width, bodyHeight, m.st.accentColor)
 	case m.width >= twoPaneWidth:
 		left := renderBox("Chat Agents", m.agentLines(agentSidebarWidth-4, bodyHeight-2),
-			agentSidebarWidth, bodyHeight, agentBorderColor(m.screen == scrAgents))
+			agentSidebarWidth, bodyHeight, m.st.border(m.screen == scrAgents))
 		body = lipgloss.JoinHorizontal(lipgloss.Top, left,
 			m.rightPane(m.width-agentSidebarWidth, bodyHeight))
 	case m.screen == scrAgents:
 		body = renderBox("Chat Agents", m.agentLines(m.width-4, bodyHeight-2),
-			m.width, bodyHeight, colorAgent)
+			m.width, bodyHeight, m.st.accentColor)
 	default:
 		body = m.rightPane(m.width, bodyHeight)
 	}
@@ -909,21 +910,14 @@ func (m agentModeModel) render() string {
 
 func (m agentModeModel) rightPane(width, height int) string {
 	if m.screen == scrConv {
-		return renderBox(m.convTitle, m.convLines(width-4, height-2), width, height, colorAgent)
+		return renderBox(m.convTitle, m.convLines(width-4, height-2), width, height, m.st.accentColor)
 	}
 	title := "Conversations"
 	if a, ok := m.selected(); ok {
 		title = a.Name + " — conversations"
 	}
 	return renderBox(title, m.threadLines(width-4, height-2), width, height,
-		agentBorderColor(m.screen == scrConvs))
-}
-
-func agentBorderColor(focused bool) color.Color {
-	if focused {
-		return colorAgent
-	}
-	return colorDim
+		m.st.border(m.screen == scrConvs))
 }
 
 // window returns the first visible item so that sel stays on screen.
@@ -934,14 +928,10 @@ func window(sel, rows int) int {
 	return sel - rows + 1
 }
 
-func listRow(text, right string, selected, focused bool, width int) string {
-	return themedListRow(text, right, selected, focused, width, colorAgent)
-}
-
-func themedListRow(text, right string, selected, focused bool, width int, accent color.Color) string {
+func (s *styles) listRow(text, right string, selected, focused bool, width int) string {
 	marker := "  "
 	if selected {
-		marker = lipgloss.NewStyle().Foreground(accent).Render(">") + " "
+		marker = s.accent.Render(">") + " "
 	}
 	room := max(1, width-2-textfmt.DisplayWidth(right)-1)
 	row := marker + truncate(text, room)
@@ -949,7 +939,7 @@ func themedListRow(text, right string, selected, focused bool, width int, accent
 	row += strings.Repeat(" ", gap) + right
 	switch {
 	case selected && focused:
-		return styleSelectedRow.Render(row)
+		return s.selectedRow.Render(row)
 	case selected:
 		return styleTitle.Render(row)
 	}
@@ -963,7 +953,7 @@ func (m agentModeModel) agentLines(width, height int) []string {
 			hint = "Chat Agents answer incoming\nDMs with AI.\n\n" +
 				"Press n to connect a provider\nand create your first agent."
 		}
-		return centerLines(width, height, styleSubtle.Render(hint))
+		return centerLines(width, height, m.st.subtle.Render(hint))
 	}
 	var lines []string
 	for i := window(m.sel, height/2); i < len(m.agents); i++ {
@@ -973,22 +963,22 @@ func (m agentModeModel) agentLines(width, height int) []string {
 		problem := m.mgr.Agents.Problem(a.ID)
 		switch {
 		case !a.Enabled:
-			status = styleDim.Render("paused")
+			status = m.st.dim.Render("paused")
 		case problem != "":
 			status = styleError.Render("✕ error")
 		case tags == "":
-			status = styleDim.Render("no accounts")
+			status = m.st.dim.Render("no accounts")
 		}
 		mode := "suggest"
 		if a.Auto {
 			mode = "auto"
 		}
-		detail := styleDim.Render(fmt.Sprintf("    %s · %s %s", mode, mediaLabel(a.Media), tags))
+		detail := m.st.dim.Render(fmt.Sprintf("    %s · %s %s", mode, mediaLabel(a.Media), tags))
 		if problem != "" && a.Enabled {
 			detail = "    " + styleError.Render(truncate(problem, width-4))
 		}
 		lines = append(lines,
-			listRow(textfmt.Plain(a.Name), status, i == m.sel, m.screen == scrAgents, width),
+			m.st.listRow(textfmt.Plain(a.Name), status, i == m.sel, m.screen == scrAgents, width),
 			textfmt.ClipLine(detail, width))
 	}
 	return lines
@@ -1006,19 +996,19 @@ func (m agentModeModel) threadLines(width, height int) []string {
 		} else {
 			hint += "\nIt answers incoming DMs on " + tags + "."
 		}
-		return centerLines(width, height, styleSubtle.Render(hint))
+		return centerLines(width, height, m.st.subtle.Render(hint))
 	}
 	var lines []string
 	for i := window(m.tsel, height); i < len(m.threads); i++ {
 		t := m.threads[i]
-		right := styleDim.Render(agentTime(t.LastAt))
+		right := m.st.dim.Render(agentTime(t.LastAt))
 		key := account.ConvKey{AgentID: a.ID, AccountKey: t.AccountID,
 			Chat: backend.ChatID{Backend: t.BackendType, Id: t.ChatID}}
 		if _, ok := m.mgr.Agents.Pending(key); ok {
-			right = styleAgent.Render("pending ") + right
+			right = m.st.agent.Render("pending ") + right
 		}
-		text := styleAgent.Render("["+accountShort(m.mgr, t.AccountID)+"]") + " " + threadTitle(t)
-		lines = append(lines, listRow(text, right, i == m.tsel, m.screen == scrConvs, width))
+		text := m.st.agent.Render("["+accountShort(m.mgr, t.AccountID)+"]") + " " + threadTitle(t)
+		lines = append(lines, m.st.listRow(text, right, i == m.tsel, m.screen == scrConvs, width))
 	}
 	return lines
 }
@@ -1039,34 +1029,34 @@ func (m agentModeModel) convLines(width, height int) []string {
 		style := lipgloss.NewStyle()
 		switch {
 		case msg.IsAgentReply:
-			nick, style = "agent", styleAgent
+			nick, style = "agent", m.st.agent
 		case msg.Outgoing:
 			nick = "you"
 		}
-		prefix := styleDim.Render(msg.Timestamp.Local().Format("[15:04]")) + " " +
+		prefix := m.st.dim.Render(msg.Timestamp.Local().Format("[15:04]")) + " " +
 			style.Render(textfmt.FormatNick(nick)) + " "
 		lines = append(lines, textfmt.WrapMessage(prefix, textfmt.Plain(msg.Text), width, indent)...)
 	}
 	if s, ok := m.mgr.Agents.Pending(m.conv); ok {
-		lines = append(lines, "", styleAgent.Bold(true).Render("Suggested reply"))
-		lines = append(lines, strings.Split(wizardBubble(s.Text, min(width, 72), colorAgent), "\n")...)
-		lines = append(lines, styleSubtle.Render("y send · n discard"))
+		lines = append(lines, "", m.st.agent.Bold(true).Render("Suggested reply"))
+		lines = append(lines, strings.Split(wizardBubble(s.Text, min(width, 72), m.st.accentColor), "\n")...)
+		lines = append(lines, m.st.subtle.Render("y send · n discard"))
 	}
 	return bottomLines(lines, height)
 }
 
 func (m agentModeModel) providerLines(width, height int) []string {
 	if len(m.providers) == 0 {
-		return centerLines(width, height, styleSubtle.Render("No providers yet. Press n to connect one."))
+		return centerLines(width, height, m.st.subtle.Render("No providers yet. Press n to connect one."))
 	}
 	var lines []string
 	for i := window(m.psel, height); i < len(m.providers); i++ {
 		p := m.providers[i]
-		right := styleDim.Render(p.Model)
+		right := m.st.dim.Render(p.Model)
 		if p.APIKeyEnv != "" && os.Getenv(p.APIKeyEnv) == "" {
 			right = styleError.Render("$"+p.APIKeyEnv+" not set") + " " + right
 		}
-		lines = append(lines, listRow(textfmt.Plain(p.Name)+"  "+styleDim.Render(p.BaseURL),
+		lines = append(lines, m.st.listRow(textfmt.Plain(p.Name)+"  "+m.st.dim.Render(p.BaseURL),
 			right, i == m.psel, true, width))
 	}
 	return lines

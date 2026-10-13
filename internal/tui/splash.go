@@ -18,6 +18,7 @@ const (
 )
 
 type splashModel struct {
+	st            *styles
 	mgr           *account.AccountManager
 	started       time.Time
 	spin          spinner.Model
@@ -66,11 +67,11 @@ func (m splashModel) View() tea.View {
 		status += "…"
 	}
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		renderLogo(m.width),
+		m.st.logo(m.width),
 		"",
-		styleSubtle.Render("a minimal chat client for the terminal"),
+		m.st.subtle.Render("a minimal chat client for the terminal"),
 		"",
-		styleSubtle.Render(status),
+		m.st.subtle.Render(status),
 	)
 	v := tea.NewView(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
 	v.AltScreen = true
@@ -81,10 +82,12 @@ func (m splashModel) View() tea.View {
 // tuiSplash shows the logo briefly while accounts start connecting.
 func tuiSplash(ctx context.Context, mgr *account.AccountManager) {
 	w, h := termSize()
+	st := newStyles(loadTheme(mgr.Store))
 	m := splashModel{
+		st:      st,
 		mgr:     mgr,
 		started: time.Now(),
-		spin:    spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styleAccent)),
+		spin:    spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(st.accent)),
 		width:   w,
 		height:  h,
 	}

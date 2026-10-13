@@ -4,6 +4,7 @@ import "charm.land/bubbletea/v2"
 
 // quitModal asks before wiregram exits, drawn like the message actions modal.
 type quitModal struct {
+	st  *styles
 	row int // 0 is Quit, 1 is Cancel
 }
 
@@ -35,15 +36,15 @@ func (m quitModal) size() (int, int) {
 
 func (m quitModal) View() string {
 	w, h := m.size()
-	body := []string{styleSubtle.Render("Quit wiregram?"), ""}
+	body := []string{m.st.subtle.Render("Quit wiregram?"), ""}
 	for i, label := range quitModalRows {
 		if i == m.row {
-			body = append(body, styleAccent.Render("> ")+styleSelectedRow.Render(label))
+			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(label))
 		} else {
 			body = append(body, "  "+label)
 		}
 	}
-	return renderBox("Quit", body, w, h, colorAccent)
+	return renderBox("Quit", body, w, h, m.st.accentColor)
 }
 
 // hit selects the row at row y of the box, counted from its top edge.

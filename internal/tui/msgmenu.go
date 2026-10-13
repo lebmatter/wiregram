@@ -37,6 +37,7 @@ type msgAction struct {
 // reactions, a search field and the matching emoji row, above the actions the
 // message allows. Typing anywhere in the modal searches the reactions.
 type msgMenuModel struct {
+	st        *styles
 	b         backend.Backend
 	target    backend.Message
 	title     string
@@ -61,7 +62,7 @@ type msgMenuChoice struct {
 
 const msgMenuWidth = 46
 
-func newMsgMenu(b backend.Backend, caps backend.Capabilities, sel backend.Message,
+func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel backend.Message,
 	prev chatSubMode) msgMenuModel {
 	mail := caps.MultilineCompose
 	var acts []msgAction
@@ -95,6 +96,7 @@ func newMsgMenu(b backend.Backend, caps backend.Capabilities, sel backend.Messag
 		add(true, actDeleteForAll, "Delete for everyone")
 	}
 	m := msgMenuModel{
+		st:      st,
 		b:       b,
 		target:  sel,
 		title:   backend.GenericMessageSender(sel),
@@ -216,41 +218,41 @@ func (m msgMenuModel) size(width int) (int, int) {
 func (m msgMenuModel) View(width int) string {
 	w, h := m.size(width)
 	inner := w - 4
-	body := []string{styleSubtle.Render(textfmt.ClipLine(m.excerpt, inner))}
+	body := []string{m.st.subtle.Render(textfmt.ClipLine(m.excerpt, inner))}
 	if m.reactions {
 		m.search.SetWidth(max(1, inner-len(reactionPrompt)-1))
-		body = append(body, styleAccent.Render(reactionPrompt)+m.search.View())
+		body = append(body, m.st.accent.Render(reactionPrompt)+m.search.View())
 	}
 	if m.reactions && len(m.emoji) == 0 {
-		body = append(body, styleDim.Render("  no matching reaction"), "")
+		body = append(body, m.st.dim.Render("  no matching reaction"), "")
 	} else if m.reactions {
 		start, cells := m.emojiCells(inner)
 		var b strings.Builder
 		if start > 0 {
-			b.WriteString(styleDim.Render("‹"))
+			b.WriteString(m.st.dim.Render("‹"))
 		} else {
 			b.WriteString(" ")
 		}
 		for i, c := range cells {
 			if m.row == 0 && start+i == m.col {
-				b.WriteString(styleSelectedRow.Render(c))
+				b.WriteString(m.st.selectedRow.Render(c))
 			} else {
 				b.WriteString(c)
 			}
 		}
 		if start+len(cells) < len(m.emoji) {
-			b.WriteString(styleDim.Render("›"))
+			b.WriteString(m.st.dim.Render("›"))
 		}
 		body = append(body, b.String(), "")
 	}
 	for i, a := range m.actions {
 		if m.row == m.firstAction()+i {
-			body = append(body, styleAccent.Render("> ")+styleSelectedRow.Render(a.label))
+			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(a.label))
 		} else {
 			body = append(body, "  "+a.label)
 		}
 	}
-	return renderBox(m.title, body, w, h, colorAccent)
+	return renderBox(m.title, body, w, h, m.st.accentColor)
 }
 
 // hit maps column x and row y of the box, counted from its top-left corner,

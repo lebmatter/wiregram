@@ -40,6 +40,7 @@ const (
 )
 
 type chatViewModel struct {
+	st        *styles
 	ctx       context.Context
 	cancel    context.CancelFunc
 	b         backend.Backend
@@ -209,7 +210,7 @@ type chatSearchResult struct {
 }
 type chatSearchDebounce struct{}
 
-func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.ChatEntry, histories *[]string) chatViewModel {
+func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry backend.ChatEntry, histories *[]string) chatViewModel {
 	ctx, cancel := context.WithCancel(ctx)
 	w, h := termSize()
 	ti := textinput.New()
@@ -222,6 +223,7 @@ func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.Chat
 		draft = newDraft()
 	}
 	return chatViewModel{
+		st:              st,
 		ctx:             ctx,
 		cancel:          cancel,
 		b:               b,
@@ -237,7 +239,7 @@ func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.Chat
 		input:           ti,
 		sends:           make(chan chatOutgoing),
 		autoLock:        b.AutoLockEnabled(),
-		spin:            spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styleAccent)),
+		spin:            spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(st.accent)),
 		focused:         true,
 		width:           w,
 		height:          h,
@@ -966,7 +968,7 @@ func (m chatViewModel) openMenu() (chatViewModel, tea.Cmd) {
 }
 
 func (m chatViewModel) openMenuOn(sel backend.Message) (chatViewModel, tea.Cmd) {
-	m.menu = newMsgMenu(m.b, m.caps, sel, m.subMode)
+	m.menu = newMsgMenu(m.st, m.b, m.caps, sel, m.subMode)
 	m.subMode = chatSubMenu
 	if !m.menu.reactions {
 		return m, nil
@@ -1402,8 +1404,8 @@ func (m chatViewModel) pickerClick(r int) (chatViewModel, tea.Cmd) {
 	inner, bodyHeight := m.width-4, m.height-2
 	switch m.subMode {
 	case chatSubSearch:
-		height := bodyHeight - len(composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote))
-		lines := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
+		height := bodyHeight - len(m.st.composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote))
+		lines := m.st.genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
 			m.searchQuery, inner, height)
 		// The same layout bottomLines gives the results: heading, blank, rows.
 		row := r - (height - len(lines)) - 2
@@ -1472,7 +1474,7 @@ func (m chatViewModel) footerLine() (string, bool) {
 		if m.opening.bytes > 0 {
 			text += " · " + textfmt.FormatSize(m.opening.bytes)
 		}
-		return m.spin.View() + styleSubtle.Render(text+"…"), true
+		return m.spin.View() + m.st.subtle.Render(text+"…"), true
 	}
 	if m.notice != "" || m.subMode != chatSubNone || m.privateMode {
 		return "", false
@@ -1485,8 +1487,8 @@ func (m chatViewModel) footerLine() (string, bool) {
 	if !ok {
 		return "", false
 	}
-	line := styleAccent.Render("click") + styleSubtle.Render(" the attachment to open "+filename) +
-		styleSubtle.Render(" · ") + styleAccent.Render("⏎") + styleSubtle.Render(" actions")
+	line := m.st.accent.Render("click") + m.st.subtle.Render(" the attachment to open "+filename) +
+		m.st.subtle.Render(" · ") + m.st.accent.Render("⏎") + m.st.subtle.Render(" actions")
 	return line, true
 }
 
@@ -1517,7 +1519,7 @@ func (m chatViewModel) chatOwners(width int) ([]int, []bool) {
 	// The chat beside an open thread draws its composer unfocused.
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
-	_, owners, media := genericSelectedLines(m.b, m.messages, m.entry, m.selected,
+	_, owners, media := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
 		m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, inner, height)
 	return screenRows(owners, height, -1), screenRows(media, height, false)
 }
@@ -1590,8 +1592,8 @@ func (m chatViewModel) chatBox(width, height int, focused bool) string {
 	case m.messages == nil:
 		body = centerLines(inner, bodyHeight, m.spin.View()+"loading messages…")
 	case m.subMode == chatSubSearch:
-		composer := composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote)
-		results := genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
+		composer := m.st.composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote)
+		results := m.st.genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
 			m.searchQuery, inner, bodyHeight-len(composer))
 		body = append(bottomLines(results, bodyHeight-len(composer)), composer...)
 	case m.subMode == chatSubUpload:
@@ -1602,7 +1604,7 @@ func (m chatViewModel) chatBox(width, height int, focused bool) string {
 		composer := m.composer(inner, focused)
 		body = append(m.messageLines(inner, bodyHeight-len(composer)), composer...)
 	}
-	return renderBox(title, body, width, height, boxBorder(focused))
+	return renderBox(title, body, width, height, m.st.border(focused))
 }
 
 // messageLines is the scrolled message log plus any uploads in flight.
@@ -1611,18 +1613,18 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, nil, false, "", nil, width, height)
+		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, nil, false, "", nil, width, height)
 	} else {
-		lines, _, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, width, height)
+		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, width, height)
 	}
 	if len(m.messages) == 0 {
-		lines = centerLines(width, height, styleSubtle.Render("No messages yet. Say hi!"))
+		lines = centerLines(width, height, m.st.subtle.Render("No messages yet. Say hi!"))
 	}
 	lines = bottomLines(lines, max(0, height))
 	for _, u := range m.uploads {
-		prefix := "  " + messageHeader(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry, false) + " "
+		prefix := "  " + m.st.messageHeader(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry, false) + " "
 		lines = append(lines, textfmt.ClipLine(prefix+m.spin.View()+
-			styleSubtle.Render(fmt.Sprintf("uploading %s (%s)…", filepath.Base(u.path), textfmt.FormatSize(u.size))), width))
+			m.st.subtle.Render(fmt.Sprintf("uploading %s (%s)…", filepath.Base(u.path), textfmt.FormatSize(u.size))), width))
 	}
 	return lines
 }
@@ -1630,28 +1632,28 @@ func (m chatViewModel) messageLines(width, height int) []string {
 // composer is the bordered input at the bottom of the chat, with the reply
 // bar above the text while replying.
 func (m chatViewModel) composer(width int, focused bool) []string {
-	border := boxBorder(focused)
+	border := m.st.border(focused)
 	if m.subMode == chatSubEdit {
-		return composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
+		return m.st.composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
 	}
 	if m.caps.MultilineCompose {
 		return m.draftBox(width, border)
 	}
-	return composerBox("", m.replyBar(), "› ", m.input, width, border)
+	return m.st.composerBox("", m.replyBar(), "› ", m.input, width, border)
 }
 
 func (m chatViewModel) replyBar() []string {
 	if m.replying == nil {
 		return nil
 	}
-	return []string{styleQuoteBar.Render("↪ ") + styleSubtle.Render("Replying to ") +
-		backend.GenericMessageSender(*m.replying) + styleSubtle.Render(": "+
+	return []string{styleQuoteBar.Render("↪ ") + m.st.subtle.Render("Replying to ") +
+		backend.GenericMessageSender(*m.replying) + m.st.subtle.Render(": "+
 		textfmt.ShortExcerpt(backend.GenericMessageText(*m.replying))+"  (esc cancels)")}
 }
 
-func composerBox(title string, above []string, prompt string, input textinput.Model, width int, border color.Color) []string {
+func (s *styles) composerBox(title string, above []string, prompt string, input textinput.Model, width int, border color.Color) []string {
 	input.SetWidth(max(1, width-4-textfmt.DisplayWidth(prompt)-1))
-	lines := append(above, styleAccent.Render(prompt)+input.View())
+	lines := append(above, s.accent.Render(prompt)+input.View())
 	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
 }
 
@@ -1666,10 +1668,10 @@ func (m chatViewModel) lockView(width, height int) string {
 	unread := m.b.CachedUnread(m.entry)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center,
 		lipgloss.JoinVertical(lipgloss.Center,
-			renderLogo(width),
+			m.st.logo(width),
 			"",
-			styleSubtle.Render(fmt.Sprintf("locked · %d unread", unread)),
-			styleDim.Render("press any key"),
+			m.st.subtle.Render(fmt.Sprintf("locked · %d unread", unread)),
+			m.st.dim.Render("press any key"),
 		))
 }
 

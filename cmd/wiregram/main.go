@@ -97,6 +97,8 @@ Keyboard shortcuts:
                       how long mail stays cached (email), remove account
     Tab, Right/l      Move to the account's settings
     Space             Change the selected setting
+    Themes…           Pick a theme (Zest, Copper) from sample cards with the
+                      arrows; Enter applies it to every screen
     Esc, Left/h       Back to the accounts, then to where Settings was opened
     q                 Quit
 
