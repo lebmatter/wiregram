@@ -473,6 +473,18 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		u := mb.resolveUser(ctx, p.UserID)
 		sender = u.displayName()
 	}
+	// Webhooks post as the user who created them and may name themselves.
+	if name, ok := p.Props["override_username"].(string); ok && name != "" &&
+		p.Props["from_webhook"] == "true" {
+		sender = name
+	}
+	text := p.Message
+	if att := mmAttachmentsText(p.Props); att != "" {
+		if text != "" {
+			text += "\n"
+		}
+		text += att
+	}
 
 	var mediaLabel string
 	image := false
@@ -501,7 +513,7 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		ID:         p.ID,
 		Sender:     sender,
 		SenderID:   senderID,
-		Text:       p.Message,
+		Text:       text,
 		Timestamp:  time.UnixMilli(p.CreateAt).Local(),
 		Outgoing:   outgoing,
 		Pinned:     p.IsPinned,
@@ -509,10 +521,69 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		ReplyToID:  p.RootID,
 		MediaLabel: mediaLabel,
 		Image:      image,
-		Multiline:  strings.Contains(p.Message, "\n"),
+		Multiline:  strings.Contains(text, "\n"),
 		Preview:    mmPreview(p.Metadata),
 		Raw:        p,
 	}
+}
+
+// mmAttachment is a Slack-style message attachment, which bots and webhooks
+// such as alert relays post in props instead of message text.
+type mmAttachment struct {
+	Fallback   string `json:"fallback"`
+	Pretext    string `json:"pretext"`
+	AuthorName string `json:"author_name"`
+	Title      string `json:"title"`
+	Text       string `json:"text"`
+	Fields     []struct {
+		Title string `json:"title"`
+		Value any    `json:"value"`
+	} `json:"fields"`
+	Footer string `json:"footer"`
+}
+
+// mmAttachmentsText flattens a post's attachments into plain lines.
+func mmAttachmentsText(props map[string]any) string {
+	raw, ok := props["attachments"]
+	if !ok {
+		return ""
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return ""
+	}
+	var atts []mmAttachment
+	if json.Unmarshal(data, &atts) != nil {
+		return ""
+	}
+	var lines []string
+	add := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			lines = append(lines, s)
+		}
+	}
+	for _, a := range atts {
+		before := len(lines)
+		add(a.Pretext)
+		add(a.AuthorName)
+		add(a.Title)
+		add(a.Text)
+		for _, f := range a.Fields {
+			v := strings.TrimSpace(fmt.Sprint(f.Value))
+			if f.Value == nil || v == "" {
+				continue
+			}
+			if f.Title != "" {
+				v = f.Title + ": " + v
+			}
+			add(v)
+		}
+		add(a.Footer)
+		if len(lines) == before {
+			add(a.Fallback)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // mmPreview returns the first OpenGraph embed the server attached.
