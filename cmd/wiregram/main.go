@@ -107,6 +107,9 @@ Keyboard shortcuts:
     Space             Change the selected setting
     Themes…           Pick a theme (Zest, Copper) from sample cards with the
                       arrows; Enter applies it to every screen
+    Reset…            Sign out of every account and delete all local data
+                      (settings, plugins, agents, cached mail and media),
+                      then start over as a fresh installation (y confirms)
     Esc, Left/h       Back to the accounts, then to where Settings was opened
     q                 Quit
 
@@ -210,10 +213,23 @@ func run() (result error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return fmt.Errorf("wiregram needs an interactive terminal")
 	}
-	dir, err := config.Dir()
-	if err != nil {
-		return err
+	for {
+		dir, err := config.Dir()
+		if err != nil {
+			return err
+		}
+		err = session(ctx, dir)
+		if _, reset := err.(tui.ResetRequested); !reset {
+			return err
+		}
+		if err := config.Wipe(dir); err != nil {
+			return err
+		}
 	}
+}
+
+// session runs wiregram on the data in dir until it quits or is reset.
+func session(ctx context.Context, dir string) error {
 	db, err := store.Open(dir)
 	if err != nil {
 		return err

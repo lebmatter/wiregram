@@ -27,6 +27,12 @@ type agentsRequested struct{}
 
 func (agentsRequested) Error() string { return "open agents" }
 
+// ResetRequested is returned by RunAccounts after Settings' Reset removed
+// every account; the caller deletes all local data and starts again.
+type ResetRequested struct{}
+
+func (ResetRequested) Error() string { return "reset wiregram" }
+
 func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 	defer m.Close()
 

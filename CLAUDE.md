@@ -90,11 +90,12 @@ These are project constraints, not suggestions:
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Themes, Plugins, Chat Agents, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Plugins, Chat Agents, Reset, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
   binding; the primary account's directory is the config directory, so only its
-  rows are deleted.
+  rows are deleted. Reset removes every account that way, then `main` deletes the config
+  and cache directories (`config.Wipe`) and starts again as a fresh install.
 - Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
   a grid of cards, one per online account, each fetched once when the account comes
   online, showing its unread total and busiest chats. An account's Unread digest

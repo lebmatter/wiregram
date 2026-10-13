@@ -17,13 +17,14 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Themes…", "Plugins…", "Chat Agents…", "Quit"}
+var settingsActions = []string{"+ Add account…", "Themes…", "Plugins…", "Chat Agents…", "Reset…", "Quit"}
 
 const (
 	actionAdd = iota
 	actionThemes
 	actionPlugins
 	actionAgents
+	actionReset
 	actionQuit
 )
 
@@ -53,7 +54,11 @@ type settingsResult struct {
 	back    bool             // return to the active account
 	add     bool
 	agents  bool
+	reset   bool // every account was removed; delete all local data
 }
+
+// settingsReset reports that every account has been signed out and removed.
+type settingsReset struct{}
 
 type settingsRemoved struct {
 	a   *account.Account
@@ -118,6 +123,9 @@ func (m settingsModel) onThemes() bool { return m.left == len(m.accounts)+action
 // onPlugins reports whether the Plugins row is chosen, whose pane lists plugins.
 func (m settingsModel) onPlugins() bool { return m.left == len(m.accounts)+actionPlugins }
 
+// onReset reports whether the Reset row is chosen.
+func (m settingsModel) onReset() bool { return m.left == len(m.accounts)+actionReset }
+
 // rightRows is how many rows the right pane selects among.
 func (m settingsModel) rightRows() int {
 	if m.onThemes() {
@@ -175,6 +183,9 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.result.add = true
 			return m, tea.Quit
 		}
+	case settingsReset:
+		m.result.reset = true
+		return m, tea.Quit
 	case tea.KeyPressMsg:
 		if m.editing {
 			return m.editKey(msg)
@@ -206,7 +217,8 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 	if m.confirm != nil {
 		run := m.confirm
 		m.confirm, m.confirmText = nil, ""
-		if k == "enter" || k == "y" || k == "Y" {
+		// Reset takes only y, so a second Enter cannot wipe everything.
+		if k == "y" || k == "Y" || k == "enter" && !m.onReset() {
 			m.busy, m.notice = true, "Signing out…"
 			return m, run()
 		}
@@ -260,6 +272,11 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 			m.result.add = true
 		case actionAgents:
 			m.result.agents = true
+		case actionReset:
+			m.confirmText = "Delete all accounts and data and start fresh? This cannot be undone. " +
+				"y resets, any other key cancels"
+			m.confirm = func() tea.Cmd { return m.resetAll }
+			return m, nil
 		}
 		return m, tea.Quit
 	}
@@ -359,6 +376,15 @@ func (m settingsModel) apply(item settingsItem) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// resetAll signs out of and removes every account; the caller then deletes
+// the whole config and cache directories.
+func (m settingsModel) resetAll() tea.Msg {
+	for _, a := range m.mgr.List() {
+		m.mgr.Remove(m.ctx, a) // a failed server logout must not stop the reset
+	}
+	return settingsReset{}
 }
 
 func retentionLabel(days int) string {
@@ -511,13 +537,22 @@ func (m settingsModel) itemLines(width, height int) []string {
 	if a == nil {
 		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
 			"The colours of the whole app.", "Lua scripts that add widgets to the account list.",
-			"Bots that answer your direct messages.", "Leave wiregram."}
+			"Bots that answer your direct messages.",
+			"Delete every account and all local data, as on a fresh install.", "Leave wiregram."}
 		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
 		if m.onThemes() {
 			lines = append(append(lines, ""), m.themeLines(width)...)
 		}
 		if m.onPlugins() {
 			lines = append(append(lines, ""), m.pluginLines(width, height-itemsTop)...)
+		}
+		if m.onReset() {
+			for _, w := range []string{"", "Warning: this cannot be undone.",
+				"Every account is signed out and removed. Settings, themes, plugins and",
+				"their data, Chat Agents, cached mail and downloaded media are deleted,",
+				"then wiregram starts over as a fresh installation."} {
+				lines = append(lines, styleError.Render(textfmt.ClipLine(w, width)))
+			}
 		}
 		return lines
 	}
@@ -639,6 +674,9 @@ func (m settingsModel) helpKeys() []helpKey {
 	if !m.canGoBack() {
 		back = helpKey{"q", "quit"}
 	}
+	if m.confirm != nil && m.onReset() {
+		return []helpKey{{"y", "reset"}, {"esc", "cancel"}}
+	}
 	if m.confirm != nil {
 		return []helpKey{{"⏎", "remove"}, {"esc", "cancel"}}
 	}
@@ -655,8 +693,8 @@ func (m settingsModel) helpKeys() []helpKey {
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil
-// to quit, agentsRequested for Chat Agents, or accountsRequested when Esc
-// leaves a Settings opened from the account chooser.
+// to quit, agentsRequested for Chat Agents, ResetRequested after Reset, or
+// accountsRequested when Esc leaves a Settings opened from the account chooser.
 func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *account.Account,
 	fromAccounts bool) (*account.Account, error) {
 	for {
@@ -669,6 +707,8 @@ func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *accou
 		active = final.active
 		r := final.result
 		switch {
+		case r.reset:
+			return nil, ResetRequested{}
 		case r.agents:
 			return nil, agentsRequested{}
 		case r.add:

@@ -44,6 +44,22 @@ func Dir() (string, error) {
 	return dir, nil
 }
 
+// Wipe deletes the configuration directory dir and wiregram's cache
+// directory, leaving the state of a fresh installation.
+func Wipe(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("delete configuration directory: %w", err)
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return nil // no cache directory, so nothing was cached
+	}
+	if err := os.RemoveAll(filepath.Join(base, "wiregram")); err != nil {
+		return fmt.Errorf("delete cache directory: %w", err)
+	}
+	return nil
+}
+
 // LoadConfig reads the saved settings. Telegram API credentials come from the
 // settings, else from the build, else stay empty until a Telegram account is added.
 func LoadConfig(db *store.DB) (Config, error) {
