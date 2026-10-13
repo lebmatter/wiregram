@@ -1133,7 +1133,8 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 	if outgoing {
 		senderName = "you"
 	}
-	text, mediaLabel, multiline := wa.extractMessageContent(evt.Message)
+	source, mediaLabel, multiline := wa.extractMessageContent(evt.Message)
+	text, spans := backend.WhatsApp(source)
 	return backend.Message{
 		ID:         info.ID,
 		Sender:     senderName,
@@ -1148,6 +1149,8 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 		Quote:      wa.quoteOf(evt.Message),
 		Forwarded:  isForwarded(evt.Message),
 		Preview:    waPreview(evt.Message),
+		Spans:      spans,
+		Source:     source,
 		Raw:        evt,
 	}
 }
@@ -1179,7 +1182,8 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 	if outgoing {
 		senderName = "you"
 	}
-	text, mediaLabel, multiline := wa.extractMessageContent(m)
+	source, mediaLabel, multiline := wa.extractMessageContent(m)
+	text, spans := backend.WhatsApp(source)
 	return backend.Message{
 		ID:         key.GetID(),
 		Sender:     senderName,
@@ -1192,6 +1196,8 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 		Quote:      wa.quoteOf(m),
 		Forwarded:  isForwarded(m),
 		Preview:    waPreview(m),
+		Spans:      spans,
+		Source:     source,
 	}
 }
 
@@ -1307,6 +1313,7 @@ func (wa *WaBackend) quoteOf(m *waE2E.Message) *backend.Message {
 		return nil
 	}
 	text, mediaLabel, _ := wa.extractMessageContent(ci.GetQuotedMessage())
+	text, _ = backend.WhatsApp(text)
 	if text == "" && mediaLabel == "" {
 		return nil
 	}

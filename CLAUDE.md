@@ -119,8 +119,9 @@ These are project constraints, not suggestions:
   reactions (your own count in copper) · reply count · pinned · `✓`/`✓✓`.
   Media `[tags]` are dim and links are underlined.
   Formatting reaches the TUI as `Message.Spans` (bold, italic, strike, code,
-  link), which each backend fills from its own markup (`backend.Markdown` for
-  Mattermost); `Message.Source` keeps the text as written for editing. Threads
+  link), which each backend fills from its own markup: Telegram entities,
+  `backend.Markdown` for Mattermost and formatted Matrix bodies,
+  `backend.WhatsApp` for WhatsApp. `Message.Source` keeps the text as written for editing. Threads
   (`internal/tui/thread.go`) are built from loaded reply chains only.
 - Messages have no per-message shortcuts. Enter on an empty composer (always,
   in email chats and the mail reader) or a right click opens the actions modal

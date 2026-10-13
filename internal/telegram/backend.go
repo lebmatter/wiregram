@@ -120,8 +120,51 @@ func tgToMessage(c *Client, m *tg.Message) backend.Message {
 		Multiline:  len(m.Message) > 0 && (m.Message[0] == '\n' || m.Message[len(m.Message)-1] == '\n' || containsNewline(m.Message)),
 		Reactions:  reactions,
 		Preview:    webPagePreview(m.Media),
+		Spans:      tgSpans(m.Message, m.Entities),
 		Raw:        m,
 	}
+}
+
+// tgSpans turns a message's entities into spans. Entities count UTF-16 code
+// units, spans count bytes.
+func tgSpans(text string, entities []tg.MessageEntityClass) []backend.Span {
+	if len(entities) == 0 {
+		return nil
+	}
+	// at[u] is the byte offset of UTF-16 unit u.
+	at := make([]int, 0, len(text)+1)
+	for i, r := range text {
+		at = append(at, i)
+		if r >= 0x10000 {
+			at = append(at, i)
+		}
+	}
+	at = append(at, len(text))
+	var spans []backend.Span
+	for _, e := range entities {
+		var style backend.Style
+		url := ""
+		switch e := e.(type) {
+		case *tg.MessageEntityBold:
+			style = backend.StyleBold
+		case *tg.MessageEntityItalic:
+			style = backend.StyleItalic
+		case *tg.MessageEntityStrike:
+			style = backend.StyleStrike
+		case *tg.MessageEntityCode, *tg.MessageEntityPre:
+			style = backend.StyleCode
+		case *tg.MessageEntityTextURL:
+			style, url = backend.StyleLink, e.URL
+		default:
+			continue
+		}
+		start, end := e.GetOffset(), e.GetOffset()+e.GetLength()
+		if start < 0 || end > len(at)-1 || start >= end {
+			continue
+		}
+		spans = append(spans, backend.Span{Start: at[start], End: at[end], Style: style, URL: url})
+	}
+	return spans
 }
 
 func tgReplyToID(m *tg.Message) string {

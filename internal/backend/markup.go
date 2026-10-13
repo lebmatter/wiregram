@@ -25,7 +25,17 @@ type Span struct {
 // links. Headings turn bold, quotes get a ┃ bar and list items a • bullet.
 // Tables and anything else stay as written.
 func Markdown(text string) (string, []Span) {
-	var p markup
+	return parseMarkup(text, false)
+}
+
+// WhatsApp takes WhatsApp's markup out of text like Markdown: *bold*,
+// _italic_, ~strike~, `code` and ```monospace```, quotes and bullets.
+func WhatsApp(text string) (string, []Span) {
+	return parseMarkup(text, true)
+}
+
+func parseMarkup(text string, wa bool) (string, []Span) {
+	p := markup{wa: wa}
 	fence, first := false, true
 	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
@@ -48,6 +58,7 @@ func Markdown(text string) (string, []Span) {
 }
 
 type markup struct {
+	wa    bool // WhatsApp's dialect rather than Markdown
 	out   strings.Builder
 	spans []Span
 }
@@ -63,7 +74,7 @@ func (p *markup) line(line string) {
 	rest := strings.TrimLeft(line, " ")
 	p.out.WriteString(line[:len(line)-len(rest)])
 	if n := strings.IndexFunc(rest, func(r rune) bool { return r != '#' }); n >= 1 && n <= 6 &&
-		rest[n] == ' ' {
+		rest[n] == ' ' && !p.wa {
 		start := p.out.Len()
 		p.inline(strings.TrimSpace(rest[n:]))
 		p.add(start, StyleBold, "")
@@ -87,10 +98,14 @@ func (p *markup) inline(s string) {
 	for i := 0; i < len(s); {
 		c := s[i]
 		switch {
-		case c == '\\' && i+1 < len(s) && strings.IndexByte(mdPunct, s[i+1]) >= 0:
-			p.out.WriteByte(s[i+1])
-			i += 2
-			continue
+		case p.wa && strings.HasPrefix(s[i:], "```"):
+			if j := strings.Index(s[i+3:], "```"); j > 0 {
+				start := p.out.Len()
+				p.out.WriteString(s[i+3 : i+3+j])
+				p.add(start, StyleCode, "")
+				i += j + 6
+				continue
+			}
 		case c == '`':
 			if j := strings.IndexByte(s[i+1:], '`'); j > 0 {
 				start := p.out.Len()
@@ -99,7 +114,11 @@ func (p *markup) inline(s string) {
 				i += j + 2
 				continue
 			}
-		case c == '[':
+		case c == '\\' && !p.wa && i+1 < len(s) && strings.IndexByte(mdPunct, s[i+1]) >= 0:
+			p.out.WriteByte(s[i+1])
+			i += 2
+			continue
+		case c == '[' && !p.wa:
 			if label, url, n := mdLink(s[i:]); n > 0 {
 				start := p.out.Len()
 				p.inline(label)
@@ -107,15 +126,15 @@ func (p *markup) inline(s string) {
 				i += n
 				continue
 			}
-		case c == '<':
+		case c == '<' && !p.wa:
 			if j := strings.IndexByte(s[i:], '>'); j > 0 && isWebURL(s[i+1:i+j]) {
 				p.out.WriteString(s[i+1 : i+j])
 				i += j + 1
 				continue
 			}
 		}
-		if mark, style := mdDelimiter(s[i:]); mark != "" {
-			if j := mdClosing(s, i, mark); j > 0 {
+		if mark, style := p.delimiter(s[i:]); mark != "" {
+			if j := mdClosing(s, i, mark, p.wa || mark[0] == '_'); j > 0 {
 				start := p.out.Len()
 				p.inline(s[i+len(mark) : j])
 				p.add(start, style, "")
@@ -128,8 +147,19 @@ func (p *markup) inline(s string) {
 	}
 }
 
-// mdDelimiter is the emphasis mark s starts with, longest first.
-func mdDelimiter(s string) (string, Style) {
+// delimiter is the emphasis mark s starts with, longest first.
+func (p *markup) delimiter(s string) (string, Style) {
+	if p.wa {
+		switch s[0] {
+		case '*':
+			return s[:1], StyleBold
+		case '_':
+			return s[:1], StyleItalic
+		case '~':
+			return s[:1], StyleStrike
+		}
+		return "", 0
+	}
 	switch {
 	case strings.HasPrefix(s, "**"), strings.HasPrefix(s, "__"):
 		return s[:2], StyleBold
@@ -142,15 +172,14 @@ func mdDelimiter(s string) (string, Style) {
 }
 
 // mdClosing finds the mark closing the one at s[i], or -1. The text between
-// must not start or end with a space, and underscores inside a word, as in
-// snake_case, are not emphasis.
-func mdClosing(s string, i int, mark string) int {
+// must not start or end with a space. With word set, marks inside a word,
+// such as the underscores of snake_case, are not emphasis.
+func mdClosing(s string, i int, mark string, word bool) int {
 	open := i + len(mark)
 	if open >= len(s) || s[open] == ' ' {
 		return -1
 	}
-	under := mark[0] == '_'
-	if under && i > 0 && isWordByte(s[i-1]) {
+	if word && i > 0 && isWordByte(s[i-1]) {
 		return -1
 	}
 	for k := open + 1; k < len(s); k++ {
@@ -163,7 +192,7 @@ func mdClosing(s string, i int, mark string) int {
 		switch {
 		case s[j-1] == ' ':
 		case len(mark) == 1 && after < len(s) && s[after] == mark[0]:
-		case under && after < len(s) && isWordByte(s[after]):
+		case word && after < len(s) && isWordByte(s[after]):
 		default:
 			return j
 		}

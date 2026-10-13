@@ -874,6 +874,14 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 			text = text[idx+2:]
 		}
 	}
+	// A formatted message's body is usually the Markdown its sender typed.
+	source, spans := "", []backend.Span(nil)
+	format, _ := ev.Content["format"].(string)
+	msgtype, _ := ev.Content["msgtype"].(string)
+	if format == "org.matrix.custom.html" && (msgtype == "m.text" || msgtype == "m.notice") {
+		source = text
+		text, spans = backend.Markdown(text)
+	}
 
 	return backend.Message{
 		ID:         ev.EventID,
@@ -887,6 +895,8 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 		MediaLabel: mediaLabel,
 		Image:      image,
 		Multiline:  multiline,
+		Spans:      spans,
+		Source:     source,
 		Raw:        ev,
 	}
 }
