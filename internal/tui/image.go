@@ -147,7 +147,7 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 			width = 0
 		}
 		owners, _ := m.threadOwners(m.width - width)
-		add(threadMessages(m.messages, m.threadRoot), owners)
+		add(m.threadMessages(m.threadRoot), owners)
 	}
 	var cmds []tea.Cmd
 	for _, msg := range visible {

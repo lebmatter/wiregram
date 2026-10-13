@@ -12,14 +12,32 @@ import (
 
 // Threads are built from loaded messages only: a thread is a root plus every
 // message whose reply chain leads back to it. Mattermost stores the root in
-// ReplyToID; the other backends form chains of ordinary replies.
+// ReplyToID; the other backends form chains of ordinary replies. A root older
+// than the loaded history comes from the originals fetched for quotes.
 
-// threadRootOf walks up the reply chain to the oldest loaded ancestor.
-func threadRootOf(messages []backend.Message, msg backend.Message) backend.Message {
-	byID := make(map[string]backend.Message, len(messages))
-	for _, m := range messages {
-		byID[m.ID] = m
+// threadOriginals maps every message the thread can start from by ID: the
+// loaded ones, then the fetched quotes and the copies replies carry.
+func (m chatViewModel) threadOriginals() map[string]backend.Message {
+	byID := make(map[string]backend.Message, len(m.messages))
+	for _, q := range m.quotes {
+		if q != nil {
+			byID[q.ID] = *q
+		}
 	}
+	for _, msg := range m.messages {
+		if msg.Quote != nil {
+			byID[msg.Quote.ID] = *msg.Quote
+		}
+	}
+	for _, msg := range m.messages {
+		byID[msg.ID] = msg
+	}
+	return byID
+}
+
+// threadRootOf walks up the reply chain to the oldest known ancestor.
+func (m chatViewModel) threadRootOf(msg backend.Message) backend.Message {
+	byID := m.threadOriginals()
 	for depth := 0; msg.ReplyToID != "" && depth < 100; depth++ {
 		parent, ok := byID[msg.ReplyToID]
 		if !ok {
@@ -30,18 +48,25 @@ func threadRootOf(messages []backend.Message, msg backend.Message) backend.Messa
 	return msg
 }
 
-// threadMessages returns the root followed by its replies in order.
-func threadMessages(messages []backend.Message, rootID string) []backend.Message {
-	parent := make(map[string]string, len(messages))
-	for _, m := range messages {
-		parent[m.ID] = m.ReplyToID
+// threadMessages returns the root followed by its loaded replies in order.
+func (m chatViewModel) threadMessages(rootID string) []backend.Message {
+	parent := make(map[string]string, len(m.messages))
+	for _, msg := range m.messages {
+		parent[msg.ID] = msg.ReplyToID
 	}
 	var out []backend.Message
-	for _, m := range messages {
-		id := m.ID
+	if _, loaded := parent[rootID]; !loaded {
+		root, ok := m.threadOriginals()[rootID]
+		if !ok {
+			return nil
+		}
+		out = append(out, root)
+	}
+	for _, msg := range m.messages {
+		id := msg.ID
 		for depth := 0; id != "" && depth < 100; depth++ {
 			if id == rootID {
-				out = append(out, m)
+				out = append(out, msg)
 				break
 			}
 			id = parent[id]
@@ -73,9 +98,9 @@ func (m chatViewModel) followThread() (chatViewModel, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	root := threadRootOf(m.messages, sel)
+	root := m.threadRootOf(sel)
 	switch {
-	case len(threadMessages(m.messages, root.ID)) < 2:
+	case len(m.threadMessages(root.ID)) < 2:
 		m.subMode = chatSubNone
 		m.threadRoot = ""
 		return m, nil
@@ -87,7 +112,7 @@ func (m chatViewModel) followThread() (chatViewModel, tea.Cmd) {
 }
 
 func (m chatViewModel) openThread(sel backend.Message) (chatViewModel, tea.Cmd) {
-	root := threadRootOf(m.messages, sel)
+	root := m.threadRootOf(sel)
 	m.threadRoot = root.ID
 	m.subMode = chatSubThread
 	m.threadInput = textinput.New()
@@ -137,7 +162,7 @@ func (m chatViewModel) threadComposer(inner int, focused bool) []string {
 // line, the index into threadMessages it belongs to (-1 for none) and
 // whether it draws that message's attachment.
 func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) {
-	thread := threadMessages(m.messages, m.threadRoot)
+	thread := m.threadMessages(m.threadRoot)
 	var lines []string
 	var owners []int
 	var media []bool
@@ -203,5 +228,5 @@ func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, bool, bool) {
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
 		return backend.Message{}, false, false
 	}
-	return threadMessages(m.messages, m.threadRoot)[owners[row]], media[row], true
+	return m.threadMessages(m.threadRoot)[owners[row]], media[row], true
 }

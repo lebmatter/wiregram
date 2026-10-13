@@ -289,6 +289,9 @@ func textIndent(entry backend.ChatEntry) int {
 // message is unread, when the whole block is bold instead.
 func messageHeader(msg backend.Message, entry backend.ChatEntry, unread bool) string {
 	stamp := msg.Timestamp.Format("[15:04]")
+	if msg.Timestamp.IsZero() {
+		stamp = "[--:--]" // a WhatsApp quote carries no time
+	}
 	if !unread {
 		stamp = styleDim.Render(stamp)
 	}
