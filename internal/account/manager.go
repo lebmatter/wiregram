@@ -43,7 +43,7 @@ type AccountState struct {
 }
 
 type Account struct {
-	Dir         string
+	Key         string // the account's key in wiregram.db
 	BackendType string // "telegram", "mattermost", "matrix", "whatsapp", or "email"
 	mmBackend   *mattermost.MmBackend
 	emBackend   *mail.MailBackend
@@ -146,23 +146,20 @@ func (m *AccountManager) List() []*Account {
 	return append([]*Account(nil), m.Accounts...)
 }
 
-// AccountKey is the account's stable agent-binding key: its directory name,
-// or "primary" for the session stored in the config directory itself.
+// AccountKey is the account's stable key in wiregram.db and for agent bindings:
+// its backend prefix and a number, or "primary" for the original Telegram account.
 func (m *AccountManager) AccountKey(a *Account) string {
-	return m.keyOf(a.Dir)
+	return a.Key
 }
 
-// keyOf is also the account's key in wiregram.db.
-func (m *AccountManager) keyOf(dir string) string {
-	if filepath.Clean(dir) == filepath.Clean(m.Dir) {
-		return agent.PrimaryAccountKey
-	}
-	return filepath.Base(dir)
+// whatsAppDir is where whatsmeow keeps a WhatsApp account's own database.
+func (m *AccountManager) whatsAppDir(key string) string {
+	return filepath.Join(m.Dir, "accounts", key)
 }
 
 // identity decodes the account's saved identity; ok is false when there is none.
-func (m *AccountManager) identity(dir string, v any) (bool, error) {
-	data, err := m.Store.Get(m.keyOf(dir), store.Identity)
+func (m *AccountManager) identity(key string, v any) (bool, error) {
+	data, err := m.Store.Get(key, store.Identity)
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
 	}
@@ -175,12 +172,12 @@ func (m *AccountManager) identity(dir string, v any) (bool, error) {
 	return true, nil
 }
 
-func (m *AccountManager) saveIdentity(dir string, v any) error {
+func (m *AccountManager) saveIdentity(key string, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("encode account identity: %w", err)
 	}
-	return m.Store.Put(m.keyOf(dir), store.Identity, data)
+	return m.Store.Put(key, store.Identity, data)
 }
 
 func (a *Account) set(m *AccountManager, update func(*AccountState)) {
@@ -192,15 +189,14 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 
 func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager, error) {
 	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, changed: make(chan struct{}), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
-	add := func(path string, requireIdentity bool) error {
-		a := &Account{Dir: path, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
+	add := func(key string, requireIdentity bool) error {
+		a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 		a.state.Status = "offline"
-		if _, err := m.identity(path, &a.state.Identity); err != nil {
+		if _, err := m.identity(key, &a.state.Identity); err != nil {
 			return err
 		}
 		if requireIdentity && a.state.Identity.ID == 0 {
-			os.RemoveAll(path)
-			return db.DeleteAccount(m.keyOf(path))
+			return db.DeleteAccount(key)
 		}
 		if a.state.Identity.ID != 0 {
 			if m.owners[a.state.Identity.ID] != nil {
@@ -213,40 +209,38 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 	}
 	// The original session stays in place; existing users need no migration or login.
 	if _, err := db.Get(agent.PrimaryAccountKey, store.TelegramSession); err == nil {
-		if err := add(dir, false); err != nil {
+		if err := add(agent.PrimaryAccountKey, false); err != nil {
 			return nil, err
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("inspect original session: %w", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, "accounts"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("list accounts: %w", err)
+	keys, err := db.AccountKeys()
+	if err != nil {
+		return nil, err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "whatsapp-") {
-			path := filepath.Join(dir, "accounts", entry.Name())
+	for _, key := range keys {
+		if strings.HasPrefix(key, "whatsapp-") {
 			var identity waAccountIdentity
-			if ok, err := m.identity(path, &identity); err != nil {
+			if ok, err := m.identity(key, &identity); err != nil {
 				return nil, fmt.Errorf("read whatsapp account: %w", err)
 			} else if !ok {
 				continue
 			}
-			wb := whatsapp.NewWABackend(path)
+			wb := whatsapp.NewWABackend(m.whatsAppDir(key))
 			wb.Jid = identity.JID
 			wb.PushName = identity.PushName
 			a := &Account{
-				Dir:         path,
+				Key:         key,
 				BackendType: "whatsapp",
 				waBackend:   wb,
 				Histories:   make(map[backend.ChatID][]string),
 			}
 			a.state.Status = "offline"
 			m.addAccount(a)
-		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "matrix-") {
-			path := filepath.Join(dir, "accounts", entry.Name())
+		} else if strings.HasPrefix(key, "matrix-") {
 			var identity mxAccountIdentity
-			if ok, err := m.identity(path, &identity); err != nil {
+			if ok, err := m.identity(key, &identity); err != nil {
 				return nil, fmt.Errorf("read matrix account: %w", err)
 			} else if !ok {
 				continue
@@ -254,10 +248,10 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 			mb := matrix.NewMXBackend(identity.Homeserver)
 			mb.UserID = identity.UserID
 			mb.DeviceID = identity.DeviceID
-			mb.Store, mb.StoreKey = db, m.keyOf(path)
+			mb.Store, mb.StoreKey = db, key
 			mb.AccessToken = identity.Token
 			a := &Account{
-				Dir:         path,
+				Key:         key,
 				BackendType: "matrix",
 				mxBackend:   mb,
 				Histories:   make(map[backend.ChatID][]string),
@@ -265,10 +259,9 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.AccessToken == ""
 			m.addAccount(a)
-		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "mattermost-") {
-			path := filepath.Join(dir, "accounts", entry.Name())
+		} else if strings.HasPrefix(key, "mattermost-") {
 			var identity mmAccountIdentity
-			if ok, err := m.identity(path, &identity); err != nil {
+			if ok, err := m.identity(key, &identity); err != nil {
 				return nil, fmt.Errorf("read mattermost account: %w", err)
 			} else if !ok {
 				continue
@@ -278,7 +271,7 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 			mb.Username = identity.Username
 			mb.Token = identity.Token
 			a := &Account{
-				Dir:         path,
+				Key:         key,
 				BackendType: "mattermost",
 				mmBackend:   mb,
 				Histories:   make(map[backend.ChatID][]string),
@@ -286,21 +279,20 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.Token == ""
 			m.addAccount(a)
-		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "email-") {
-			path := filepath.Join(dir, "accounts", entry.Name())
+		} else if strings.HasPrefix(key, "email-") {
 			var identity mail.Identity
-			if ok, err := m.identity(path, &identity); err != nil {
+			if ok, err := m.identity(key, &identity); err != nil {
 				return nil, fmt.Errorf("read email account: %w", err)
 			} else if !ok {
 				continue
 			}
-			eb, err := mail.NewMailBackend(identity.IMAPHost, db, m.keyOf(path))
+			eb, err := mail.NewMailBackend(identity.IMAPHost, db, key)
 			if err != nil {
 				return nil, err
 			}
 			eb.Account = identity
 			a := &Account{
-				Dir:         path,
+				Key:         key,
 				BackendType: "email",
 				emBackend:   eb,
 				Histories:   make(map[backend.ChatID][]string),
@@ -308,8 +300,8 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 			a.state.Status = "offline"
 			a.state.NeedsLogin = a.NeverAuthenticated()
 			m.addAccount(a)
-		} else if entry.IsDir() && strings.HasPrefix(entry.Name(), "account-") {
-			if err := add(filepath.Join(dir, "accounts", entry.Name()), true); err != nil {
+		} else if strings.HasPrefix(key, "account-") {
+			if err := add(key, true); err != nil {
 				return nil, err
 			}
 		}
@@ -338,32 +330,24 @@ func (m *AccountManager) SetTelegramCredentials(id int, hash string) error {
 }
 
 func (m *AccountManager) AddTelegram() (*Account, error) {
-	root := filepath.Join(m.Dir, "accounts")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, fmt.Errorf("create accounts directory: %w", err)
-	}
-	dir, err := os.MkdirTemp(root, "account-")
+	key, err := m.Store.NewAccountKey("account-")
 	if err != nil {
-		return nil, fmt.Errorf("create account directory: %w", err)
+		return nil, err
 	}
-	a := &Account{Dir: dir, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
+	a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
 	m.addAccount(a)
 	return a, nil
 }
 
 func (m *AccountManager) AddMattermost(serverURL string) (*Account, error) {
-	root := filepath.Join(m.Dir, "accounts")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, fmt.Errorf("create accounts directory: %w", err)
-	}
-	dir, err := os.MkdirTemp(root, "mattermost-")
+	key, err := m.Store.NewAccountKey("mattermost-")
 	if err != nil {
-		return nil, fmt.Errorf("create account directory: %w", err)
+		return nil, err
 	}
 	mb := mattermost.NewMMBackend(serverURL)
 	a := &Account{
-		Dir:         dir,
+		Key:         key,
 		BackendType: "mattermost",
 		mmBackend:   mb,
 		Histories:   make(map[backend.ChatID][]string),
@@ -374,18 +358,14 @@ func (m *AccountManager) AddMattermost(serverURL string) (*Account, error) {
 }
 
 func (m *AccountManager) AddMatrix(homeserver string) (*Account, error) {
-	root := filepath.Join(m.Dir, "accounts")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, fmt.Errorf("create accounts directory: %w", err)
-	}
-	dir, err := os.MkdirTemp(root, "matrix-")
+	key, err := m.Store.NewAccountKey("matrix-")
 	if err != nil {
-		return nil, fmt.Errorf("create account directory: %w", err)
+		return nil, err
 	}
 	mb := matrix.NewMXBackend(homeserver)
-	mb.Store, mb.StoreKey = m.Store, m.keyOf(dir)
+	mb.Store, mb.StoreKey = m.Store, key
 	a := &Account{
-		Dir:         dir,
+		Key:         key,
 		BackendType: "matrix",
 		mxBackend:   mb,
 		Histories:   make(map[backend.ChatID][]string),
@@ -398,21 +378,16 @@ func (m *AccountManager) AddMatrix(homeserver string) (*Account, error) {
 // AddEmail adds an IMAP account on imapHost; the address and password are
 // asked at sign-in.
 func (m *AccountManager) AddEmail(imapHost string) (*Account, error) {
-	root := filepath.Join(m.Dir, "accounts")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, fmt.Errorf("create accounts directory: %w", err)
-	}
-	dir, err := os.MkdirTemp(root, "email-")
+	key, err := m.Store.NewAccountKey("email-")
 	if err != nil {
-		return nil, fmt.Errorf("create account directory: %w", err)
+		return nil, err
 	}
-	eb, err := mail.NewMailBackend(imapHost, m.Store, m.keyOf(dir))
+	eb, err := mail.NewMailBackend(imapHost, m.Store, key)
 	if err != nil {
-		os.RemoveAll(dir)
 		return nil, err
 	}
 	a := &Account{
-		Dir:         dir,
+		Key:         key,
 		BackendType: "email",
 		emBackend:   eb,
 		Histories:   make(map[backend.ChatID][]string),
@@ -423,17 +398,17 @@ func (m *AccountManager) AddEmail(imapHost string) (*Account, error) {
 }
 
 func (m *AccountManager) AddWhatsApp() (*Account, error) {
-	root := filepath.Join(m.Dir, "accounts")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, fmt.Errorf("create accounts directory: %w", err)
-	}
-	dir, err := os.MkdirTemp(root, "whatsapp-")
+	key, err := m.Store.NewAccountKey("whatsapp-")
 	if err != nil {
-		return nil, fmt.Errorf("create account directory: %w", err)
+		return nil, err
+	}
+	dir := m.whatsAppDir(key)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create WhatsApp account directory: %w", err)
 	}
 	wb := whatsapp.NewWABackend(dir)
 	a := &Account{
-		Dir:         dir,
+		Key:         key,
 		BackendType: "whatsapp",
 		waBackend:   wb,
 		Histories:   make(map[backend.ChatID][]string),
@@ -486,18 +461,17 @@ func (m *AccountManager) Discard(a *Account) {
 		}
 	}
 	m.mu.Unlock()
-	if a.Dir != "" {
-		// The primary account's directory is the config directory itself.
-		if m.keyOf(a.Dir) != agent.PrimaryAccountKey {
-			if err := os.RemoveAll(a.Dir); err != nil {
+	if a.Key != "" {
+		if a.BackendType == "whatsapp" {
+			if err := os.RemoveAll(m.whatsAppDir(a.Key)); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
-		if err := m.Store.DeleteAccount(m.keyOf(a.Dir)); err != nil {
+		if err := m.Store.DeleteAccount(a.Key); err != nil {
 			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 		}
 		if a.BackendType == "email" {
-			if err := mail.PurgeAccount(m.Store, m.keyOf(a.Dir)); err != nil {
+			if err := mail.PurgeAccount(m.Store, a.Key); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
@@ -567,14 +541,14 @@ type waAccountIdentity struct {
 	PushName string    `json:"push_name"`
 }
 
-func (m *AccountManager) saveMXAccount(dir string, mx *matrix.MxBackend) error {
-	return m.saveIdentity(dir, mxAccountIdentity{
+func (m *AccountManager) saveMXAccount(key string, mx *matrix.MxBackend) error {
+	return m.saveIdentity(key, mxAccountIdentity{
 		Homeserver: mx.Homeserver, Token: mx.AccessToken, UserID: mx.UserID, DeviceID: mx.DeviceID,
 	})
 }
 
-func (m *AccountManager) saveMMAccount(dir string, mb *mattermost.MmBackend) error {
-	return m.saveIdentity(dir, mmAccountIdentity{
+func (m *AccountManager) saveMMAccount(key string, mb *mattermost.MmBackend) error {
+	return m.saveIdentity(key, mmAccountIdentity{
 		ServerURL: mb.ServerURL, Token: mb.Token, UserID: mb.UserID, Username: mb.Username,
 	})
 }
@@ -661,7 +635,7 @@ func (m *AccountManager) Start(parent context.Context, a *Account, prompt config
 					}
 					m.owners[self.ID] = a
 					m.mu.Unlock()
-					if err := m.saveIdentity(a.Dir, identity); err != nil {
+					if err := m.saveIdentity(a.Key, identity); err != nil {
 						return err
 					}
 					prompt = nil // Reconnects must never read from an abandoned login UI.
@@ -741,8 +715,8 @@ func (m *AccountManager) startMatrix(parent context.Context, a *Account, prompt 
 			a.set(m, func(s *AccountState) { s.Status, s.NeedsLogin = "offline", true })
 			return
 		}
-		if a.Dir != "" {
-			if err := m.saveMXAccount(a.Dir, mb); err != nil {
+		if a.Key != "" {
+			if err := m.saveMXAccount(a.Key, mb); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
@@ -804,8 +778,8 @@ func (m *AccountManager) startMattermost(parent context.Context, a *Account, pro
 			a.set(m, func(s *AccountState) { s.Status, s.NeedsLogin = "offline", true })
 			return
 		}
-		if a.Dir != "" {
-			if err := m.saveMMAccount(a.Dir, mb); err != nil {
+		if a.Key != "" {
+			if err := m.saveMMAccount(a.Key, mb); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
@@ -846,8 +820,8 @@ func (m *AccountManager) startEmail(parent context.Context, a *Account, prompt c
 			})
 			return
 		}
-		if a.Dir != "" {
-			if err := m.saveIdentity(a.Dir, eb.Account); err != nil {
+		if a.Key != "" {
+			if err := m.saveIdentity(a.Key, eb.Account); err != nil {
 				report(err)
 			}
 		}
@@ -891,8 +865,8 @@ func (m *AccountManager) startWhatsApp(parent context.Context, a *Account, promp
 			})
 			return
 		}
-		if a.Dir != "" {
-			if err := m.saveIdentity(a.Dir, waAccountIdentity{JID: wb.Jid, PushName: wb.PushName}); err != nil {
+		if a.Key != "" {
+			if err := m.saveIdentity(a.Key, waAccountIdentity{JID: wb.Jid, PushName: wb.PushName}); err != nil {
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}

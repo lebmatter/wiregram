@@ -6,8 +6,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
@@ -117,6 +119,42 @@ func (d *DB) Put(account, name string, value []byte) error {
 		return fmt.Errorf("save account %s: %w", name, err)
 	}
 	return nil
+}
+
+// AccountKeys lists every account with stored data, in key order.
+func (d *DB) AccountKeys() ([]string, error) {
+	rows, err := d.db.Query(`SELECT DISTINCT account FROM account_data ORDER BY account`)
+	if err != nil {
+		return nil, fmt.Errorf("list accounts: %w", err)
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("list accounts: %w", err)
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list accounts: %w", err)
+	}
+	return keys, nil
+}
+
+// NewAccountKey returns an unused account key starting with prefix.
+func (d *DB) NewAccountKey(prefix string) (string, error) {
+	for {
+		key := prefix + strconv.FormatUint(uint64(rand.Uint32()), 10)
+		var one int
+		err := d.db.QueryRow(`SELECT 1 FROM account_data WHERE account = ? LIMIT 1`, key).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return key, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("choose account key: %w", err)
+		}
+	}
 }
 
 // DeleteAccount forgets everything stored for one account.

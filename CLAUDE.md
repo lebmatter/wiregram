@@ -94,8 +94,7 @@ These are project constraints, not suggestions:
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
-  binding; the primary account's directory is the config directory, so only its
-  rows are deleted. Reset removes every account that way, then `main` deletes the config
+  binding: its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
   and cache directories (`config.Wipe`) and starts again as a fresh install.
 - Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
   a grid of cards, one per online account, each fetched once when the account comes
@@ -265,14 +264,17 @@ lowest package that needs them rather than importing sideways.
   tables, the email cache (`mail_messages`, `mail_sync`) and plugins'
   key-value rows (`plugin_kv`); plugin settings are `plugin.NAME.*` settings
 - `plugins/` — user Lua plugins (`NAME.lua` or `NAME/init.lua`)
-- `accounts/<backend>-*/` — one directory per added account; its name is the
-  account key (`primary` for the original Telegram account). WhatsApp keeps
-  whatsmeow's own `whatsapp.db` here.
+- `accounts/whatsapp-*/` — whatsmeow's own `whatsapp.db` for each WhatsApp account.
+
+Accounts live only in `account_data`: an account is a key (`<backend>-<number>`,
+or `primary` for the original Telegram account) with an `identity` row. Only
+WhatsApp gets a directory, named by its key.
 
 Directories are `0700`; `wiregram.db` is `0600`. Wiregram writes no JSON files.
 `account.ImportLegacy` imports the files older versions wrote (`config.json`,
 `account.json`, `session/session.json`, `sync_token`) once at startup and
-renames each to `*.bak`.
+renames each to `*.bak`, then removes the empty per-account directories they made
+for every backend but WhatsApp.
 
 ## Planned work
 

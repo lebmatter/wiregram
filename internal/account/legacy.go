@@ -39,7 +39,28 @@ func ImportLegacy(db *store.DB, dir string) error {
 			}
 		}
 	}
-	return importConfig(db, dir)
+	if err := importConfig(db, dir); err != nil {
+		return err
+	}
+	return dropAccountDirs(dir)
+}
+
+// dropAccountDirs removes the account directories older versions made for
+// every account; only WhatsApp keeps one, for whatsmeow's database.
+func dropAccountDirs(dir string) error {
+	root := filepath.Join(dir, "accounts")
+	entries, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("list accounts: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), "whatsapp-") {
+			// A directory still holding imported *.bak files is left for the user.
+			os.Remove(filepath.Join(root, entry.Name()))
+		}
+	}
+	os.Remove(root)
+	return nil
 }
 
 func importFile(db *store.DB, path, account, name string) error {
@@ -100,7 +121,7 @@ func importConfig(db *store.DB, dir string) error {
 		return fmt.Errorf("read configuration: %w", err)
 	}
 	for _, s := range legacy.Mattermost {
-		if err := importServer(db, dir, "mattermost-", mmAccountIdentity{ServerURL: s.URL, Token: s.Token},
+		if err := importServer(db, "mattermost-", mmAccountIdentity{ServerURL: s.URL, Token: s.Token},
 			func(raw []byte) bool {
 				var id mmAccountIdentity
 				return json.Unmarshal(raw, &id) == nil && id.ServerURL == s.URL
@@ -109,7 +130,7 @@ func importConfig(db *store.DB, dir string) error {
 		}
 	}
 	for _, s := range legacy.Matrix {
-		if err := importServer(db, dir, "matrix-", mxAccountIdentity{Homeserver: s.Homeserver},
+		if err := importServer(db, "matrix-", mxAccountIdentity{Homeserver: s.Homeserver},
 			func(raw []byte) bool {
 				var id mxAccountIdentity
 				return json.Unmarshal(raw, &id) == nil && id.Homeserver == s.Homeserver && id.UserID == ""
@@ -126,31 +147,27 @@ func importConfig(db *store.DB, dir string) error {
 
 // importServer creates an account for a configured server unless one with
 // the prefix already matches it.
-func importServer(db *store.DB, dir, prefix string, identity any, matches func([]byte) bool) error {
-	root := filepath.Join(dir, "accounts")
-	entries, err := os.ReadDir(root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("list accounts: %w", err)
+func importServer(db *store.DB, prefix string, identity any, matches func([]byte) bool) error {
+	keys, err := db.AccountKeys()
+	if err != nil {
+		return err
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+	for _, key := range keys {
+		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
-		raw, err := db.Get(entry.Name(), store.Identity)
+		raw, err := db.Get(key, store.Identity)
 		if err == nil && matches(raw) {
 			return nil
 		}
 	}
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return fmt.Errorf("create accounts directory: %w", err)
-	}
-	path, err := os.MkdirTemp(root, prefix)
+	key, err := db.NewAccountKey(prefix)
 	if err != nil {
-		return fmt.Errorf("create account directory: %w", err)
+		return err
 	}
 	data, err := json.Marshal(identity)
 	if err != nil {
 		return fmt.Errorf("encode account identity: %w", err)
 	}
-	return db.Put(filepath.Base(path), store.Identity, data)
+	return db.Put(key, store.Identity, data)
 }
