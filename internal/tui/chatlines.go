@@ -104,7 +104,7 @@ func genericSearchResultLines(b backend.Backend, results []backend.Message, sele
 // Day and unread dividers sit above the message they introduce; firstUnread
 // is the ID of the oldest message unread when the chat opened ("" for none)
 // and unread holds the IDs of all of them, drawn in bold.
-func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int, []bool) {
+func genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, quotes map[string]*backend.Message, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int, []bool) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -124,7 +124,11 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 	}
 	messageLines := func(i int) ([]string, []bool) {
 		msg := messages[i]
-		return messageBlock(b, msg, entry, byID[msg.ReplyToID], replies[msg.ID],
+		quoted := byID[msg.ReplyToID]
+		if quoted == nil {
+			quoted = quotes[msg.ReplyToID]
+		}
+		return messageBlock(b, msg, entry, quoted, replies[msg.ID],
 			changed[msg.ID], unread[msg.ID], images[msg.ID],
 			lineWidth, imageRows(height))
 	}

@@ -112,7 +112,9 @@ These are project constraints, not suggestions:
   gutter (`*` when edited live), `[HH:MM] <sender>` with a fixed-width nick
   column, then the text; the user is always `you`. Channels drop the nick
   column. A reply puts `┃ sender: excerpt` on the header row with its text
-  below. Under the text come any image or preview card, then a dim meta row:
+  below; an original older than the loaded history is fetched by ID where the
+  backend can (`backend.QuoteFetcher`, Telegram only), else it reads
+  `earlier message`. Under the text come any image or preview card, then a dim meta row:
   reactions (your own count in copper) · reply count · pinned · `✓`/`✓✓`.
   Media `[tags]` are dim and links are underlined. Threads
   (`internal/tui/thread.go`) are built from loaded reply chains only.

@@ -237,6 +237,23 @@ func (tb *TelegramBackend) OlderHistory(ctx context.Context, ch backend.ChatEntr
 	return tgMessagesToMessages(tb.C, msgs), nil
 }
 
+func (tb *TelegramBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []string) ([]backend.Message, error) {
+	nums := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if n := msgIDToInt(id); n > 0 {
+			nums = append(nums, n)
+		}
+	}
+	if len(nums) == 0 {
+		return nil, nil
+	}
+	msgs, err := tb.C.messagesByID(ctx, entryToChat(ch), nums)
+	if err != nil {
+		return nil, err
+	}
+	return tgMessagesToMessages(tb.C, msgs), nil
+}
+
 func (tb *TelegramBackend) Send(ctx context.Context, ch backend.ChatEntry, text string, replyTo string) (backend.Message, error) {
 	m, err := tb.C.send(ctx, entryToChat(ch), text, msgIDToInt(replyTo))
 	if err != nil {

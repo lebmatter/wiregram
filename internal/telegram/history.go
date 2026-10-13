@@ -34,11 +34,40 @@ func (c *Client) unreadHistory(ctx context.Context, entry chat, limit int) ([]*t
 	})
 }
 
+// messagesByID loads the given messages of one chat; deleted ones are skipped.
+func (c *Client) messagesByID(ctx context.Context, entry chat, ids []int) ([]*tg.Message, error) {
+	inputs := make([]tg.InputMessageClass, len(ids))
+	for i, id := range ids {
+		inputs[i] = &tg.InputMessageID{ID: id}
+	}
+	var result tg.MessagesMessagesClass
+	var err error
+	// Channel message IDs are per channel, so they need the channel's own call.
+	if peer, ok := entry.peer.(*tg.InputPeerChannel); ok {
+		result, err = c.Api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
+			Channel: &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash},
+			ID:      inputs,
+		})
+	} else {
+		result, err = c.Api.MessagesGetMessages(ctx, inputs)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load quoted messages: %w", err)
+	}
+	return c.collectMessages(result)
+}
+
 func (c *Client) fetchHistory(ctx context.Context, request *tg.MessagesGetHistoryRequest) ([]*tg.Message, error) {
 	result, err := c.Api.MessagesGetHistory(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("load messages: %w", err)
 	}
+	return c.collectMessages(result)
+}
+
+// collectMessages remembers the users and chats a result names and returns
+// its messages oldest first.
+func (c *Client) collectMessages(result tg.MessagesMessagesClass) ([]*tg.Message, error) {
 	var messages []tg.MessageClass
 	switch h := result.(type) {
 	case *tg.MessagesMessages:

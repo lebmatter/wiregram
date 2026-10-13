@@ -201,6 +201,13 @@ type UnreadFetcher interface {
 	UnreadMessages(ctx context.Context, ch ChatEntry, limit int) ([]Message, error)
 }
 
+// QuoteFetcher is implemented by backends that can load messages by ID, so a
+// reply to a message older than the loaded history can still quote it.
+type QuoteFetcher interface {
+	// Messages returns those of ids that still exist, in any order.
+	Messages(ctx context.Context, ch ChatEntry, ids []string) ([]Message, error)
+}
+
 // LinkPreviewer is implemented by backends whose server can summarise a URL
 // on request, for messages that arrive without a preview.
 type LinkPreviewer interface {

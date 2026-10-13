@@ -52,6 +52,7 @@ type chatViewModel struct {
 	changedMessages  map[string]bool
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	images           map[string]*chatImage           // by message ID
+	quotes           map[string]*backend.Message     // unloaded originals by ID; nil = asked
 	historyExhausted bool
 	loadingOlder     bool            // a page of older history is on its way
 	firstUnread      string          // ID of the oldest message unread on open
@@ -124,6 +125,11 @@ type chatHistoryLoaded struct {
 	messages []backend.Message
 	err      error
 	older    bool
+}
+
+type quotesLoaded struct {
+	chat     backend.ChatID
+	messages []backend.Message
 }
 
 type linkPreviewLoaded struct {
@@ -218,6 +224,7 @@ func newChatViewModel(ctx context.Context, b backend.Backend, entry backend.Chat
 		draft:           draft,
 		seen:            make(map[string]bool),
 		changedMessages: make(map[string]bool),
+		quotes:          make(map[string]*backend.Message),
 		previews:        make(map[string]*backend.LinkPreview),
 		images:          make(map[string]*chatImage),
 		input:           ti,
@@ -409,7 +416,17 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 	case chatHistoryLoaded:
 		cm, cmd := m.handleHistoryLoaded(msg)
-		return cm.clearSelectedChanged(), tea.Batch(cmd, cm.fetchPreviews(msg.messages))
+		return cm.clearSelectedChanged(), tea.Batch(cmd, cm.fetchPreviews(msg.messages),
+			cm.fetchQuotes(msg.messages))
+
+	case quotesLoaded:
+		if msg.chat != m.entry.ID {
+			return m, nil
+		}
+		for i := range msg.messages {
+			m.quotes[msg.messages[i].ID] = &msg.messages[i]
+		}
+		return m, nil
 
 	case chatImageLoaded:
 		if c := m.images[msg.id]; c != nil {
@@ -641,6 +658,37 @@ func (m chatViewModel) fetchPreviews(msgs []backend.Message) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// fetchQuotes loads the originals of replies in msgs that are not loaded,
+// each asked for once.
+func (m chatViewModel) fetchQuotes(msgs []backend.Message) tea.Cmd {
+	qf, ok := m.b.(backend.QuoteFetcher)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, msg := range msgs {
+		id := msg.ReplyToID
+		if _, asked := m.quotes[id]; id == "" || asked || m.seen[id] {
+			continue
+		}
+		m.quotes[id] = nil
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	ctx, entry := m.ctx, m.entry
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		found, err := qf.Messages(ctx, entry, ids)
+		if err != nil {
+			found = nil // the placeholder stays; not worth a notice
+		}
+		return quotesLoaded{entry.ID, found}
+	}
+}
+
 func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel, tea.Cmd) {
 	if msg.older {
 		m.loadingOlder = false
@@ -698,7 +746,8 @@ func (m chatViewModel) handleEvent(ev backend.Event) (chatViewModel, tea.Cmd) {
 			m.typing = false
 		}
 		m = m.appendMessage(*ev.Message)
-		return m, m.fetchPreviews([]backend.Message{*ev.Message})
+		return m, tea.Batch(m.fetchPreviews([]backend.Message{*ev.Message}),
+			m.fetchQuotes([]backend.Message{*ev.Message}))
 	case backend.EventReaction:
 		update := ev.Reaction
 		if update == nil {
@@ -1432,7 +1481,7 @@ func (m chatViewModel) chatOwners(width int) ([]int, []bool) {
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
 	_, owners, media := genericSelectedLines(m.b, m.messages, m.entry, m.selected,
-		m.changedMessages, m.images, nil, false, m.firstUnread, m.unread, inner, height)
+		m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, inner, height)
 	return screenRows(owners, height, -1), screenRows(media, height, false)
 }
 
@@ -1525,9 +1574,9 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, false, "", nil, width, height)
+		lines, _, _ = genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, nil, false, "", nil, width, height)
 	} else {
-		lines, _, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, nil, false, m.firstUnread, m.unread, width, height)
+		lines, _, _ = genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, width, height)
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, styleSubtle.Render("No messages yet. Say hi!"))
