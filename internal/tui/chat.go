@@ -1056,7 +1056,11 @@ func (m chatViewModel) startEdit(sel backend.Message) (chatViewModel, tea.Cmd) {
 	m.subMode = chatSubEdit
 	m.editing = &sel
 	m.editInput = textinput.New()
-	m.editInput.SetValue(sel.Text)
+	text := sel.Text
+	if sel.Source != "" {
+		text = sel.Source
+	}
+	m.editInput.SetValue(text)
 	return m, m.editInput.Focus()
 }
 

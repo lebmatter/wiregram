@@ -167,7 +167,7 @@ func (m chatViewModel) readerLines(width int) []string {
 		para = styleLinks(textfmt.Plain(para))
 		text = append(text, textfmt.WrapLineIndent(para, width, 0)...)
 	}
-	return append(lines, closeLinks(text)...)
+	return append(lines, carryStyles(text)...)
 }
 
 func (m chatViewModel) readerBody(width, height int) []string {

@@ -287,7 +287,7 @@ func messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntr
 		lines = append([]string{quote},
 			textfmt.WrapLineIndent(strings.Repeat(" ", indent)+body, lineWidth, indent)...)
 	}
-	lines = closeLinks(lines)
+	lines = carryStyles(lines)
 	if unread {
 		for i := range lines {
 			lines[i] = boldLine(lines[i])
@@ -361,21 +361,32 @@ func paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Me
 // label on a line of its own. A caption moved into an image card leaves only
 // what imageText returned.
 func bodyParagraphs(msg backend.Message, body string) []string {
-	if body != backend.GenericMessageText(msg) {
+	if body != messageText(msg) {
 		return []string{body}
 	}
-	paras := strings.Split(strings.TrimRight(msg.Text, "\n"), "\n")
-	if msg.MediaLabel != "" {
+	paras := strings.Split(strings.TrimRight(styleSpans(msg.Text, msg.Spans), "\n"), "\n")
+	if label := textfmt.Plain(msg.MediaLabel); label != "" {
 		if paras[0] == "" {
-			paras[0] = msg.MediaLabel
+			paras[0] = label
 		} else {
-			paras = append([]string{msg.MediaLabel}, paras...)
+			paras = append([]string{label}, paras...)
 		}
 	}
-	for i := range paras {
-		paras[i] = textfmt.Plain(paras[i])
-	}
 	return paras
+}
+
+// messageText is backend.GenericMessageText on one line with the text's
+// spans styled.
+func messageText(msg backend.Message) string {
+	text := strings.ReplaceAll(styleSpans(msg.Text, msg.Spans), "\n", " ")
+	label := textfmt.Plain(msg.MediaLabel)
+	switch {
+	case label == "":
+		return text
+	case text == "":
+		return label
+	}
+	return label + " — " + text
 }
 
 // metaRow joins a message's reactions, reply count, pin and read ticks into

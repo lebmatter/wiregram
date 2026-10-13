@@ -93,7 +93,7 @@ func imageCard(msg backend.Message, c *chatImage, indent, lineWidth, maxRows int
 // lines drawn below it: a loaded image moves the caption into its card.
 func imageText(msg backend.Message, c *chatImage, indent, lineWidth,
 	maxRows int) (string, []string) {
-	text := backend.GenericMessageText(msg)
+	text := messageText(msg)
 	if !msg.Image || c == nil || c.failed {
 		return text, nil
 	}

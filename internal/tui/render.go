@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"os"
+	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -312,6 +313,7 @@ func shadeLine(line string, width int) string {
 // boldLine sets line in bold, re-applied after every reset as in shadeLine.
 // It ends with SGR 22 rather than a full reset so a selection tint survives.
 func boldLine(line string) string {
+	line = strings.ReplaceAll(line, boldOff, boldOff+boldOn)
 	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m\x1b[1m")
 	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m\x1b[1m")
 	return "\x1b[1m" + line + "\x1b[22m"
@@ -343,50 +345,162 @@ const (
 // selBgSGR is colorSelBg as a raw SGR, re-applied after resets by shadeLine.
 const selBgSGR = "\x1b[48;5;237m"
 
-// styleLinks marks the http(s) links in text before it is wrapped.
-func styleLinks(text string) string {
-	var out strings.Builder
-	for {
-		start := strings.Index(text, "http")
-		if start < 0 {
-			out.WriteString(text)
-			return out.String()
-		}
-		rest := text[start:]
-		if !strings.HasPrefix(rest, "https://") && !strings.HasPrefix(rest, "http://") {
-			out.WriteString(text[:start+4])
-			text = text[start+4:]
-			continue
-		}
-		end := strings.IndexAny(rest, " \t\n\x1b")
-		if end < 0 {
-			end = len(rest)
-		}
-		url := rest[:end]
-		out.WriteString(text[:start] + linkOn + oscLink + url + "\a" + url + oscLinkEnd + linkOff)
-		text = rest[end:]
+// Message text styles. Each ends with its own SGR rather than a full reset,
+// so a selection tint or an unread bold survives it.
+const (
+	boldOn    = "\x1b[1m"
+	boldOff   = "\x1b[22m"
+	italicOn  = "\x1b[3m"
+	italicOff = "\x1b[23m"
+	strikeOn  = "\x1b[9m"
+	strikeOff = "\x1b[29m"
+	codeOn    = "\x1b[38;5;180m"
+	codeOff   = "\x1b[39m"
+)
+
+// textStyles pairs each span style with its on and off sequences, links last
+// so their OSC 8 target is reopened after the rest.
+func textStyles() []struct {
+	style   backend.Style
+	on, off string
+} {
+	return []struct {
+		style   backend.Style
+		on, off string
+	}{
+		{backend.StyleBold, boldOn, boldOff},
+		{backend.StyleItalic, italicOn, italicOff},
+		{backend.StyleStrike, strikeOn, strikeOff},
+		{backend.StyleCode, codeOn, codeOff},
+		{backend.StyleLink, linkOn, oscLinkEnd + linkOff},
 	}
 }
 
-// closeLinks ends a link style at the end of a wrapped line and reopens it
-// after the next line's indent, so a long wrapped link stays styled without
-// underlining the indent.
-func closeLinks(lines []string) []string {
-	opener := ""
-	for i, line := range lines {
-		if opener != "" {
-			body := strings.TrimLeft(line, " ")
-			line = line[:len(line)-len(body)] + opener + body
+// styleSpans renders text with its spans as SGR sequences, dropping control
+// characters but keeping line breaks. At every span edge it closes what was
+// open and reopens what still applies, so spans may nest and overlap.
+func styleSpans(text string, spans []backend.Span) string {
+	edges := []int{0, len(text)}
+	for _, sp := range spans {
+		if sp.Start >= 0 && sp.Start < sp.End && sp.End <= len(text) {
+			edges = append(edges, sp.Start, sp.End)
 		}
-		opener = ""
-		if on := strings.LastIndex(line, linkOn); on > strings.LastIndex(line, linkOff) {
-			opener = line[on:]
-			if end := strings.IndexByte(opener, '\a'); end >= 0 {
-				opener = opener[:end+1]
+	}
+	sort.Ints(edges)
+	var out strings.Builder
+	for i := 0; i+1 < len(edges); i++ {
+		from, to := edges[i], edges[i+1]
+		if from == to {
+			continue
+		}
+		var style backend.Style
+		url := ""
+		for _, sp := range spans {
+			if sp.Start <= from && to <= sp.End {
+				style |= sp.Style
+				if sp.URL != "" {
+					url = sp.URL
+				}
 			}
-			line += oscLinkEnd + linkOff
 		}
-		lines[i] = line
+		styles := textStyles()
+		for _, ts := range styles {
+			if style&ts.style == 0 {
+				continue
+			}
+			out.WriteString(ts.on)
+			if ts.style == backend.StyleLink {
+				out.WriteString(oscLink + textfmt.Plain(url) + "\a")
+			}
+		}
+		for _, r := range text[from:to] {
+			switch {
+			case r == '\n':
+				out.WriteRune(r)
+			case r == '\t':
+				out.WriteByte(' ')
+			case r < 32 || (r >= 127 && r <= 159):
+			default:
+				out.WriteRune(r)
+			}
+		}
+		for j := len(styles) - 1; j >= 0; j-- {
+			if style&styles[j].style != 0 {
+				out.WriteString(styles[j].off)
+			}
+		}
+	}
+	return out.String()
+}
+
+// styleLinks marks the bare http(s) links in text before it is wrapped,
+// leaving links already styled, such as Markdown labels, as they are.
+func styleLinks(text string) string {
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		rest := text[i:]
+		switch {
+		case strings.HasPrefix(rest, linkOn):
+			end := strings.Index(rest, linkOff)
+			if end < 0 {
+				end = len(rest)
+			} else {
+				end += len(linkOff)
+			}
+			out.WriteString(rest[:end])
+			i += end
+		case rest[0] == '\x1b':
+			end := strings.IndexByte(rest, 'm') + 1
+			if end == 0 {
+				end = len(rest)
+			}
+			out.WriteString(rest[:end])
+			i += end
+		case strings.HasPrefix(rest, "https://") || strings.HasPrefix(rest, "http://"):
+			end := strings.IndexAny(rest, " \t\n\x1b")
+			if end < 0 {
+				end = len(rest)
+			}
+			url := rest[:end]
+			out.WriteString(linkOn + oscLink + url + "\a" + url + oscLinkEnd + linkOff)
+			i += end
+		default:
+			out.WriteByte(rest[0])
+			i++
+		}
+	}
+	return out.String()
+}
+
+// carryStyles ends the text styles still open at the end of a wrapped line
+// and reopens them after the next line's indent, so a long styled run stays
+// styled without styling the indent. A full reset ends every style.
+func carryStyles(lines []string) []string {
+	var openers []string
+	for i, line := range lines {
+		if len(openers) > 0 {
+			body := strings.TrimLeft(line, " ")
+			line = line[:len(line)-len(body)] + strings.Join(openers, "") + body
+		}
+		openers = openers[:0]
+		reset := max(strings.LastIndex(line, "\x1b[0m"), strings.LastIndex(line, "\x1b[m"))
+		var closers []string
+		for _, ts := range textStyles() {
+			on := strings.LastIndex(line, ts.on)
+			if on <= max(reset, strings.LastIndex(line, ts.off)) {
+				continue
+			}
+			opener := ts.on
+			if ts.style == backend.StyleLink {
+				opener = line[on:]
+				if end := strings.IndexByte(opener, '\a'); end >= 0 {
+					opener = opener[:end+1]
+				}
+			}
+			openers = append(openers, opener)
+			closers = append([]string{ts.off}, closers...)
+		}
+		lines[i] = line + strings.Join(closers, "")
 	}
 	return lines
 }

@@ -58,7 +58,12 @@ type Message struct {
 	// Quote is the replied-to message as the reply itself carries it, for
 	// backends whose originals cannot be fetched by ID.
 	Quote *Message
-	Raw   any
+	// Spans style ranges of Text: bold, code, links and the like.
+	Spans []Span
+	// Source is the text as written, markup included, when Text has had the
+	// markup taken out; an edit starts from it.
+	Source string
+	Raw    any
 }
 
 // MaxInlineImage is the largest image file, in bytes, drawn inline.

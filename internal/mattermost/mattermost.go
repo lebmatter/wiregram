@@ -485,6 +485,7 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		}
 		text += att
 	}
+	text, spans := backend.Markdown(text)
 
 	var mediaLabel string
 	image := false
@@ -523,6 +524,8 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		Image:      image,
 		Multiline:  strings.Contains(text, "\n"),
 		Preview:    mmPreview(p.Metadata),
+		Spans:      spans,
+		Source:     p.Message,
 		Raw:        p,
 	}
 }
@@ -566,7 +569,11 @@ func mmAttachmentsText(props map[string]any) string {
 		before := len(lines)
 		add(a.Pretext)
 		add(a.AuthorName)
-		add(a.Title)
+		if t := strings.TrimSpace(a.Title); t != "" && !strings.Contains(t, "*") {
+			add("**" + t + "**")
+		} else {
+			add(t)
+		}
 		add(a.Text)
 		for _, f := range a.Fields {
 			v := strings.TrimSpace(fmt.Sprint(f.Value))
@@ -574,7 +581,7 @@ func mmAttachmentsText(props map[string]any) string {
 				continue
 			}
 			if f.Title != "" {
-				v = f.Title + ": " + v
+				v = "**" + f.Title + ":** " + v
 			}
 			add(v)
 		}
