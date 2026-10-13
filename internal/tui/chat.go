@@ -187,7 +187,7 @@ type chatUploadResult struct {
 	msg  backend.Message
 	err  error
 }
-type chatFocusSidebar struct{}
+type chatToUnread struct{}
 type chatDeleteChatResult struct{ err error }
 type chatDeleteMsgResult struct{ err error }
 type chatPinResult struct {
@@ -834,10 +834,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			m.replying = nil
 			return m, nil
 		}
-		if m.embedded {
-			return m, func() tea.Msg { return chatFocusSidebar{} }
-		}
-		return m, func() tea.Msg { return chatReturnToList{} }
+		return m, func() tea.Msg { return chatToUnread{} }
 	case "ctrl+c":
 		return m, func() tea.Msg { return chatReturnToList{} }
 	case "up":

@@ -107,7 +107,7 @@ Keyboard shortcuts:
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
-    Esc               Cancel the reply, else back to chat list
+    Esc               Cancel the reply, else back to Unread
     Ctrl+C            Close chat
     Any key           Unlock after the inactivity lock
 

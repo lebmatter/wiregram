@@ -240,9 +240,22 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 
-	case chatFocusSidebar:
-		m.focus = focusList
-		return m, nil
+	case chatToUnread:
+		// Esc from a chat lands on Unread; a second Esc reaches the list.
+		// The list's counts predate reading this chat, so leave it out.
+		read := m.chat.entry.ID
+		m = m.closeChat()
+		var entries []backend.ChatEntry
+		for _, e := range m.entries {
+			if e.ID != read {
+				entries = append(entries, e)
+			}
+		}
+		var cmd tea.Cmd
+		m.unread, cmd = newUnread(m.ctx, m.b, entries)
+		m.unreadOpen = true
+		m.focus = focusChat
+		return m.sized(), tea.Batch(cmd, loadDialogs(m.ctx, m.b, m.archived))
 
 	case chatForwardReq:
 		var cmd tea.Cmd
