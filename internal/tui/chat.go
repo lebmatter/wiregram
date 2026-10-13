@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -55,6 +56,7 @@ type chatViewModel struct {
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	images           map[string]*chatImage           // by message ID
 	quotes           map[string]*backend.Message     // unloaded originals by ID; nil = asked
+	threads          map[string][]backend.Message    // whole threads by root ID; nil = asked
 	historyExhausted bool
 	loadingOlder     bool            // a page of older history is on its way
 	firstUnread      string          // ID of the oldest message unread on open
@@ -131,6 +133,12 @@ type chatHistoryLoaded struct {
 
 type quotesLoaded struct {
 	chat     backend.ChatID
+	messages []backend.Message
+}
+
+type threadLoaded struct {
+	chat     backend.ChatID
+	root     string
 	messages []backend.Message
 }
 
@@ -234,6 +242,7 @@ func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry 
 		seen:            make(map[string]bool),
 		changedMessages: make(map[string]bool),
 		quotes:          make(map[string]*backend.Message),
+		threads:         make(map[string][]backend.Message),
 		previews:        make(map[string]*backend.LinkPreview),
 		images:          make(map[string]*chatImage),
 		input:           ti,
@@ -434,6 +443,12 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		}
 		for i := range msg.messages {
 			m.quotes[msg.messages[i].ID] = &msg.messages[i]
+		}
+		return m, nil
+
+	case threadLoaded:
+		if msg.chat == m.entry.ID {
+			m.threads[msg.root] = msg.messages
 		}
 		return m, nil
 
@@ -783,6 +798,11 @@ func (m chatViewModel) handleEvent(ev backend.Event) (chatViewModel, tea.Cmd) {
 			removed[id] = true
 			delete(m.seen, id)
 			delete(m.changedMessages, id)
+		}
+		for root, thread := range m.threads {
+			m.threads[root] = slices.DeleteFunc(thread, func(msg backend.Message) bool {
+				return removed[msg.ID]
+			})
 		}
 		filtered := m.messages[:0]
 		for _, existing := range m.messages {

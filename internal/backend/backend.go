@@ -227,6 +227,13 @@ type QuoteFetcher interface {
 	Messages(ctx context.Context, ch ChatEntry, ids []string) ([]Message, error)
 }
 
+// ThreadFetcher is implemented by backends that keep threads on the server,
+// so the thread pane can show replies older than the loaded history.
+type ThreadFetcher interface {
+	// Thread returns the root and every reply to it, oldest first.
+	Thread(ctx context.Context, ch ChatEntry, rootID string) ([]Message, error)
+}
+
 // LinkPreviewer is implemented by backends whose server can summarise a URL
 // on request, for messages that arrive without a preview.
 type LinkPreviewer interface {

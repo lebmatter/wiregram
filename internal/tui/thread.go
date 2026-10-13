@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
@@ -48,31 +51,74 @@ func (m chatViewModel) threadRootOf(msg backend.Message) backend.Message {
 	return msg
 }
 
-// threadMessages returns the root followed by its loaded replies in order.
+// threadMessages returns the root followed by its replies in order: the
+// thread fetched from the server, if any, with the loaded copies of its
+// messages and any loaded replies it lacks.
 func (m chatViewModel) threadMessages(rootID string) []backend.Message {
 	parent := make(map[string]string, len(m.messages))
 	for _, msg := range m.messages {
 		parent[msg.ID] = msg.ReplyToID
 	}
-	var out []backend.Message
-	if _, loaded := parent[rootID]; !loaded {
-		root, ok := m.threadOriginals()[rootID]
-		if !ok {
-			return nil
-		}
-		out = append(out, root)
-	}
+	var loaded []backend.Message
 	for _, msg := range m.messages {
 		id := msg.ID
 		for depth := 0; id != "" && depth < 100; depth++ {
 			if id == rootID {
-				out = append(out, msg)
+				loaded = append(loaded, msg)
 				break
 			}
 			id = parent[id]
 		}
 	}
+	full := m.threads[rootID]
+	if len(full) == 0 {
+		if _, ok := parent[rootID]; ok {
+			return loaded
+		}
+		root, ok := m.threadOriginals()[rootID]
+		if !ok {
+			return nil
+		}
+		return append([]backend.Message{root}, loaded...)
+	}
+	fresh := make(map[string]backend.Message, len(loaded))
+	for _, msg := range loaded {
+		fresh[msg.ID] = msg
+	}
+	out := make([]backend.Message, 0, len(full)+len(loaded))
+	for _, msg := range full {
+		if l, ok := fresh[msg.ID]; ok {
+			msg = l
+			delete(fresh, msg.ID)
+		}
+		out = append(out, msg)
+	}
+	for _, msg := range loaded {
+		if _, ok := fresh[msg.ID]; ok {
+			out = append(out, msg)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Timestamp.Before(out[j].Timestamp) })
 	return out
+}
+
+// fetchThread loads the whole thread from the server, once per root.
+func (m chatViewModel) fetchThread(rootID string) tea.Cmd {
+	tf, ok := m.b.(backend.ThreadFetcher)
+	if _, asked := m.threads[rootID]; !ok || asked || rootID == "" {
+		return nil
+	}
+	m.threads[rootID] = nil
+	ctx, entry := m.ctx, m.entry
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		found, err := tf.Thread(ctx, entry, rootID)
+		if err != nil {
+			found = nil // the loaded part of the thread stays; not worth a notice
+		}
+		return threadLoaded{entry.ID, rootID, found}
+	}
 }
 
 // threadPaneMinWidth is the chat pane width from which the thread shows beside
@@ -118,7 +164,7 @@ func (m chatViewModel) openThread(sel backend.Message) (chatViewModel, tea.Cmd) 
 	m.threadInput = textinput.New()
 	m.threadInput.Prompt = ""
 	m.threadInput.Placeholder = "Reply in thread…"
-	return m, m.threadInput.Focus()
+	return m, tea.Batch(m.threadInput.Focus(), m.fetchThread(root.ID))
 }
 
 func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {

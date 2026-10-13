@@ -663,6 +663,29 @@ func (mb *MmBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []s
 	return msgs, nil
 }
 
+func (mb *MmBackend) Thread(ctx context.Context, ch backend.ChatEntry, rootID string) ([]backend.Message, error) {
+	var result struct {
+		Posts map[string]mmPost `json:"posts"`
+	}
+	if err := mb.apiJSON(ctx, "GET", "/posts/"+url.PathEscape(rootID)+"/thread", nil,
+		&result); err != nil {
+		return nil, fmt.Errorf("load thread: %w", err)
+	}
+	posts := make([]mmPost, 0, len(result.Posts))
+	for _, p := range result.Posts {
+		if p.DeleteAt == 0 {
+			posts = append(posts, p)
+		}
+	}
+	sort.Slice(posts, func(i, j int) bool { return posts[i].CreateAt < posts[j].CreateAt })
+	messages := make([]backend.Message, len(posts))
+	for i, p := range posts {
+		messages[i] = mb.postToMessage(ctx, p)
+	}
+	mb.loadReactions(ctx, messages)
+	return messages, nil
+}
+
 func (mb *MmBackend) fetchPosts(ctx context.Context, channelID, before string, perPage int) ([]backend.Message, error) {
 	messages, err := mb.loadPosts(ctx, channelID, before, perPage)
 	if err != nil {

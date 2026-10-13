@@ -122,7 +122,9 @@ These are project constraints, not suggestions:
   link), which each backend fills from its own markup: Telegram entities,
   `backend.Markdown` for Mattermost and formatted Matrix bodies,
   `backend.WhatsApp` for WhatsApp. `Message.Source` keeps the text as written for editing. Threads
-  (`internal/tui/thread.go`) are built from loaded reply chains only.
+  (`internal/tui/thread.go`) are built from loaded reply chains; opening one
+  fetches the whole thread once from backends that keep threads on the server
+  (`backend.ThreadFetcher`, Mattermost).
 - Search users (`/`), the forward picker and the mention picker are one modal
   (`userSearchModel`, `internal/tui/search.go`) drawn over the screen with
   `fadeUnder`: search users centred on the body, forward and mention on the chat.
