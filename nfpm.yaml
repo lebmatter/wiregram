@@ -1,0 +1,17 @@
+# Linux packages built by the release workflow from dist/wiregram-linux-$GOARCH.
+name: wiregram
+arch: ${GOARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: lebmatter <mmlabeeb@gmail.com>
+description: Minimal multi-backend chat client for the terminal.
+homepage: https://github.com/lebmatter/wiregram
+license: AGPL-3.0
+
+contents:
+  - src: dist/wiregram-linux-${GOARCH}
+    dst: /usr/bin/wiregram
+    file_info:
+      mode: 0755

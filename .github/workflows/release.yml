@@ -27,6 +27,17 @@ jobs:
               -ldflags "-s -w" \
               -o "dist/wiregram-${target%/*}-${target#*/}" ./cmd/wiregram
           done
+
+      # Fixed names, so latest/download links work like the binaries'.
+      - name: Package
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          export VERSION="${GITHUB_REF_NAME#v}"
+          for GOARCH in amd64 arm64; do
+            export GOARCH
+            nfpm package -f nfpm.yaml -p deb -t "dist/wiregram-linux-${GOARCH}.deb"
+            nfpm package -f nfpm.yaml -p rpm -t "dist/wiregram-linux-${GOARCH}.rpm"
+          done
           cd dist && sha256sum wiregram-* > checksums.txt
 
       - name: Release
