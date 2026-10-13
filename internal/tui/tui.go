@@ -332,9 +332,11 @@ func (m tuiModel) overList(x int) bool {
 }
 
 // handleClick makes a left click on a row act like selecting it and pressing
-// Enter; a click on a message opens its attachment or its actions.
+// Enter; a left click on a message opens its attachment, a right click its
+// actions.
 func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
-	if mouse.Button != tea.MouseLeft || mouse.Y >= m.bodyHeight() {
+	right := mouse.Button == tea.MouseRight
+	if (mouse.Button != tea.MouseLeft && !right) || mouse.Y >= m.bodyHeight() {
 		return m, nil
 	}
 	if m.chatOpen && m.chat.locked {
@@ -344,8 +346,14 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if m.menuShown() {
 		x, y, w, h := m.menuRect()
 		inside := mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h
+		if right && inside {
+			return m, nil
+		}
 		m.chat, cmd = m.chat.menuClick(mouse.X-x, mouse.Y-y, inside)
 		return m, cmd
+	}
+	if right && (m.overList(mouse.X) || m.unreadOpen || m.searchOpen) {
+		return m, nil
 	}
 	if m.overList(mouse.X) {
 		if m.loadErr != nil || m.list.confirm != nil {
@@ -379,7 +387,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		}
 		m.search, cmd = m.search.click(mouse.Y)
 	default:
-		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y})
+		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y, right})
 	}
 	return m, cmd
 }

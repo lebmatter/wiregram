@@ -8,10 +8,11 @@ AGENTS.md, whose durable rules were folded in here.)
 ## Project
 
 Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. Mouse input
-is the left click and the wheel. The wheel moves the selection of the list under the pointer
+is the left and right click and the wheel. The wheel moves the selection of the list under the pointer
 as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter. A click on
 a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`;
-a click elsewhere on a message opens its actions modal. The login and connecting
+a left click elsewhere on a message selects it and a right click on a message opens its
+actions modal. The login and connecting
 screens leave the mouse to the terminal. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
@@ -119,7 +120,7 @@ These are project constraints, not suggestions:
   Media `[tags]` are dim and links are underlined. Threads
   (`internal/tui/thread.go`) are built from loaded reply chains only.
 - Messages have no per-message shortcuts. Enter on an empty composer (always,
-  in email chats and the mail reader) or a click opens the actions modal
+  in email chats and the mail reader) or a right click opens the actions modal
   (`internal/tui/msgmenu.go`) for the selected message: when the backend has
   reactions, a `reaction:` search field (typing in the modal filters) over the
   matching emoji row, then only the actions the message allows. The root draws

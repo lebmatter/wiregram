@@ -44,8 +44,9 @@ account, with its busiest chats. Settings can leave an account out.
 
 The mouse wheel scrolls the list under the pointer. Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
-message opens its actions; clicking its attachment (the image or the [tag]
-row) downloads it and opens it with xdg-open (open on macOS). Hold Shift
+message selects it; right-clicking it opens its actions. Clicking its
+attachment (the image or the [tag] row) downloads it and opens it with
+xdg-open (open on macOS). Hold Shift
 while dragging to select text with the terminal.
 
 Keyboard shortcuts:

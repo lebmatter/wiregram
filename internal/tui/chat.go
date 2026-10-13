@@ -151,9 +151,12 @@ type mediaReady struct {
 }
 type mediaFinished struct{ err error }
 
-// chatClick is a left click at column x and row y of the chat pane, counted
-// from its left and top borders.
-type chatClick struct{ x, y int }
+// chatClick is a click at column x and row y of the chat pane, counted from
+// its left and top borders; right is set for the right button.
+type chatClick struct {
+	x, y  int
+	right bool
+}
 
 type mediaOpened struct {
 	filename string
@@ -1311,12 +1314,15 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 	}
 }
 
-// handleClick opens the clicked attachment in the desktop's default
-// application, or selects the clicked message and opens its actions.
+// handleClick selects the clicked message; a left click opens its attachment
+// in the desktop's default application and a right click opens its actions.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	m = m.resetLock()
 	switch m.subMode {
 	case chatSubSearch, chatSubUpload:
+		if msg.right {
+			return m, nil
+		}
 		return m.pickerClick(msg.y - 1)
 	case chatSubReader, chatSubMenu, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return m, nil
@@ -1333,7 +1339,10 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		sel = m.messages[i]
 		m, follow = m.followThread()
 	}
-	if _, saveable := m.b.MediaSaveable(sel); media && saveable {
+	if !msg.right {
+		if _, saveable := m.b.MediaSaveable(sel); !media || !saveable {
+			return m, follow
+		}
 		var cmd tea.Cmd
 		m, cmd = m.openAttachment(sel)
 		return m, tea.Batch(follow, cmd)
