@@ -234,7 +234,11 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 	}
 	// The root's count is already on the divider below it.
 	delete(replies, m.threadRoot)
+	now := time.Now()
 	for i, msg := range thread {
+		if i == 0 || !sameDay(thread[i-1].Timestamp, msg.Timestamp) {
+			add(-1, m.st.dividerLine(dayLabel(msg.Timestamp, now), m.st.subtle, inner))
+		}
 		// The thread is the chain itself, so replies are drawn without a quote.
 		msg.ReplyToID = ""
 		block, blockMedia := m.st.messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
