@@ -764,6 +764,22 @@ func (mx *MxBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, bef
 	return msgs, nil
 }
 
+func (mx *MxBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []string) ([]backend.Message, error) {
+	var msgs []backend.Message
+	for _, id := range ids {
+		var ev mxTimelineEvent
+		path := fmt.Sprintf("/rooms/%s/event/%s", url.PathEscape(ch.ID.Id), url.PathEscape(id))
+		if err := mx.apiJSON(ctx, "GET", path, nil, &ev); err != nil {
+			// A redacted or invisible event must not hide the others.
+			continue
+		}
+		if ev.Type == "m.room.message" || ev.Type == "m.room.encrypted" {
+			msgs = append(msgs, mx.eventToMessage(ev))
+		}
+	}
+	return msgs, nil
+}
+
 func (mx *MxBackend) fetchMessages(ctx context.Context, roomID, from string, limit int) ([]backend.Message, string, error) {
 	path := fmt.Sprintf("/rooms/%s/messages?dir=b&limit=%d", url.PathEscape(roomID), limit)
 	if from != "" {

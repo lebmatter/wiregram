@@ -1145,6 +1145,7 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 		Image:      waInlineImage(evt.Message),
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(evt.Message),
+		Quote:      wa.quoteOf(evt.Message),
 		Forwarded:  isForwarded(evt.Message),
 		Preview:    waPreview(evt.Message),
 		Raw:        evt,
@@ -1188,6 +1189,7 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 		MediaLabel: mediaLabel,
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(m),
+		Quote:      wa.quoteOf(m),
 		Forwarded:  isForwarded(m),
 		Preview:    waPreview(m),
 	}
@@ -1275,35 +1277,47 @@ func (wa *WaBackend) extractMessageContent(m *waE2E.Message) (text, mediaLabel s
 }
 
 func extractReplyID(m *waE2E.Message) string {
-	if m == nil {
-		return ""
+	return replyContext(m).GetStanzaID()
+}
+
+// replyContext is the ContextInfo of the message kinds that can be replies.
+func replyContext(m *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case m == nil:
+		return nil
+	case m.GetExtendedTextMessage() != nil:
+		return m.GetExtendedTextMessage().GetContextInfo()
+	case m.GetImageMessage() != nil:
+		return m.GetImageMessage().GetContextInfo()
+	case m.GetVideoMessage() != nil:
+		return m.GetVideoMessage().GetContextInfo()
+	case m.GetAudioMessage() != nil:
+		return m.GetAudioMessage().GetContextInfo()
+	case m.GetDocumentMessage() != nil:
+		return m.GetDocumentMessage().GetContextInfo()
 	}
-	if ext := m.GetExtendedTextMessage(); ext != nil {
-		if ci := ext.GetContextInfo(); ci != nil {
-			return ci.GetStanzaID()
-		}
+	return nil
+}
+
+// quoteOf is the copy of the original a reply carries. WhatsApp cannot fetch
+// a message by ID, and history holds only what the phone synced.
+func (wa *WaBackend) quoteOf(m *waE2E.Message) *backend.Message {
+	ci := replyContext(m)
+	if ci.GetStanzaID() == "" || ci.GetQuotedMessage() == nil {
+		return nil
 	}
-	if img := m.GetImageMessage(); img != nil {
-		if ci := img.GetContextInfo(); ci != nil {
-			return ci.GetStanzaID()
-		}
+	text, mediaLabel, _ := wa.extractMessageContent(ci.GetQuotedMessage())
+	if text == "" && mediaLabel == "" {
+		return nil
 	}
-	if vid := m.GetVideoMessage(); vid != nil {
-		if ci := vid.GetContextInfo(); ci != nil {
-			return ci.GetStanzaID()
-		}
+	sender, err := types.ParseJID(ci.GetParticipant())
+	if err != nil || sender.User == "" {
+		return nil
 	}
-	if aud := m.GetAudioMessage(); aud != nil {
-		if ci := aud.GetContextInfo(); ci != nil {
-			return ci.GetStanzaID()
-		}
+	return &backend.Message{
+		ID: ci.GetStanzaID(), Sender: wa.contactName(sender), Text: text, MediaLabel: mediaLabel,
+		Outgoing: sender.User == wa.Jid.User,
 	}
-	if doc := m.GetDocumentMessage(); doc != nil {
-		if ci := doc.GetContextInfo(); ci != nil {
-			return ci.GetStanzaID()
-		}
-	}
-	return ""
 }
 
 func isForwarded(m *waE2E.Message) bool {

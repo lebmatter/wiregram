@@ -128,6 +128,9 @@ func genericSelectedLines(b backend.Backend, messages []backend.Message, entry b
 		if quoted == nil {
 			quoted = quotes[msg.ReplyToID]
 		}
+		if quoted == nil {
+			quoted = msg.Quote
+		}
 		return messageBlock(b, msg, entry, quoted, replies[msg.ID],
 			changed[msg.ID], unread[msg.ID], images[msg.ID],
 			lineWidth, imageRows(height))

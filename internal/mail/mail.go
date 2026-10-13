@@ -300,6 +300,20 @@ func (b *MailBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, be
 	return b.history(ctx, ch.ID.Id, before)
 }
 
+func (b *MailBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []string) ([]backend.Message, error) {
+	var rows []row
+	for _, id := range ids {
+		n, ok := rowIDOf(id)
+		if !ok {
+			continue
+		}
+		if r, err := b.db.byRowID(n); err == nil {
+			rows = append(rows, r)
+		}
+	}
+	return b.toMessages(rows), nil
+}
+
 func (b *MailBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
 	rows, err := b.db.query(`peer = ? AND seen = 0 AND outgoing = 0 ORDER BY date DESC, id DESC LIMIT ?`,
 		ch.ID.Id, limit)

@@ -55,7 +55,10 @@ type Message struct {
 	Subject   string
 	Reactions []MessageReaction
 	Preview   *LinkPreview
-	Raw       any
+	// Quote is the replied-to message as the reply itself carries it, for
+	// backends whose originals cannot be fetched by ID.
+	Quote *Message
+	Raw   any
 }
 
 // MaxInlineImage is the largest image file, in bytes, drawn inline.

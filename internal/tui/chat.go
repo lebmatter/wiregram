@@ -668,7 +668,7 @@ func (m chatViewModel) fetchQuotes(msgs []backend.Message) tea.Cmd {
 	var ids []string
 	for _, msg := range msgs {
 		id := msg.ReplyToID
-		if _, asked := m.quotes[id]; id == "" || asked || m.seen[id] {
+		if _, asked := m.quotes[id]; id == "" || asked || m.seen[id] || msg.Quote != nil {
 			continue
 		}
 		m.quotes[id] = nil

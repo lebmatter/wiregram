@@ -570,6 +570,21 @@ func (mb *MmBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, l
 	return backend.NewestIncoming(msgs, limit), nil
 }
 
+func (mb *MmBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []string) ([]backend.Message, error) {
+	var msgs []backend.Message
+	for _, id := range ids {
+		var p mmPost
+		if err := mb.apiJSON(ctx, "GET", "/posts/"+url.PathEscape(id), nil, &p); err != nil {
+			// A deleted root must not hide the others.
+			continue
+		}
+		if p.DeleteAt == 0 {
+			msgs = append(msgs, mb.postToMessage(ctx, p))
+		}
+	}
+	return msgs, nil
+}
+
 func (mb *MmBackend) fetchPosts(ctx context.Context, channelID, before string, perPage int) ([]backend.Message, error) {
 	messages, err := mb.loadPosts(ctx, channelID, before, perPage)
 	if err != nil {
