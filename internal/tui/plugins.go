@@ -120,6 +120,14 @@ func (m settingsModel) pluginLines(width, height int) []string {
 		return []string{m.st.dim.Render("No plugins. Put .lua files in ~/.config/wiregram/plugins/.")}
 	}
 	focused := m.focus == paneItems
+	labelW := 0
+	for _, r := range rows {
+		label := r.p.Title
+		if r.setting >= 0 {
+			label = "  " + r.p.Settings[r.setting].Label
+		}
+		labelW = max(labelW, textfmt.DisplayWidth(label))
+	}
 	var lines []string
 	for i := window(m.sel, height); i < len(rows) && len(lines) < height; i++ {
 		r := rows[i]
@@ -129,11 +137,11 @@ func (m settingsModel) pluginLines(width, height int) []string {
 			if r.p.Enabled() {
 				value = "on"
 			}
-			label := r.p.Title
+			value = m.st.subtle.Render(value)
 			if !r.p.HasWidget() {
-				label += m.st.dim.Render(" (no widget)")
+				value += m.st.dim.Render(" (no widget)")
 			}
-			lines = append(lines, m.st.listRow(label, m.st.subtle.Render(value), selected,
+			lines = append(lines, m.st.formRow(r.p.Title, value, labelW, selected,
 				focused, width))
 			continue
 		}
@@ -141,10 +149,10 @@ func (m settingsModel) pluginLines(width, height int) []string {
 		label, value := "  "+s.Label, m.st.subtle.Render(r.p.Value(s.Key))
 		if selected && m.editing {
 			in := m.edit
-			in.SetWidth(max(8, width/2))
+			in.SetWidth(max(8, width-labelW-5))
 			value = in.View()
 		}
-		lines = append(lines, m.st.listRow(label, value, selected, focused, width))
+		lines = append(lines, m.st.formRow(label, value, labelW, selected, focused, width))
 	}
 	return lines
 }

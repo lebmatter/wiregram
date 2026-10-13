@@ -7,6 +7,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"wiregram/internal/textfmt"
 )
 
 // The wizard is a scripted conversation: wiregram asks one question per
@@ -43,6 +45,9 @@ type wizardStep struct {
 	skip        func(wizardAnswers) bool
 	// show turns a stored answer into the reply bubble's text.
 	show func(string, wizardAnswers) string
+	// label names an answered step in the form view.
+	label  string
+	masked bool // the form view hides the answer
 }
 
 type wizardModel struct {
@@ -346,4 +351,81 @@ func wizardBubble(text string, width int, border color.Color) string {
 		Padding(0, 1).
 		Width(min(width, lipgloss.Width(text)+4)).
 		Render(text)
+}
+
+// formView renders the wizard as a form, top-anchored: answered steps as
+// label and value rows, then the current question and its input or options.
+// first is the line of the first option.
+func (m wizardModel) formView(width int) (lines []string, first int) {
+	labelW := 0
+	for _, i := range m.done {
+		labelW = max(labelW, textfmt.DisplayWidth(m.steps[i].label))
+	}
+	for _, i := range m.done {
+		step := m.steps[i]
+		value := m.answers[step.key]
+		switch {
+		case value == "":
+			value = "(skip)"
+		case step.masked:
+			value = "••••••"
+		case step.show != nil:
+			value = step.show(value, m.answers)
+		}
+		lines = append(lines, m.st.formRow(step.label, m.st.subtle.Render(value), labelW,
+			false, false, width))
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+	if m.cur >= len(m.steps) {
+		return lines, len(lines)
+	}
+	step := m.steps[m.cur]
+	for _, l := range strings.Split(lipgloss.NewStyle().Width(width).Render(step.ask(m.answers)), "\n") {
+		lines = append(lines, styleTitle.Render(l))
+	}
+	lines = append(lines, "")
+	first = len(lines)
+	if step.kind == wizText {
+		m.input.SetWidth(max(10, width-4))
+		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
+	} else {
+		for j, o := range step.options(m.answers) {
+			box := ""
+			if step.kind == wizMulti {
+				box = "[ ] "
+				if m.picked[o.value] {
+					box = m.st.accent.Render("[x] ")
+				}
+			}
+			label := box + o.label
+			if o.blocked != "" {
+				label = box + m.st.dim.Render(o.label+" — "+o.blocked)
+			}
+			lines = append(lines, m.st.formRow(label, "", 0, j == m.cursor, true, width))
+		}
+	}
+	if m.err != "" {
+		lines = append(lines, styleError.Render(m.err))
+	}
+	return lines, first
+}
+
+// formClick picks the option at line y of the form view, as click does for
+// the bubbles.
+func (m wizardModel) formClick(y, width int) (wizardModel, tea.Cmd) {
+	if m.cur >= len(m.steps) || m.steps[m.cur].kind == wizText {
+		return m, nil
+	}
+	_, first := m.formView(width)
+	j := y - first
+	if j < 0 || j >= len(m.steps[m.cur].options(m.answers)) {
+		return m, nil
+	}
+	m.cursor = j
+	if m.steps[m.cur].kind == wizMulti {
+		return m.Update(keyPress(tea.KeySpace))
+	}
+	return m.submit()
 }

@@ -470,8 +470,15 @@ func (m settingsModel) footer() string {
 func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
 
 func (m settingsModel) View() tea.View {
-	footer := m.footer()
-	h := max(4, m.height-lipgloss.Height(footer))
+	v := tea.NewView(m.frame() + "\n" + m.footer())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// frame is the screen above the footer, also the backdrop of Add account.
+func (m settingsModel) frame() string {
+	h := m.bodyHeight()
 	title := "Settings"
 	if a := m.selected(); a != nil {
 		title = textfmt.Plain(a.Label())
@@ -493,10 +500,7 @@ func (m settingsModel) View() tea.View {
 	default:
 		body = renderBox(title, m.itemLines(m.width-4, h-2), m.width, h, m.st.accentColor)
 	}
-	v := tea.NewView(body + "\n" + footer)
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
+	return body
 }
 
 func (m settingsModel) accountLines(width, height int) []string {
@@ -569,9 +573,14 @@ func (m settingsModel) itemLines(width, height int) []string {
 	lines := []string{m.st.subtle.Render(textfmt.ClipLine(summary, width)), ""}
 	focused := m.focus == paneItems
 	items := m.items()
+	labelW := 0
+	for _, item := range items {
+		label, _ := m.itemText(a, item)
+		labelW = max(labelW, textfmt.DisplayWidth(label))
+	}
 	for i := window(m.sel, height-itemsTop); i < len(items) && len(lines) < height; i++ {
 		label, value := m.itemText(a, items[i])
-		lines = append(lines, m.st.listRow(label, m.st.subtle.Render(value), i == m.sel,
+		lines = append(lines, m.st.formRow(label, m.st.subtle.Render(value), labelW, i == m.sel,
 			focused, width))
 	}
 	return lines
@@ -712,7 +721,7 @@ func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *accou
 		case r.agents:
 			return nil, agentsRequested{}
 		case r.add:
-			a, err := tuiPickAndAdd(ctx, mgr)
+			a, err := tuiPickAndAdd(ctx, mgr, final.frame())
 			if errors.Is(err, context.Canceled) && ctx.Err() == nil && len(mgr.List()) > 0 {
 				continue
 			}

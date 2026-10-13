@@ -182,6 +182,52 @@ func (s *styles) fadeUnder(bg, box string, x, y int) string {
 	return strings.Join(lines, "\n")
 }
 
+// formModalWidth is the widest the Add account and sign-in modals get.
+const formModalWidth = 60
+
+// modalRect is the top-left corner of a w×h box centred over a body
+// width×height cells.
+func modalRect(width, height, w, h int) (x, y int) {
+	return max(0, (width-w)/2), max(0, (height-h)/2)
+}
+
+// overlay draws box centred over backdrop, the screen the modal was opened
+// from, cut or padded to width×height and faded. With no backdrop it fades
+// over the wordmark alone.
+func (s *styles) overlay(backdrop, box string, width, height int) string {
+	if backdrop == "" {
+		backdrop = s.header(width)
+	}
+	lines := strings.Split(backdrop, "\n")
+	lines = append(lines[:min(len(lines), height)], make([]string, max(0, height-len(lines)))...)
+	for i, line := range lines {
+		lines[i] = ansi.TruncateWc(line, width, "")
+	}
+	x, y := modalRect(width, height, lipgloss.Width(box), lipgloss.Height(box))
+	return s.fadeUnder(strings.Join(lines, "\n"), box, x, y)
+}
+
+// formRow is a label with its value in a column labelW cells in, close
+// enough to read together.
+func (s *styles) formRow(label, value string, labelW int, selected, focused bool, width int) string {
+	marker := "  "
+	if selected {
+		marker = s.accent.Render(">") + " "
+	}
+	row := marker + label
+	if value != "" {
+		row += strings.Repeat(" ", max(1, labelW+2-textfmt.DisplayWidth(label))) + value
+	}
+	row = textfmt.ClipLine(row, width)
+	switch {
+	case selected && focused:
+		return s.selectedRow.Render(row)
+	case selected:
+		return styleTitle.Render(row)
+	}
+	return row
+}
+
 // keyPress is a synthetic key press, so mouse input can reuse key handlers.
 func keyPress(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
 

@@ -264,6 +264,30 @@ func (m accountListModel) itemAt(y int) (int, bool) {
 }
 
 func (m accountListModel) View() tea.View {
+	notice := ""
+	if m.selected < len(m.accounts) {
+		notice = m.accounts[m.selected].Snapshot().Notice
+	}
+	if p := m.mgr.Plugins; notice == "" && p != nil && len(p.Errors) > 0 {
+		notice = textfmt.CleanError(p.Errors[0])
+	}
+	body := m.frame()
+	keys := m.helpKeys()
+	if m.quitting != nil {
+		x, y, _, _ := m.quitRect()
+		body = m.st.fadeUnder(body, m.quitting.View(), x, y)
+		keys, notice = quitModalHelp, ""
+	}
+	content := body + "\n" + m.st.footer(keys, notice, m.width)
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// frame is the screen above the footer, also the backdrop of the modals
+// opened from it.
+func (m accountListModel) frame() string {
 	inner := m.width - 4
 	var rows []string
 	for i, a := range m.accounts {
@@ -319,27 +343,8 @@ func (m accountListModel) View() tea.View {
 	} else {
 		rows = rows[-shift:]
 	}
-
-	notice := ""
-	if m.selected < len(m.accounts) {
-		notice = m.accounts[m.selected].Snapshot().Notice
-	}
-	if p := m.mgr.Plugins; notice == "" && p != nil && len(p.Errors) > 0 {
-		notice = textfmt.CleanError(p.Errors[0])
-	}
-	body := m.st.header(m.width) + "\n" +
+	return m.st.header(m.width) + "\n" +
 		renderBox("Accounts", rows, m.width, m.bodyHeight(), m.st.accentColor)
-	keys := m.helpKeys()
-	if m.quitting != nil {
-		x, y, _, _ := m.quitRect()
-		body = m.st.fadeUnder(body, m.quitting.View(), x, y)
-		keys, notice = quitModalHelp, ""
-	}
-	content := body + "\n" + m.st.footer(keys, notice, m.width)
-	v := tea.NewView(content)
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	return v
 }
 
 // sectionRule is a divider that names the section under it.
@@ -394,7 +399,7 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 		return to, err
 	}
 	if final.result.add {
-		return tuiPickAndAdd(ctx, mgr)
+		return tuiPickAndAdd(ctx, mgr, final.frame())
 	}
 	if final.result.index < 0 {
 		return active, nil
@@ -403,11 +408,12 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 }
 
 type addAccountModel struct {
-	st      *styles
-	wiz     wizardModel
-	answers wizardAnswers // nil when cancelled
-	width   int
-	height  int
+	st       *styles
+	wiz      wizardModel
+	answers  wizardAnswers // nil when cancelled
+	backdrop string        // the screen it was opened from, faded behind it
+	width    int
+	height   int
 }
 
 var addAccountOptions = []struct {
@@ -429,13 +435,18 @@ func addAccountSteps(st *styles, needsAPI bool) []wizardStep {
 	skipAPI := func(a wizardAnswers) bool { return !needsAPI || a["network"] != "telegram" }
 	return []wizardStep{
 		{
-			key:  "network",
-			kind: wizChoice,
-			ask:  say("Which network is the new account on?"),
+			key:   "network",
+			label: "Network",
+			kind:  wizChoice,
+			ask:   say("Which network is the new account on?"),
 			options: func(wizardAnswers) []wizardOption {
+				labelW := 0
+				for _, o := range addAccountOptions {
+					labelW = max(labelW, len(o.label))
+				}
 				var opts []wizardOption
 				for _, o := range addAccountOptions {
-					label := o.label + "  " + st.dim.Render(backendTag(o.key))
+					label := fmt.Sprintf("%-*s  %s", labelW, o.label, st.dim.Render(backendTag(o.key)))
 					opts = append(opts, wizardOption{label: label, value: o.key})
 				}
 				return opts
@@ -450,8 +461,9 @@ func addAccountSteps(st *styles, needsAPI bool) []wizardStep {
 			},
 		},
 		{
-			key:  "server",
-			kind: wizText,
+			key:   "server",
+			label: "Server",
+			kind:  wizText,
 			ask: func(a wizardAnswers) string {
 				switch a["network"] {
 				case "matrix":
@@ -482,8 +494,9 @@ func addAccountSteps(st *styles, needsAPI bool) []wizardStep {
 			},
 		},
 		{
-			key:  "api_id",
-			kind: wizText,
+			key:   "api_id",
+			label: "API ID",
+			kind:  wizText,
 			ask: say("Telegram needs an API ID and hash from https://my.telegram.org/apps. " +
 				"What's your API ID?"),
 			skip: skipAPI,
@@ -495,10 +508,12 @@ func addAccountSteps(st *styles, needsAPI bool) []wizardStep {
 			},
 		},
 		{
-			key:  "api_hash",
-			kind: wizText,
-			ask:  say("And the API hash?"),
-			skip: skipAPI,
+			key:    "api_hash",
+			label:  "API hash",
+			masked: true,
+			kind:   wizText,
+			ask:    say("And the API hash?"),
+			skip:   skipAPI,
 		},
 	}
 }
@@ -511,13 +526,14 @@ func withScheme(s string) string {
 	return "https://" + s
 }
 
-func newAddAccountModel(st *styles, needsAPI bool) addAccountModel {
+func newAddAccountModel(st *styles, needsAPI bool, backdrop string) addAccountModel {
 	w, h := termSize()
 	return addAccountModel{
-		st:     st,
-		wiz:    newWizard(st, "Add account", addAccountSteps(st, needsAPI), nil),
-		width:  w,
-		height: h,
+		st:       st,
+		wiz:      newWizard(st, "Add account", addAccountSteps(st, needsAPI), nil),
+		backdrop: backdrop,
+		width:    w,
+		height:   h,
 	}
 }
 
@@ -542,8 +558,13 @@ func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			return m, nil
 		}
+		box, top := m.form()
+		x, y := modalRect(m.width, m.bodyHeight(), lipgloss.Width(box), lipgloss.Height(box))
+		if msg.X < x || msg.X >= x+lipgloss.Width(box) {
+			return m, nil
+		}
 		var cmd tea.Cmd
-		m.wiz, cmd = m.wiz.click(msg.Y-1, max(4, m.height-2)) // under the header
+		m.wiz, cmd = m.wiz.formClick(msg.Y-y-1+top, lipgloss.Width(box)-4) // under the top edge
 		return m, cmd
 	}
 	var cmd tea.Cmd
@@ -551,10 +572,26 @@ func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m addAccountModel) bodyHeight() int { return max(4, m.height-1) }
+
+// form is the wizard's modal and how many of its lines scrolled off the top.
+func (m addAccountModel) form() (string, int) {
+	w := min(formModalWidth, m.width-2)
+	lines, _ := m.wiz.formView(w - 4)
+	return formBox(m.wiz.title, lines, w, m.bodyHeight(), m.st)
+}
+
+// formBox draws a form modal tall enough for lines, keeping the last ones
+// when it doesn't fit, and returns how many lines were cut from the top.
+func formBox(title string, lines []string, width, bodyHeight int, st *styles) (string, int) {
+	h := min(bodyHeight, max(8, len(lines)+2))
+	top := max(0, len(lines)-(h-2))
+	return renderBox(title, lines[top:], width, h, st.accentColor), top
+}
+
 func (m addAccountModel) View() tea.View {
-	bodyHeight := max(4, m.height-2)
-	content := m.st.header(m.width) + "\n" +
-		m.wiz.view(m.width, bodyHeight) + "\n" +
+	box, _ := m.form()
+	content := m.st.overlay(m.backdrop, box, m.width, m.bodyHeight()) + "\n" +
 		m.st.footer(m.wiz.helpKeys(), "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -562,8 +599,8 @@ func (m addAccountModel) View() tea.View {
 	return v
 }
 
-func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager) (*account.Account, error) {
-	m := newAddAccountModel(newStyles(loadTheme(mgr.Store)), !mgr.HasTelegramCredentials())
+func tuiPickAndAdd(ctx context.Context, mgr *account.AccountManager, backdrop string) (*account.Account, error) {
+	m := newAddAccountModel(newStyles(loadTheme(mgr.Store)), !mgr.HasTelegramCredentials(), backdrop)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	result, err := p.Run()
 	if err != nil {
@@ -602,6 +639,7 @@ type loginModel struct {
 	current  *account.LoginPrompt
 	turns    []loginTurn
 	notice   string
+	backdrop string // the screen sign-in was opened from, faded behind it
 	done     bool
 	width    int
 	height   int
@@ -616,7 +654,8 @@ type loginPromptMsg struct {
 
 type loginDoneMsg struct{}
 
-func newLoginModel(ctx context.Context, mgr *account.AccountManager, a *account.Account, requests chan account.LoginPrompt) loginModel {
+func newLoginModel(ctx context.Context, mgr *account.AccountManager, a *account.Account,
+	requests chan account.LoginPrompt, backdrop string) loginModel {
 	w, h := termSize()
 	return loginModel{
 		st:       newStyles(loadTheme(mgr.Store)),
@@ -625,6 +664,7 @@ func newLoginModel(ctx context.Context, mgr *account.AccountManager, a *account.
 		a:        a,
 		requests: requests,
 		label:    a.Label(),
+		backdrop: backdrop,
 		width:    w,
 		height:   h,
 	}
@@ -676,6 +716,7 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginPromptMsg:
 		m.current = &msg.req
 		ti := textinput.New()
+		ti.Prompt = ""
 		if msg.req.Masked {
 			ti.EchoMode = textinput.EchoPassword
 		}
@@ -734,27 +775,33 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m loginModel) View() tea.View {
-	bodyHeight := max(4, m.height-2)
-	inner := m.width - 4
-	bubbleWidth := wizardBubbleWidth(inner)
+	bodyHeight := max(4, m.height-1)
+	w := min(formModalWidth, m.width-2)
+	inner := w - 4
+	labelW := 0
+	for _, t := range m.turns {
+		labelW = max(labelW, textfmt.DisplayWidth(t.ask))
+	}
 	var lines []string
 	for _, t := range m.turns {
-		lines = wizardAsk(lines, t.ask, bubbleWidth, m.st.accentColor)
-		lines = m.st.wizardReply(lines, t.reply, inner, bubbleWidth)
+		lines = append(lines, m.st.formRow(t.ask, m.st.subtle.Render(t.reply), labelW,
+			false, false, inner))
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "")
 	}
 	if m.current != nil {
-		lines = wizardAsk(lines, loginLabel(m.current.Label), bubbleWidth, m.st.accentColor)
+		lines = append(lines, styleTitle.Render(textfmt.ClipLine(loginLabel(m.current.Label), inner)), "")
 		m.input.SetWidth(max(10, inner-4))
 		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
 	} else {
 		lines = append(lines, m.st.subtle.Render("Waiting for server…"))
 	}
 	if m.notice != "" {
-		lines = append(lines, styleError.Render(textfmt.Plain(m.notice)))
+		lines = append(lines, styleError.Render(textfmt.ClipLine(textfmt.Plain(m.notice), inner)))
 	}
-	box := renderBox("Sign in — "+m.label, bottomLines(lines, bodyHeight-2),
-		m.width, bodyHeight, m.st.accentColor)
-	content := m.st.header(m.width) + "\n" + box + "\n" +
+	box, _ := formBox("Sign in — "+m.label, lines, w, bodyHeight, m.st)
+	content := m.st.overlay(m.backdrop, box, m.width, bodyHeight) + "\n" +
 		m.st.footer([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -767,7 +814,8 @@ func loginLabel(label string) string {
 	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(label), ":"))
 }
 
-func tuiLogin(ctx context.Context, mgr *account.AccountManager, a *account.Account) error {
+func tuiLogin(ctx context.Context, mgr *account.AccountManager, a *account.Account,
+	backdrop string) error {
 	if a.Cancel != nil {
 		a.Cancel()
 		<-a.Done
@@ -797,7 +845,7 @@ func tuiLogin(ctx context.Context, mgr *account.AccountManager, a *account.Accou
 	stopAccount := a.Cancel
 	a.Cancel = func() { cancel(); stopAccount() }
 
-	m := newLoginModel(loginCtx, mgr, a, requests)
+	m := newLoginModel(loginCtx, mgr, a, requests, backdrop)
 	p := tea.NewProgram(m, tea.WithContext(ctx))
 	result, err := p.Run()
 	if err != nil {

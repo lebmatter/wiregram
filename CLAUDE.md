@@ -91,7 +91,8 @@ These are project constraints, not suggestions:
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
   Themes, Plugins, Chat Agents, Reset, Quit), the selected account's settings on the right, each a row chosen
-  with the arrows and changed with Enter — no per-setting shortcuts. Removing an account logs out on the server
+  with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
+  beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
   binding; the primary account's directory is the config directory, so only its
   rows are deleted. Reset removes every account that way, then `main` deletes the config
@@ -198,7 +199,9 @@ These are project constraints, not suggestions:
   `[TG1]`: backend plus position in the account list. Chat Agents are created through the
   scripted bubble wizard (`internal/tui/wizard.go`): fixed options or typed
   values only, never free chat with a model. Adding an account (network,
-  server URL, then the sign-in prompts) uses the same bubble style in copper.
+  server URL) and the sign-in prompts are form modals centred over
+  the screen they were opened from, faded behind it (`styles.overlay`): answered
+  steps as label and value rows, then the current question (`wizardModel.formView`).
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat. Email publishes no DM events,
   so agents never answer mail.

@@ -61,7 +61,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 	}
 	if len(m.Accounts) == 0 {
 		var err error
-		active, err = tuiPickAndAdd(ctx, m)
+		active, err = tuiPickAndAdd(ctx, m, "")
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			needsAuth = needsAuth || s.Identity.ID == 0
 		}
 		if needsAuth {
-			if err := tuiLogin(ctx, m, active); err != nil {
+			if err := tuiLogin(ctx, m, active, ""); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
