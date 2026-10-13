@@ -114,12 +114,11 @@ func (m tuiModel) Init() tea.Cmd {
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
 
-// paneOpen reports whether the right-hand pane holds a chat, the user search
-// or the unread view.
-func (m tuiModel) paneOpen() bool { return m.chatOpen || m.searchOpen || m.unreadOpen }
+// paneOpen reports whether the right-hand pane holds a chat or the unread view.
+func (m tuiModel) paneOpen() bool { return m.chatOpen || m.unreadOpen }
 
 // forwarding reports whether the forward picker is up over the chat it came from.
-func (m tuiModel) forwarding() bool { return m.chatOpen && m.searchOpen }
+func (m tuiModel) forwarding() bool { return m.searchOpen && m.search.forward != nil }
 
 func (m tuiModel) bodyHeight() int {
 	return max(4, m.height-lipgloss.Height(m.footer()))
@@ -138,10 +137,9 @@ func (m tuiModel) sized() tuiModel {
 		m.list.width, m.list.height = m.width-4, bodyHeight-2
 		m.chat.width, m.chat.height = m.width, bodyHeight
 	}
-	if m.searchOpen && m.twoPane() {
-		m.search = m.search.resized(m.width-sidebarWidth, bodyHeight)
-	} else if m.searchOpen {
-		m.search = m.search.resized(m.width, bodyHeight)
+	if m.searchOpen {
+		_, areaWidth := m.searchArea()
+		m.search = m.search.resized(areaWidth, bodyHeight)
 	}
 	if m.unreadOpen && m.twoPane() {
 		m.unread = m.unread.resized(m.width-sidebarWidth, bodyHeight)
@@ -261,8 +259,24 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		var cmd tea.Cmd
 		m.search, cmd = newForwardSearch(m.ctx, m.b, m.entries, msg.req)
 		m.searchOpen = true
-		m.focus = focusChat
 		return m, cmd
+
+	case chatMentionReq:
+		mn, ok := m.b.(backend.Mentioner)
+		if !ok || !m.chatOpen {
+			break
+		}
+		var cmd tea.Cmd
+		m.search, cmd = newMentionSearch(m.ctx, m.b, mn, m.chat.entry)
+		m.searchOpen = true
+		return m, cmd
+
+	case userMentionPicked:
+		m.searchOpen = false
+		if m.chatOpen {
+			m.chat = m.chat.insertMention(msg.text)
+		}
+		return m, nil
 
 	case userForwardDone:
 		if msg.err != nil || !m.forwarding() {
@@ -292,11 +306,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case userSearchClosed:
-		if m.forwarding() {
-			m.searchOpen = false
-			return m, nil
+		m.searchOpen = false
+		if m.chatOpen && msg.insert != "" {
+			m.chat = m.chat.insertMention(msg.insert)
 		}
-		m = m.closeChat()
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -304,13 +317,18 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case tea.PasteMsg:
 		// A paste goes wherever typing would.
-		if !m.paneOpen() || m.focus != focusChat || (m.chatOpen && m.chat.locked) {
+		var cmd tea.Cmd
+		if m.chatOpen && m.chat.locked {
 			return m, nil
 		}
-		var cmd tea.Cmd
 		if m.searchOpen {
 			m.search, cmd = m.search.Update(msg)
-		} else if m.chatOpen {
+			return m, cmd
+		}
+		if !m.paneOpen() || m.focus != focusChat {
+			return m, nil
+		}
+		if m.chatOpen {
 			m.chat, cmd = m.chat.resetLock().updateInput(msg)
 		}
 		return m, cmd
@@ -356,6 +374,20 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
 	}
 	var cmd tea.Cmd
+	if m.searchOpen {
+		x, y, w, h := m.searchRect()
+		inside := mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h
+		switch {
+		case !inside:
+			return m, m.search.cancel()
+		case !right:
+			if m.chatOpen {
+				m.chat = m.chat.resetLock()
+			}
+			m.search, cmd = m.search.click(mouse.Y - y)
+		}
+		return m, cmd
+	}
 	if m.menuShown() {
 		x, y, w, h := m.menuRect()
 		inside := mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h
@@ -365,7 +397,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.menuClick(mouse.X-x, mouse.Y-y, inside)
 		return m, cmd
 	}
-	if right && (m.overList(mouse.X) || m.unreadOpen || m.searchOpen) {
+	if right && (m.overList(mouse.X) || m.unreadOpen) {
 		return m, nil
 	}
 	if m.overList(mouse.X) {
@@ -394,11 +426,6 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
 			return m.openChat(m.unread.cards[i].entry)
 		}
-	case m.searchOpen:
-		if m.forwarding() {
-			m.chat = m.chat.resetLock()
-		}
-		m.search, cmd = m.search.click(mouse.Y)
 	default:
 		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y, right})
 	}
@@ -415,6 +442,8 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	switch {
+	case m.searchOpen:
+		m.search, cmd = m.search.Update(k)
 	case m.menuShown():
 		m.chat, cmd = m.chat.Update(k)
 	case m.overList(mouse.X):
@@ -423,8 +452,6 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		}
 	case m.unreadOpen:
 		m.unread, cmd = m.unread.Update(k)
-	case m.searchOpen:
-		m.search, cmd = m.search.Update(k)
 	case m.chatOpen:
 		switch m.chat.subMode {
 		case chatSubNone, chatSubThread, chatSubMenu, chatSubSearch, chatSubUpload, chatSubReader:
@@ -451,8 +478,16 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.Update(msg)
 		return m, cmd
 	}
+	if m.searchOpen {
+		if m.chatOpen {
+			// Typing in the modal counts as activity for the chat's lock.
+			m.chat = m.chat.resetLock()
+		}
+		m.search, cmd = m.search.Update(msg)
+		return m, cmd
+	}
 	paneFocused := m.paneOpen() && m.focus == focusChat
-	chatFocused := m.chatOpen && !m.searchOpen && m.focus == focusChat
+	chatFocused := m.chatOpen && m.focus == focusChat
 	idle := !paneFocused || (chatFocused && m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
 
 	k := msg.String()
@@ -474,14 +509,6 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	if paneFocused && m.unreadOpen {
 		m.unread, cmd = m.unread.Update(msg)
-		return m, cmd
-	}
-	if paneFocused && m.searchOpen {
-		if m.forwarding() {
-			// Typing in the picker counts as activity for the chat's lock.
-			m.chat = m.chat.resetLock()
-		}
-		m.search, cmd = m.search.Update(msg)
 		return m, cmd
 	}
 	if chatFocused {
@@ -536,11 +563,9 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 
 	case chatListSearch:
-		m = m.closeChat()
 		var cmd tea.Cmd
 		m.search, cmd = newUserSearch(m.ctx, m.b, m.entries)
 		m.searchOpen = true
-		m.focus = focusChat
 		return m, cmd
 
 	case chatListUnread:
@@ -579,11 +604,8 @@ func (m tuiModel) footer() string {
 	var keys []helpKey
 	notice := m.list.notice()
 	switch {
-	case m.searchOpen && m.focus == focusChat:
+	case m.searchOpen:
 		keys = m.search.helpKeys()
-		if m.twoPane() {
-			keys = append(keys, helpKey{"tab", "chats"})
-		}
 	case m.unreadOpen && m.focus == focusChat:
 		keys = m.unread.helpKeys()
 		if m.twoPane() {
@@ -596,13 +618,10 @@ func (m tuiModel) footer() string {
 		keys = chatConfirmHelp
 	default:
 		keys = append(keys, m.list.helpKeys()...)
-		if m.searchOpen {
-			keys = append(keys, helpKey{"tab", "search"}, helpKey{"esc", "close search"})
-		}
 		if m.unreadOpen {
 			keys = append(keys, helpKey{"tab", "unread"}, helpKey{"esc", "close unread"})
 		}
-		if m.chatOpen && !m.searchOpen {
+		if m.chatOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
 			if notice == "" {
 				notice = m.chat.notice
@@ -645,16 +664,12 @@ func (m tuiModel) render() string {
 			sidebarWidth, bodyHeight, boxBorder(listFocused))
 		right := m.emptyPane(m.width-sidebarWidth, bodyHeight)
 		switch {
-		case m.searchOpen:
-			right = m.search.view(m.width-sidebarWidth, bodyHeight, !listFocused)
 		case m.unreadOpen:
 			right = m.unread.view(!listFocused)
 		case m.chatOpen:
 			right = m.chat.View()
 		}
 		body = joinColumns(list, right)
-	case m.searchOpen:
-		body = m.search.view(m.width, bodyHeight, true)
 	case m.unreadOpen:
 		body = m.unread.view(true)
 	case m.chatOpen:
@@ -666,6 +681,10 @@ func (m tuiModel) render() string {
 	if m.menuShown() {
 		x, y, _, _ := m.menuRect()
 		body = fadeUnder(body, m.chat.menu.View(m.chat.width), x, y)
+	}
+	if m.searchOpen {
+		x, y, _, _ := m.searchRect()
+		body = fadeUnder(body, m.search.View(), x, y)
 	}
 	return body + "\n" + m.footer()
 }
@@ -683,6 +702,25 @@ func (m tuiModel) menuRect() (x, y, w, h int) {
 	}
 	w, h = m.chat.menu.size(m.chat.width)
 	return left + (m.chat.width-w)/2, max(0, (m.bodyHeight()-h)/2), w, h
+}
+
+// searchArea is the part of the screen the search modal centres in: the chat
+// for a forward or a mention, else the whole body.
+func (m tuiModel) searchArea() (left, width int) {
+	if m.chatOpen && (m.search.forward != nil || m.search.mention != nil) {
+		if m.twoPane() {
+			left = sidebarWidth
+		}
+		return left, m.chat.width
+	}
+	return 0, m.width
+}
+
+// searchRect is where the search modal sits.
+func (m tuiModel) searchRect() (x, y, w, h int) {
+	left, width := m.searchArea()
+	w, h = m.search.width, m.search.height
+	return left + (width-w)/2, max(0, (m.bodyHeight()-h)/2), w, h
 }
 
 func (m tuiModel) emptyPane(width, height int) string {

@@ -66,7 +66,7 @@ Keyboard shortcuts:
   Chat list
     Up/k, Down/j      Select chat or account
     Enter             Open chat, or switch to the selected account
-    /                 Search users
+    /                 Search users (a modal over the screen)
     u                 Unread: cards for every chat with unread messages
     a                 Accounts (add, sign in, retry, Settings…)
     r                 Refresh chats
@@ -80,12 +80,15 @@ Keyboard shortcuts:
     r                 Reload
     Esc               Back
 
-  Search users / Forward to
+  Search users / Forward to / Mention (modals)
     Type              Filter
     Up/Ctrl+P, Down/Ctrl+N  Select
     PgUp/PgDn         Page
-    Enter             Open the chat, or forward the message to it
-    Esc               Clear the query, then close
+    Enter             Open the chat, forward the message to it, or insert
+                      the mention
+    Esc               Clear the query, then close; Mention closes at once
+                      and types the @ and query as written
+    Click outside     Close
 
   Settings
     Up/k, Down/j      Select an account on the left, or a setting on the right
@@ -103,6 +106,9 @@ Keyboard shortcuts:
                       message's actions
     Ctrl+U            Upload file (browse, or / to type a path)
     Ctrl+F            Search messages (Up/Down, Enter jumps, Esc cancels)
+    @                 Mention a member (group chats, at the start of a word):
+                      channel members first on Mattermost; Telegram members
+                      with a username; Matrix room members; WhatsApp group
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)

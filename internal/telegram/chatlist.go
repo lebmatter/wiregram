@@ -12,6 +12,8 @@ type chat struct {
 	peer   tg.InputPeerClass
 	title  string
 	unread int
+	// broadcast marks a channel only its admins post in.
+	broadcast bool
 }
 
 func UserName(u *tg.User) string {
@@ -71,7 +73,8 @@ func (c *Client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 			if g.Broadcast {
 				title = "Channel: " + title
 			}
-			peers[key] = chat{key: key, peer: &tg.InputPeerChannel{ChannelID: g.ID, AccessHash: g.AccessHash}, title: title}
+			peers[key] = chat{key: key, peer: &tg.InputPeerChannel{ChannelID: g.ID, AccessHash: g.AccessHash},
+				title: title, broadcast: g.Broadcast}
 		}
 	}
 	entries := make([]chat, 0, 20)

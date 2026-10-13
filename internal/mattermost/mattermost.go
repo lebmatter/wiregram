@@ -1148,6 +1148,49 @@ func (mb *MmBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandid
 	return mb.openDM(ctx, user)
 }
 
+// CanMention is true for channels and group DMs; a DM has no one else to name.
+func (mb *MmBackend) CanMention(ch backend.ChatEntry) bool {
+	raw, ok := ch.Raw.(mmChannel)
+	return ok && raw.Type != "D"
+}
+
+func (mb *MmBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (backend.UserSearchBase, error) {
+	found, err := mb.MentionSearch(ctx, ch, "")
+	return backend.UserSearchBase{Heading: "Channel members", Base: found, Local: found}, err
+}
+
+// MentionSearch lists the channel's members first, then people outside it,
+// as the Mattermost web client's autocomplete does.
+func (mb *MmBackend) MentionSearch(ctx context.Context, ch backend.ChatEntry, query string) ([]backend.UserCandidate, error) {
+	raw, _ := ch.Raw.(mmChannel)
+	q := url.Values{"in_channel": {raw.ID}, "name": {query}, "limit": {"50"}}
+	if raw.TeamID != "" {
+		q.Set("in_team", raw.TeamID)
+	}
+	var resp struct {
+		Users        []mmUser `json:"users"`
+		OutOfChannel []mmUser `json:"out_of_channel"`
+	}
+	if err := mb.apiJSON(ctx, "GET", "/users/autocomplete?"+q.Encode(), nil, &resp); err != nil {
+		return nil, fmt.Errorf("search channel members: %w", err)
+	}
+	var out []backend.UserCandidate
+	add := func(users []mmUser, tag string) {
+		for _, u := range users {
+			if u.ID == mb.UserID || u.Username == "" {
+				continue
+			}
+			c := mb.userCandidate(u)
+			c.Label += tag
+			c.Mention = "@" + u.Username + " "
+			out = append(out, c)
+		}
+	}
+	add(resp.Users, "")
+	add(resp.OutOfChannel, "  · not in channel")
+	return out, nil
+}
+
 func (mb *MmBackend) openDM(ctx context.Context, user mmUser) (backend.ChatEntry, error) {
 	var ch mmChannel
 	if err := mb.apiJSON(ctx, "POST", "/channels/direct", []string{mb.UserID, user.ID}, &ch); err != nil {

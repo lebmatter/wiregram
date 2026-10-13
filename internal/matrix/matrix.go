@@ -942,6 +942,9 @@ func (mx *MxBackend) Send(ctx context.Context, ch backend.ChatEntry, text string
 		"msgtype": "m.text",
 		"body":    text,
 	}
+	if ids := mx.mentionedMembers(ch.ID.Id, text); len(ids) > 0 {
+		content["m.mentions"] = map[string]any{"user_ids": ids}
+	}
 	if replyTo != "" {
 		content["m.relates_to"] = map[string]any{
 			"m.in_reply_to": map[string]string{
@@ -1523,6 +1526,56 @@ func (mx *MxBackend) UserSearchRemote(ctx context.Context, query string) ([]back
 			Match: strings.ToLower(name + " " + u.UserID), Raw: u.UserID})
 	}
 	return out, nil
+}
+
+// CanMention is true for rooms other than DMs.
+func (mx *MxBackend) CanMention(ch backend.ChatEntry) bool { return !ch.IsDM }
+
+// MentionBase lists the room's members as synced; mentioning inserts the
+// Matrix ID, which Send turns into an m.mentions entry.
+func (mx *MxBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (backend.UserSearchBase, error) {
+	var out []backend.UserCandidate
+	mx.mu.Lock()
+	if room := mx.rooms[ch.ID.Id]; room != nil {
+		for uid, name := range room.members {
+			if uid == mx.UserID {
+				continue
+			}
+			label := uid
+			if name != "" && name != uid {
+				label = name + "  " + uid
+			}
+			out = append(out, backend.UserCandidate{Key: uid, Label: label,
+				Match: strings.ToLower(name + " " + uid), Mention: uid + " ", Raw: uid})
+		}
+	}
+	mx.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Match < out[j].Match })
+	return backend.UserSearchBase{Heading: "Room members", Base: out, Local: out}, nil
+}
+
+func (mx *MxBackend) MentionSearch(ctx context.Context, ch backend.ChatEntry, query string) ([]backend.UserCandidate, error) {
+	return nil, nil
+}
+
+// mentionedMembers returns the room members whose Matrix IDs appear in text.
+func (mx *MxBackend) mentionedMembers(roomID, text string) []string {
+	if !strings.Contains(text, "@") {
+		return nil
+	}
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	room := mx.rooms[roomID]
+	if room == nil {
+		return nil
+	}
+	var ids []string
+	for uid := range room.members {
+		if strings.Contains(text, uid) {
+			ids = append(ids, uid)
+		}
+	}
+	return ids
 }
 
 func (mx *MxBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandidate) (backend.ChatEntry, error) {

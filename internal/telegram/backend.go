@@ -532,6 +532,9 @@ func tgCandidates(choices []userChoice) []backend.UserCandidate {
 	for i, choice := range choices {
 		key := fmt.Sprintf("%c%d", choice.entry.key.kind, choice.entry.key.id)
 		out[i] = backend.UserCandidate{Key: key, Label: choice.label, Match: choice.match, Raw: choice}
+		if choice.username != "" {
+			out[i].Mention = "@" + choice.username + " "
+		}
 	}
 	return out
 }
@@ -551,6 +554,23 @@ func (tb *TelegramBackend) OpenUserCandidate(ctx context.Context, c backend.User
 		return backend.ChatEntry{}, err
 	}
 	return chatToChatEntry(entry), nil
+}
+
+// CanMention is true for groups: Telegram mentions people by username there.
+func (tb *TelegramBackend) CanMention(ch backend.ChatEntry) bool {
+	entry := entryToChat(ch)
+	return (entry.key.kind == 'g' || entry.key.kind == 'c') && !entry.broadcast
+}
+
+func (tb *TelegramBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (backend.UserSearchBase, error) {
+	choices, err := tb.C.mentionChoices(ctx, entryToChat(ch), "")
+	found := tgCandidates(choices)
+	return backend.UserSearchBase{Heading: "Group members", Base: found, Local: found}, err
+}
+
+func (tb *TelegramBackend) MentionSearch(ctx context.Context, ch backend.ChatEntry, query string) ([]backend.UserCandidate, error) {
+	choices, err := tb.C.mentionChoices(ctx, entryToChat(ch), query)
+	return tgCandidates(choices), err
 }
 
 func (tb *TelegramBackend) RecentEmoji() []string      { return tb.C.recentEmoji() }

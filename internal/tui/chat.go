@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
@@ -144,6 +145,9 @@ type chatReadTick struct{}
 type chatTypingTimeout struct{}
 type chatReturnToList struct{}
 type chatForwardReq struct{ req forwardRequest }
+
+// chatMentionReq asks the root to open the mention picker over the chat.
+type chatMentionReq struct{}
 
 type mediaReady struct {
 	cmd     *exec.Cmd
@@ -918,6 +922,9 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			}
 			return m.startCompose(&msg)
 		}
+		if msg.Text == "@" && m.mentionAllowed() {
+			return m, func() tea.Msg { return chatMentionReq{} }
+		}
 		if m.caps.Typing && time.Since(m.lastTypingSent) > 5*time.Second {
 			m.lastTypingSent = time.Now()
 			m.b.SetTyping(m.ctx, m.entry)
@@ -927,6 +934,26 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// mentionAllowed reports whether an @ typed now starts a mention: the chat
+// is one its backend can mention in, and the @ would begin a word.
+func (m chatViewModel) mentionAllowed() bool {
+	mn, ok := m.b.(backend.Mentioner)
+	if !ok || !mn.CanMention(m.entry) {
+		return false
+	}
+	before := []rune(m.input.Value())[:m.input.Position()]
+	return len(before) == 0 || unicode.IsSpace(before[len(before)-1])
+}
+
+// insertMention puts text into the composer at the cursor.
+func (m chatViewModel) insertMention(text string) chatViewModel {
+	value := []rune(m.input.Value())
+	pos := m.input.Position()
+	m.input.SetValue(string(value[:pos]) + text + string(value[pos:]))
+	m.input.SetCursor(pos + len([]rune(text)))
+	return m
 }
 
 // openMenu opens the actions modal on the selected message.

@@ -13,6 +13,7 @@ type userChoice struct {
 	entry           chat
 	label           string
 	match           string
+	username        string
 	resolveUsername string
 }
 
@@ -46,7 +47,7 @@ func userChoiceFromUser(user *tg.User, source string) (userChoice, bool) {
 	if user.Self {
 		match += " saved messages"
 	}
-	choice := userChoice{entry: entry, label: label, match: match}
+	choice := userChoice{entry: entry, label: label, match: match, username: user.Username}
 	if source == "global" {
 		choice.resolveUsername = user.Username
 	}
@@ -222,4 +223,51 @@ func (c *Client) resolveUserChoice(ctx context.Context, choice userChoice) (chat
 		}
 	}
 	return chat{}, fmt.Errorf("Telegram did not return complete details for @%s", choice.resolveUsername)
+}
+
+// mentionChoices lists the members of a group that can be mentioned by
+// username. A basic group's members all come at once, so only a supergroup
+// is searched by query.
+func (c *Client) mentionChoices(ctx context.Context, entry chat, query string) ([]userChoice, error) {
+	var users []tg.UserClass
+	switch peer := entry.peer.(type) {
+	case *tg.InputPeerChat:
+		if query != "" {
+			return nil, nil
+		}
+		full, err := c.Api.MessagesGetFullChat(ctx, peer.ChatID)
+		if err != nil {
+			return nil, fmt.Errorf("load group members: %w", err)
+		}
+		c.Remember(full.Users, full.Chats)
+		users = full.Users
+	case *tg.InputPeerChannel:
+		var filter tg.ChannelParticipantsFilterClass = &tg.ChannelParticipantsRecent{}
+		if query != "" {
+			filter = &tg.ChannelParticipantsSearch{Q: query}
+		}
+		result, err := c.Api.ChannelsGetParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
+			Channel: &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash},
+			Filter:  filter,
+			Limit:   50,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load group members: %w", err)
+		}
+		if list, ok := result.(*tg.ChannelsChannelParticipants); ok {
+			c.Remember(list.Users, list.Chats)
+			users = list.Users
+		}
+	}
+	var choices []userChoice
+	for _, value := range users {
+		user, ok := value.(*tg.User)
+		if !ok || user.Self || user.Username == "" {
+			continue
+		}
+		if choice, ok := userChoiceFromUser(user, ""); ok {
+			choices = append(choices, choice)
+		}
+	}
+	return choices, nil
 }

@@ -35,12 +35,15 @@ type WaBackend struct {
 	Jid       types.JID
 	PushName  string
 
-	mu          sync.Mutex
-	typing      map[types.JID]time.Time
-	unreads     map[types.JID]int
-	chatCache   []waChatEntry
-	msgCache    map[types.JID][]backend.Message
-	userCache   map[types.JID]string
+	mu        sync.Mutex
+	typing    map[types.JID]time.Time
+	unreads   map[types.JID]int
+	chatCache []waChatEntry
+	msgCache  map[types.JID][]backend.Message
+	userCache map[types.JID]string
+	// members are each group's participants as last listed for a mention,
+	// so Send can tell which @numbers in a message are mentions.
+	members     map[types.JID][]types.JID
 	recentEmoji []string
 	events      backend.Bus
 
@@ -62,6 +65,7 @@ func NewWABackend(configDir string) *WaBackend {
 		chatCache: nil,
 		msgCache:  make(map[types.JID][]backend.Message),
 		userCache: make(map[types.JID]string),
+		members:   make(map[types.JID][]types.JID),
 		configDir: configDir,
 	}
 }
@@ -516,14 +520,17 @@ func (wa *WaBackend) Send(ctx context.Context, ch backend.ChatEntry, text string
 		return backend.Message{}, err
 	}
 	msg := &waE2E.Message{}
-	if replyTo != "" {
+	mentioned := wa.mentionedMembers(jid, text)
+	if replyTo != "" || len(mentioned) > 0 {
+		info := &waE2E.ContextInfo{MentionedJID: mentioned}
+		if replyTo != "" {
+			info.StanzaID = proto.String(replyTo)
+			info.Participant = proto.String(jid.String())
+			info.QuotedMessage = &waE2E.Message{Conversation: proto.String("")}
+		}
 		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
-			Text: proto.String(text),
-			ContextInfo: &waE2E.ContextInfo{
-				StanzaID:      proto.String(replyTo),
-				Participant:   proto.String(jid.String()),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
-			},
+			Text:        proto.String(text),
+			ContextInfo: info,
 		}
 	} else {
 		msg.Conversation = proto.String(text)
@@ -1056,6 +1063,90 @@ func (wa *WaBackend) UserSearchBase(ctx context.Context, recentChats []backend.C
 // UserSearchRemote returns nothing: WhatsApp has no user directory to search.
 func (wa *WaBackend) UserSearchRemote(ctx context.Context, query string) ([]backend.UserCandidate, error) {
 	return nil, nil
+}
+
+// CanMention is true for groups.
+func (wa *WaBackend) CanMention(ch backend.ChatEntry) bool {
+	jid, err := wa.chatJID(ch)
+	return err == nil && jid.Server == types.GroupServer
+}
+
+// MentionBase lists the group's participants. A mention is written as
+// @number, which Send turns into a mentioned JID.
+func (wa *WaBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (backend.UserSearchBase, error) {
+	jid, err := wa.chatJID(ch)
+	if err != nil {
+		return backend.UserSearchBase{}, err
+	}
+	info, err := wa.Client.GetGroupInfo(ctx, jid)
+	if err != nil {
+		return backend.UserSearchBase{}, fmt.Errorf("load group members: %w", err)
+	}
+	var out []backend.UserCandidate
+	var members []types.JID
+	wa.mu.Lock()
+	for _, p := range info.Participants {
+		members = append(members, p.JID)
+		phone := p.PhoneNumber
+		if phone.IsEmpty() && p.JID.Server == types.DefaultUserServer {
+			phone = p.JID
+		}
+		if phone.User == wa.Jid.User || p.JID.User == wa.Jid.User {
+			continue
+		}
+		name := p.DisplayName
+		if !phone.IsEmpty() {
+			name = wa.contactName(phone)
+		}
+		if name == "" {
+			name = "+" + p.JID.User
+		}
+		label := name
+		if !phone.IsEmpty() && name != "+"+phone.User {
+			label += "  +" + phone.User
+		}
+		out = append(out, backend.UserCandidate{Key: p.JID.String(), Label: label,
+			Match: strings.ToLower(name + " " + phone.User), Mention: "@" + p.JID.User + " ", Raw: p.JID})
+	}
+	wa.members[jid] = members
+	wa.mu.Unlock()
+	return backend.UserSearchBase{Heading: "Group members", Base: out, Local: out}, nil
+}
+
+func (wa *WaBackend) MentionSearch(ctx context.Context, ch backend.ChatEntry, query string) ([]backend.UserCandidate, error) {
+	return nil, nil
+}
+
+// mentionedMembers returns the participants of group jid written as @number in text.
+func (wa *WaBackend) mentionedMembers(jid types.JID, text string) []string {
+	if jid.Server != types.GroupServer || !strings.Contains(text, "@") {
+		return nil
+	}
+	wa.mu.Lock()
+	defer wa.mu.Unlock()
+	var out []string
+	for _, member := range wa.members[jid] {
+		if containsToken(text, "@"+member.User) {
+			out = append(out, member.String())
+		}
+	}
+	return out
+}
+
+// containsToken reports whether text has token not followed by another digit,
+// so @123 is not found inside @1234.
+func containsToken(text, token string) bool {
+	for i := 0; ; {
+		j := strings.Index(text[i:], token)
+		if j < 0 {
+			return false
+		}
+		end := i + j + len(token)
+		if end == len(text) || text[end] < '0' || text[end] > '9' {
+			return true
+		}
+		i = end
+	}
 }
 
 func (wa *WaBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandidate) (backend.ChatEntry, error) {

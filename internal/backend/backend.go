@@ -82,7 +82,9 @@ type UserCandidate struct {
 	Key   string // identity for de-duplicating local and remote results
 	Label string
 	Match string // lowercase text matched against the query
-	Raw   any
+	// Mention is the text a pick inserts into the composer, for Mentioner.
+	Mention string
+	Raw     any
 }
 
 // userSearchBase is what the search shows before and while typing: base when
@@ -193,6 +195,15 @@ type Backend interface {
 	RememberEmoji(value string)
 	EmojiChoices(query string) []EmojiOption
 	ReactionChoices(query string) []EmojiOption
+}
+
+// Mentioner is implemented by backends that can suggest the people of a group
+// chat to mention in it. MentionSearch returns nil when MentionBase already
+// lists everyone, leaving the filtering to the TUI.
+type Mentioner interface {
+	CanMention(ch ChatEntry) bool
+	MentionBase(ctx context.Context, ch ChatEntry) (UserSearchBase, error)
+	MentionSearch(ctx context.Context, ch ChatEntry, query string) ([]UserCandidate, error)
 }
 
 // LogoutBackend is implemented by backends that can end their server session,

@@ -123,6 +123,16 @@ These are project constraints, not suggestions:
   `backend.Markdown` for Mattermost and formatted Matrix bodies,
   `backend.WhatsApp` for WhatsApp. `Message.Source` keeps the text as written for editing. Threads
   (`internal/tui/thread.go`) are built from loaded reply chains only.
+- Search users (`/`), the forward picker and the mention picker are one modal
+  (`userSearchModel`, `internal/tui/search.go`) drawn over the screen with
+  `fadeUnder`: search users centred on the body, forward and mention on the chat.
+  `@` at the start of a word in a group chat's composer opens the mention picker
+  when the backend implements `backend.Mentioner`; a pick inserts the
+  candidate's `Mention` text and each backend turns that text into a native
+  mention: `@username` on Mattermost (channel members, then `not in channel`,
+  from `/users/autocomplete`) and Telegram (members with a username), the MXID
+  on Matrix (`m.mentions`), `@number` on WhatsApp (`MentionedJID`). Email has
+  no mentions.
 - Messages have no per-message shortcuts. Enter on an empty composer (always,
   in email chats and the mail reader) or a right click opens the actions modal
   (`internal/tui/msgmenu.go`) for the selected message: when the backend has

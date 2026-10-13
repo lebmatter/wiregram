@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -9,16 +11,15 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
 )
 
-// userSearchModel finds a person to chat with, or to forward a message to:
-// a search box over a bubbles list. The list's fuzzy filter narrows known
-// people as you type, and directory results are merged in as items when
-// they arrive.
+// userSearchModel is a modal that finds a person to chat with, to forward a
+// message to, or to mention in a group chat: a search box over a bubbles
+// list. The list's fuzzy filter narrows known people as you type, and
+// server results are merged in as items when they arrive.
 type userSearchModel struct {
 	ctx     context.Context
 	b       backend.Backend
@@ -30,6 +31,11 @@ type userSearchModel struct {
 	gen     int
 	opening bool
 	forward *forwardRequest
+	mention *backend.ChatEntry // the group chat being written in
+	busy    bool               // loading, searching or opening
+	status  string             // the last error
+	width   int
+	height  int
 }
 
 // forwardRequest is a message waiting for a recipient.
@@ -72,7 +78,13 @@ type userForwardDone struct {
 	target backend.ChatEntry
 	err    error
 }
-type userSearchClosed struct{}
+
+// userSearchClosed ends the modal; a mention picker hands back what was
+// typed after the @, so cancelling never loses text.
+type userSearchClosed struct{ insert string }
+
+// userMentionPicked is the mention text to insert into the composer.
+type userMentionPicked struct{ text string }
 
 // newForwardSearch picks the recipient for req instead of opening a chat.
 func newForwardSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry, req forwardRequest) (userSearchModel, tea.Cmd) {
@@ -81,45 +93,71 @@ func newForwardSearch(ctx context.Context, b backend.Backend, recent []backend.C
 	return m, cmd
 }
 
-func newUserSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry) (userSearchModel, tea.Cmd) {
-	d := list.NewDefaultDelegate()
-	d.Styles.SelectedTitle = d.Styles.SelectedTitle.Foreground(colorAccent).BorderForeground(colorAccent)
-	d.Styles.SelectedDesc = d.Styles.SelectedDesc.Foreground(colorSubtle).BorderForeground(colorAccent)
-	d.Styles.FilterMatch = lipgloss.NewStyle().Underline(true).Foreground(colorAccent)
+// newMentionSearch picks a member of ch to mention in it.
+func newMentionSearch(ctx context.Context, b backend.Backend, mn backend.Mentioner, ch backend.ChatEntry) (userSearchModel, tea.Cmd) {
+	m := newSearchModel(ctx, b)
+	m.mention = &ch
+	m.input.Placeholder = "Name…"
+	load := func() tea.Msg {
+		base, err := mn.MentionBase(ctx, ch)
+		return userSearchLoaded{base, err}
+	}
+	return m, tea.Batch(m.input.Focus(), load)
+}
 
-	// The search box drives the filter, so the list's own input stays hidden.
-	l := list.New(nil, d, 0, 0)
+func newUserSearch(ctx context.Context, b backend.Backend, recent []backend.ChatEntry) (userSearchModel, tea.Cmd) {
+	m := newSearchModel(ctx, b)
+	load := func() tea.Msg {
+		base, err := b.UserSearchBase(ctx, recent)
+		return userSearchLoaded{base, err}
+	}
+	return m, tea.Batch(m.input.Focus(), load)
+}
+
+func newSearchModel(ctx context.Context, b backend.Backend) userSearchModel {
+	// The list only filters and keeps the selection; View draws the rows.
+	l := list.New(nil, rowDelegate{}, 0, 0)
 	l.SetShowHelp(false)
 	l.SetShowFilter(false)
 	l.DisableQuitKeybindings()
-	l.SetStatusBarItemName("person", "people")
-	l.Title = "Loading…"
-	l.Styles.Title = styleSubtle
-	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 2)
-	l.Styles.Spinner = styleAccent
-	l.Styles.StatusBar = styleDim.Padding(0, 0, 1, 2)
-	l.Styles.StatusBarActiveFilter = styleSubtle
-	l.Styles.StatusBarFilterCount = styleDim
-	l.Styles.NoItems = styleSubtle.Padding(0, 0, 0, 2)
 
 	in := textinput.New()
 	in.Prompt = ""
 	in.Placeholder = "Name or username…"
 
-	m := userSearchModel{ctx: ctx, b: b, input: in, list: l}
-	load := func() tea.Msg {
-		base, err := b.UserSearchBase(ctx, recent)
-		return userSearchLoaded{base, err}
-	}
-	return m, tea.Batch(m.input.Focus(), m.list.StartSpinner(), load)
+	return userSearchModel{ctx: ctx, b: b, input: in, list: l, busy: true}
 }
 
-// searchBoxHeight is the bordered input plus a blank line under it.
-const searchBoxHeight = 4
+// rowDelegate gives the list one-line items without drawing them.
+type rowDelegate struct{}
 
+func (rowDelegate) Height() int                                  { return 1 }
+func (rowDelegate) Spacing() int                                 { return 0 }
+func (rowDelegate) Update(tea.Msg, *list.Model) tea.Cmd          { return nil }
+func (rowDelegate) Render(io.Writer, list.Model, int, list.Item) {}
+
+// searchMaxRows is the most people the modal lists at once.
+const searchMaxRows = 14
+
+// searchHeader is the box's top border, the query line and the heading.
+const searchHeader = 3
+
+// resized fits the modal into a width×height area.
 func (m userSearchModel) resized(width, height int) userSearchModel {
-	m.list.SetSize(max(1, width-4), max(1, height-2-searchBoxHeight))
+	m.width = min(56, width-4)
+	m.height = max(searchHeader+2, min(searchHeader+searchMaxRows+1, height-2))
+	// One page holds every item, so Index counts from the first.
+	m.list.SetSize(max(1, m.width-4), 1<<20)
 	return m
+}
+
+// rows is how many people fit under the heading.
+func (m userSearchModel) rows() int { return max(1, m.height-searchHeader-1) }
+
+// firstRow is the index of the top row shown: the list pages by rows.
+func (m userSearchModel) firstRow() int {
+	idx := m.list.Index()
+	return idx - idx%m.rows()
 }
 
 func mergeCandidates(groups ...[]backend.UserCandidate) []backend.UserCandidate {
@@ -161,32 +199,41 @@ func (m userSearchModel) queryChanged() (userSearchModel, tea.Cmd) {
 	m.gen++
 	m.remote = nil
 	m, cmd := m.setItems()
-	if utf8.RuneCountInString(m.query) < 2 {
-		m.list.StopSpinner()
+	minQuery := 2
+	if m.mention != nil {
+		minQuery = 1 // a group's members are few; one letter narrows them
+	}
+	if utf8.RuneCountInString(m.query) < minQuery {
+		m.busy = m.opening
 		return m, cmd
 	}
 	gen := m.gen
-	return m, tea.Batch(cmd, m.list.StartSpinner(), tea.Tick(300*time.Millisecond,
+	m.busy, m.status = true, ""
+	return m, tea.Batch(cmd, tea.Tick(300*time.Millisecond,
 		func(time.Time) tea.Msg { return userSearchDebounce{gen} }))
 }
 
 func (m userSearchModel) Update(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case userSearchLoaded:
-		m.list.StopSpinner()
+		m.busy = false
 		m.base = msg.base
-		m, cmd := m.setItems()
 		if msg.err != nil {
-			cmd = tea.Batch(cmd, m.list.NewStatusMessage(styleError.Render(textfmt.CleanError(msg.err))))
+			m.status = textfmt.CleanError(msg.err)
 		}
-		return m, cmd
+		return m.setItems()
 
 	case userSearchDebounce:
 		if msg.gen != m.gen {
 			return m, nil
 		}
-		ctx, b, gen, query := m.ctx, m.b, m.gen, m.query
+		ctx, b, gen, query, ch := m.ctx, m.b, m.gen, m.query, m.mention
 		return m, func() tea.Msg {
+			if ch != nil {
+				mn, _ := b.(backend.Mentioner)
+				found, err := mn.MentionSearch(ctx, *ch, query)
+				return userSearchResults{gen, found, err}
+			}
 			found, err := b.UserSearchRemote(ctx, query)
 			return userSearchResults{gen, found, err}
 		}
@@ -195,9 +242,10 @@ func (m userSearchModel) Update(msg tea.Msg) (userSearchModel, tea.Cmd) {
 		if msg.gen != m.gen {
 			return m, nil
 		}
-		m.list.StopSpinner()
+		m.busy = false
 		if msg.err != nil {
-			return m, m.list.NewStatusMessage(styleError.Render(textfmt.CleanError(msg.err)))
+			m.status = textfmt.CleanError(msg.err)
+			return m, nil
 		}
 		m.remote = msg.candidates
 		return m.setItems()
@@ -211,31 +259,40 @@ func (m userSearchModel) Update(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
-	// Spinner ticks, filter results and status-message timeouts go to the
-	// list; pastes go to the search box.
-	var cmd, edit tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	m, edit = m.edited(msg)
-	return m, tea.Batch(cmd, edit)
+	// Pastes go to the search box.
+	return m.edited(msg)
 }
 
 // finished ends an open or forward; on failure the picker stays up with the error.
 func (m userSearchModel) finished(err error) (userSearchModel, tea.Cmd) {
-	m.opening = false
-	m.list.StopSpinner()
+	m.opening, m.busy = false, false
 	if err != nil {
-		return m, m.list.NewStatusMessage(styleError.Render(textfmt.CleanError(err)))
+		m.status = textfmt.CleanError(err)
 	}
 	return m, nil
+}
+
+// cancel closes the modal; a mention picker gives back the @ and the query.
+func (m userSearchModel) cancel() tea.Cmd {
+	closed := userSearchClosed{}
+	if m.mention != nil {
+		closed.insert = "@" + m.input.Value()
+	}
+	return func() tea.Msg { return closed }
 }
 
 func (m userSearchModel) handleKey(msg tea.KeyPressMsg) (userSearchModel, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
-		return m, func() tea.Msg { return userSearchClosed{} }
-	case "esc":
-		if m.input.Value() == "" {
+		return m, m.cancel()
+	case "backspace":
+		if m.mention != nil && m.input.Value() == "" {
+			// Deletes the @ that opened the picker.
 			return m, func() tea.Msg { return userSearchClosed{} }
+		}
+	case "esc":
+		if m.input.Value() == "" || m.mention != nil {
+			return m, m.cancel()
 		}
 		m.input.SetValue("")
 		m.query = ""
@@ -247,19 +304,25 @@ func (m userSearchModel) handleKey(msg tea.KeyPressMsg) (userSearchModel, tea.Cm
 		m.list.CursorDown()
 		return m, nil
 	case "pgup":
-		m.list.PrevPage()
+		m.list.Select(max(0, m.list.Index()-m.rows()))
 		return m, nil
 	case "pgdown":
-		m.list.NextPage()
+		m.list.Select(min(len(m.list.VisibleItems())-1, m.list.Index()+m.rows()))
 		return m, nil
 	case "enter":
 		item, ok := m.list.SelectedItem().(userItem)
 		if !ok || m.opening {
 			return m, nil
 		}
-		m.opening = true
+		if m.mention != nil {
+			if item.c.Mention == "" {
+				return m, nil
+			}
+			return m, func() tea.Msg { return userMentionPicked{item.c.Mention} }
+		}
+		m.opening, m.busy, m.status = true, true, ""
 		ctx, b, fwd := m.ctx, m.b, m.forward
-		return m, tea.Batch(m.list.StartSpinner(), func() tea.Msg {
+		return m, tea.Batch(func() tea.Msg {
 			entry, err := b.OpenUserCandidate(ctx, item.c)
 			if fwd == nil {
 				return userSearchOpened{entry, err}
@@ -287,41 +350,73 @@ func (m userSearchModel) edited(msg tea.Msg) (userSearchModel, tea.Cmd) {
 	return m, cmd
 }
 
-// click opens the person at row y of the pane. The list keeps its layout
-// private, so rows count from the selected item, whose title has the border.
+// click picks the person at row y of the modal, counted from its top edge.
 func (m userSearchModel) click(y int) (userSearchModel, tea.Cmd) {
-	row := y - 1 - searchBoxHeight
-	cur, ok := cursorRow(m.list.View(), "│")
-	if !ok || row < 0 {
-		return m, nil
-	}
-	const delegate = 3 // two lines per person and a blank between
-	offset := row - cur
-	line := (offset%delegate + delegate) % delegate
-	i := m.list.Index() + (offset-line)/delegate
-	first := m.list.Paginator.Page * m.list.Paginator.PerPage
-	if line == 2 || i < first ||
-		i >= first+m.list.Paginator.ItemsOnPage(len(m.list.VisibleItems())) {
+	row := y - searchHeader
+	i := m.firstRow() + row
+	if row < 0 || row >= m.rows() || i >= len(m.list.VisibleItems()) {
 		return m, nil
 	}
 	m.list.Select(i)
 	return m.handleKey(keyPress(tea.KeyEnter))
 }
 
-func (m userSearchModel) view(width, height int, focused bool) string {
-	body := composerBox("", nil, "@ ", m.input, width-4, boxBorder(focused))
-	body = append(body, "")
-	body = append(body, strings.Split(m.list.View(), "\n")...)
-	title := "Search users"
-	if m.forward != nil {
-		title = "Forward to"
+func (m userSearchModel) View() string {
+	inner := m.width - 4
+	m.input.SetWidth(max(1, inner-3))
+	body := []string{styleAccent.Render("@ ") + m.input.View(), m.heading()}
+	items := m.list.VisibleItems()
+	first := m.firstRow()
+	for i := first; i < min(len(items), first+m.rows()); i++ {
+		item := items[i].(userItem)
+		name, desc := item.Title(), item.Description()
+		if desc != "" {
+			desc = " " + styleDim.Render(desc)
+		}
+		if i == m.list.Index() {
+			body = append(body, styleAccent.Render("> ")+styleSelectedRow.Render(name)+desc)
+		} else {
+			body = append(body, "  "+name+desc)
+		}
 	}
-	return renderBox(title, body, width, height, boxBorder(focused))
+	if len(items) == 0 && !m.busy {
+		body = append(body, styleDim.Render("  no one found"))
+	}
+	title := "Search users"
+	switch {
+	case m.forward != nil:
+		title = "Forward to"
+	case m.mention != nil:
+		title = "Mention"
+	}
+	return renderBox(title, body, m.width, m.height, colorAccent)
+}
+
+// heading names the list and counts it, or shows the last error.
+func (m userSearchModel) heading() string {
+	if m.status != "" {
+		return styleError.Render(m.status)
+	}
+	heading := m.base.Heading
+	if m.query != "" {
+		heading = "Results"
+	}
+	line := styleSubtle.Render(heading)
+	if n := len(m.list.VisibleItems()); n > 0 {
+		line += styleDim.Render(fmt.Sprintf(" · %d", n))
+	}
+	if m.busy {
+		line += styleDim.Render(" · searching…")
+	}
+	return line
 }
 
 func (m userSearchModel) helpKeys() []helpKey {
-	if m.forward != nil {
+	switch {
+	case m.forward != nil:
 		return forwardSearchHelp
+	case m.mention != nil:
+		return mentionSearchHelp
 	}
 	return userSearchHelp
 }
@@ -340,4 +435,11 @@ var forwardSearchHelp = []helpKey{
 	{"pgup/pgdn", "page"},
 	{"⏎", "forward"},
 	{"esc", "clear / cancel"},
+}
+
+var mentionSearchHelp = []helpKey{
+	{"type", "filter"},
+	{"↑↓", "select"},
+	{"⏎", "mention"},
+	{"esc", "type @ instead"},
 }
