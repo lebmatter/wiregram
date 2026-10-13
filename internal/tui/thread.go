@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbletea/v2"
 
 	"wiregram/internal/backend"
+	"wiregram/internal/textfmt"
 )
 
 // Threads are built from loaded messages only: a thread is a root plus every
@@ -236,7 +237,8 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 	delete(replies, m.threadRoot)
 	now := time.Now()
 	for i, msg := range thread {
-		if i == 0 || !sameDay(thread[i-1].Timestamp, msg.Timestamp) {
+		// The first reply's day goes on the reply count's rule instead.
+		if i != 1 && startsDay(thread, i) {
 			add(-1, m.st.dividerLine(dayLabel(msg.Timestamp, now), m.st.subtle, inner))
 		}
 		// The thread is the chain itself, so replies are drawn without a quote.
@@ -254,7 +256,11 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))
-			add(-1, m.st.dim.Render("──"+label+strings.Repeat("─", max(0, inner-2-len(label)))))
+			if n > 0 && startsDay(thread, 1) {
+				label += "· " + dayLabel(thread[1].Timestamp, now) + " "
+			}
+			rest := max(0, inner-2-textfmt.DisplayWidth(label))
+			add(-1, m.st.dim.Render("──"+label+strings.Repeat("─", rest)))
 		}
 	}
 	return lines, owners, media

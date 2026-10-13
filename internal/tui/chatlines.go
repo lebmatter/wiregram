@@ -159,9 +159,9 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 			}
 		}
 		var top []string
-		day := messages[i].Timestamp
-		if i == 0 || !sameDay(messages[i-1].Timestamp, day) {
-			top = append(top, s.dividerLine(dayLabel(day, now), s.subtle, lineWidth))
+		if startsDay(messages, i) {
+			top = append(top, s.dividerLine(dayLabel(messages[i].Timestamp, now), s.subtle,
+				lineWidth))
 		}
 		if firstUnread != "" && messages[i].ID == firstUnread {
 			top = append(top, s.dividerLine("unread", s.accent, lineWidth))
@@ -230,6 +230,21 @@ func (s *styles) dividerLine(label string, style lipgloss.Style, width int) stri
 	side := max(2, (width-textfmt.DisplayWidth(label))/2)
 	rule := strings.Repeat("─", side)
 	return textfmt.ClipLine(s.dim.Render(rule)+style.Render(label)+s.dim.Render(rule), width)
+}
+
+// startsDay reports whether messages[i] is the first of its day. Messages
+// without a time (a WhatsApp quote) start none and are skipped over.
+func startsDay(messages []backend.Message, i int) bool {
+	t := messages[i].Timestamp
+	if t.IsZero() {
+		return false
+	}
+	for j := i - 1; j >= 0; j-- {
+		if prev := messages[j].Timestamp; !prev.IsZero() {
+			return !sameDay(prev, t)
+		}
+	}
+	return true
 }
 
 func sameDay(a, b time.Time) bool {
