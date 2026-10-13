@@ -42,8 +42,9 @@ Enter on another account switches to it; the last row opens Settings.
 The account list shows an unread digest below it: one card per connected
 account, with its busiest chats. Settings can leave an account out.
 Plugins are Lua scripts; enabled ones may add widget cards under the
-digest, such as the built-in Weather. Turn them on and set them up in
-Settings > Plugins. Your own go in ~/.config/wiregram/plugins/NAME.lua.
+digest, such as the built-in Weather and Hacker News. Turn them on and
+set them up in Settings > Plugins. Your own go in
+~/.config/wiregram/plugins/NAME.lua.
 
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,

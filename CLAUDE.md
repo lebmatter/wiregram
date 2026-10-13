@@ -107,7 +107,8 @@ These are project constraints, not suggestions:
   a card in the chooser's `── Widgets` section under the digest, which
   gives way to the digest when space is short (`internal/tui/widgets.go`).
   Settings' Plugins… row switches them and edits their settings
-  (`internal/tui/plugins.go`). Weather (Open-Meteo) is the first.
+  (`internal/tui/plugins.go`). The built-ins are Weather (Open-Meteo) and Hacker News
+  (the Algolia HN API).
 - Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
