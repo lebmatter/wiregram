@@ -37,7 +37,9 @@ type AccountState struct {
 	Backend    backend.Backend
 	Ctx        context.Context
 	NeedsLogin bool
-	Unseen     int // incoming messages since the user last had this account open
+	// PairDeadline is when a WhatsApp pairing in progress runs out of time.
+	PairDeadline time.Time
+	Unseen       int // incoming messages since the user last had this account open
 }
 
 type Account struct {
@@ -96,9 +98,12 @@ type AccountManager struct {
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
 	Plugins  *plugin.Manager
-	Changed  chan struct{}
-	// agentChanged and inboxChanged mirror Changed for the agent runtime and
-	// the inbox watcher, so no listener takes another's signal.
+	// changed is closed and replaced on every change, so every waiting screen
+	// wakes, including listeners left behind by screens that have quit.
+	changed   chan struct{}
+	changedMu sync.Mutex
+	// agentChanged and inboxChanged signal the agent runtime and the inbox
+	// watcher, so no listener takes another's signal.
 	agentChanged chan struct{}
 	inboxChanged chan struct{}
 	connecting   chan struct{}
@@ -106,8 +111,19 @@ type AccountManager struct {
 	owners       map[int64]*Account
 }
 
+// Changes returns a channel closed at the next change to any account.
+func (m *AccountManager) Changes() <-chan struct{} {
+	m.changedMu.Lock()
+	defer m.changedMu.Unlock()
+	return m.changed
+}
+
 func (m *AccountManager) notify() {
-	for _, ch := range []chan struct{}{m.Changed, m.agentChanged, m.inboxChanged} {
+	m.changedMu.Lock()
+	close(m.changed)
+	m.changed = make(chan struct{})
+	m.changedMu.Unlock()
+	for _, ch := range []chan struct{}{m.agentChanged, m.inboxChanged} {
 		select {
 		case ch <- struct{}{}:
 		default:
@@ -175,7 +191,7 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 }
 
 func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager, error) {
-	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, Changed: make(chan struct{}, 1), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
+	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, changed: make(chan struct{}), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
 	add := func(path string, requireIdentity bool) error {
 		a := &Account{Dir: path, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
 		a.state.Status = "offline"
@@ -856,12 +872,17 @@ func (m *AccountManager) startWhatsApp(parent context.Context, a *Account, promp
 	ctx, cancel := context.WithCancel(parent)
 	a.Cancel, a.Done = cancel, make(chan struct{})
 	a.set(m, func(s *AccountState) { s.Status, s.Notice, s.NeedsLogin = "connecting", "", false })
+	wb.PairDeadline = func(t time.Time) {
+		a.set(m, func(s *AccountState) { s.PairDeadline = t })
+	}
 	go func() {
 		defer close(a.Done)
 		defer m.notify()
-		if err := wb.Authenticate(ctx, prompt, func(err error) {
+		err := wb.Authenticate(ctx, prompt, func(err error) {
 			a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
-		}); err != nil {
+		})
+		a.set(m, func(s *AccountState) { s.PairDeadline = time.Time{} })
+		if err != nil {
 			a.set(m, func(s *AccountState) {
 				s.Status, s.Notice = "offline", textfmt.CleanError(err)
 				if !errors.Is(err, context.Canceled) {

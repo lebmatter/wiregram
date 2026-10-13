@@ -46,9 +46,15 @@ type WaBackend struct {
 	members     map[types.JID][]types.JID
 	recentEmoji []string
 	events      backend.Bus
+	// PairDeadline is told when the pairing socket will close.
+	PairDeadline func(time.Time)
 
 	configDir string
 }
+
+// pairWindow is how long whatsmeow keeps the pairing socket open: it closes it
+// once its six QR codes expire, the first after 60s and the rest after 20s.
+const pairWindow = 160 * time.Second
 
 type waChatEntry struct {
 	jid     types.JID
@@ -91,7 +97,8 @@ func (wa *WaBackend) Capabilities() backend.Capabilities {
 
 func (wa *WaBackend) openStore(ctx context.Context) error {
 	dbPath := filepath.Join(wa.configDir, "whatsapp.db")
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+"?_foreign_keys=on", nil)
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+
+		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", nil)
 	if err != nil {
 		return fmt.Errorf("open WhatsApp session store: %w", err)
 	}
@@ -144,6 +151,9 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 			return fmt.Errorf("unexpected pairing event: %s", item.Event)
 		}
 	}
+	if wa.PairDeadline != nil {
+		wa.PairDeadline(time.Now().Add(pairWindow))
+	}
 
 	phone, err := prompt("Phone number (international, e.g. +91...): ", false)
 	if err != nil {
@@ -172,6 +182,13 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 		case "timeout":
 			wa.Client.Disconnect()
 			return fmt.Errorf("pairing timed out; try again")
+		case "error":
+			wa.Client.Disconnect()
+			return fmt.Errorf("pairing failed: %w", item.Error)
+		case "code":
+		default:
+			wa.Client.Disconnect()
+			return fmt.Errorf("pairing failed: %s", item.Event)
 		}
 	}
 	wa.Client.Disconnect()

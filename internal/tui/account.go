@@ -8,9 +8,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/timer"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -45,8 +47,9 @@ type accountListModel struct {
 type accountsChanged struct{}
 
 func listenAccounts(mgr *account.AccountManager) tea.Cmd {
+	changes := mgr.Changes()
 	return func() tea.Msg {
-		<-mgr.Changed
+		<-changes
 		return accountsChanged{}
 	}
 }
@@ -639,6 +642,9 @@ type loginModel struct {
 	current  *account.LoginPrompt
 	turns    []loginTurn
 	notice   string
+	// pair counts down the time WhatsApp leaves for pairing, from pairFull.
+	pair     *timer.Model
+	pairFull time.Duration
 	backdrop string // the screen sign-in was opened from, faded behind it
 	done     bool
 	width    int
@@ -711,7 +717,21 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if notice := s.Notice; notice != "" {
 			m.notice = notice
 		}
-		return m, listenAccounts(m.mgr)
+		var start tea.Cmd
+		if m.pair == nil && !s.PairDeadline.IsZero() {
+			m.pairFull = time.Until(s.PairDeadline).Round(time.Second)
+			t := timer.New(m.pairFull, timer.WithInterval(time.Second))
+			m.pair, start = &t, t.Init()
+		}
+		return m, tea.Batch(listenAccounts(m.mgr), start)
+
+	case timer.TickMsg, timer.StartStopMsg:
+		if m.pair == nil {
+			return m, nil
+		}
+		t, cmd := m.pair.Update(msg)
+		m.pair = &t
+		return m, cmd
 
 	case loginPromptMsg:
 		m.current = &msg.req
@@ -784,6 +804,12 @@ func (m loginModel) View() tea.View {
 	}
 	var lines []string
 	for _, t := range m.turns {
+		// Long prompts leave no room beside them, so the reply goes below.
+		if 2+labelW+2+textfmt.DisplayWidth(t.reply) > inner {
+			lines = append(lines, m.st.formRow(t.ask, "", labelW, false, false, inner),
+				textfmt.ClipLine("    "+m.st.subtle.Render(t.reply), inner))
+			continue
+		}
 		lines = append(lines, m.st.formRow(t.ask, m.st.subtle.Render(t.reply), labelW,
 			false, false, inner))
 	}
@@ -796,6 +822,15 @@ func (m loginModel) View() tea.View {
 		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
 	} else {
 		lines = append(lines, m.st.subtle.Render("Waiting for server…"))
+	}
+	if m.pair != nil {
+		left := m.pair.Timeout
+		width := max(10, inner-12)
+		full := int(float64(width) * float64(left) / float64(max(time.Second, m.pairFull)))
+		bar := m.st.accent.Render(strings.Repeat("━", full)) +
+			m.st.dim.Render(strings.Repeat("━", width-full))
+		lines = append(lines, "", bar+m.st.subtle.Render(
+			fmt.Sprintf(" %d:%02d left", int(left.Minutes()), int(left.Seconds())%60)))
 	}
 	if m.notice != "" {
 		lines = append(lines, styleError.Render(textfmt.ClipLine(textfmt.Plain(m.notice), inner)))
