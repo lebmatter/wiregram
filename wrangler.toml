@@ -1,0 +1,7 @@
+# Cloudflare Worker serving the website in web/ (gitignored, deployed from a
+# local checkout) as static assets at wiregram.chat: make deploy-web
+name = "wiregram"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./web"
