@@ -68,10 +68,15 @@ type agentPaneModel struct {
 
 type agentPaneClosed struct{}
 
+// agentBotAlert asks the root to show a failed request about a bot as an
+// alert over the screen.
+type agentBotAlert struct{ title, text string }
+
 // agentBotDone ends a request to the server about the bot: done is the
 // notice on success, and rec, when set, is the record to save after it.
 type agentBotDone struct {
 	err  error
+	fail string // the alert's title when err is set
 	done string
 	rec  *agent.AgentRecord
 	gone bool // the bot was deleted; close the pane
@@ -128,14 +133,17 @@ func (m agentPaneModel) rows() []agentRow {
 	return rows
 }
 
-// botOp runs a request to the server about the bot in the background.
-func (m agentPaneModel) botOp(notice string, op func(ctx context.Context) agentBotDone) (
+// botOp runs a request to the server about the bot in the background; a
+// failure is shown as an alert titled fail.
+func (m agentPaneModel) botOp(notice, fail string, op func(ctx context.Context) agentBotDone) (
 	agentPaneModel, tea.Cmd) {
 	m.busy, m.notice = true, notice
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), botTimeout)
 		defer cancel()
-		return op(ctx)
+		done := op(ctx)
+		done.fail = fail
+		return done
 	}
 }
 
@@ -143,8 +151,16 @@ func (m agentPaneModel) botOp(notice string, op func(ctx context.Context) agentB
 func (m agentPaneModel) botDone(msg agentBotDone) (agentPaneModel, tea.Cmd) {
 	m.busy = false
 	if msg.err != nil {
-		m.notice = textfmt.CleanError(msg.err)
-		return m, nil
+		m.notice = ""
+		text := textfmt.CleanError(msg.err)
+		if text != "" {
+			text = strings.ToUpper(text[:1]) + text[1:]
+		}
+		if !strings.HasSuffix(text, ".") {
+			text += "."
+		}
+		alert := agentBotAlert{title: msg.fail, text: text}
+		return m, func() tea.Msg { return alert }
 	}
 	if msg.gone {
 		return m, func() tea.Msg { return agentPaneClosed{} }
@@ -390,7 +406,7 @@ func (m agentPaneModel) saveText(v string) (agentPaneModel, tea.Cmd) {
 			return m, nil
 		}
 		rt, acct := m.mgr.Agents, m.acct
-		return m.botOp("Checking the manager bot…", func(ctx context.Context) agentBotDone {
+		return m.botOp("Checking the manager bot…", "Manager bot not set", func(ctx context.Context) agentBotDone {
 			mgr, err := rt.SetManager(ctx, acct, v)
 			return agentBotDone{err: err, done: "Manager bot @" + mgr.Username + " set"}
 		})
@@ -427,7 +443,7 @@ func (m agentPaneModel) rename(next agent.AgentRecord) (agentPaneModel, tea.Cmd)
 		}
 	}
 	rt, acct := m.mgr.Agents, m.acct
-	return m.botOp("Renaming on the server…", func(ctx context.Context) agentBotDone {
+	return m.botOp("Renaming on the server…", "Bot not renamed", func(ctx context.Context) agentBotDone {
 		err := rt.Rename(ctx, acct, next.ID, next.Handle, next.Name)
 		return agentBotDone{err: err, done: "Renamed", rec: &next}
 	})
@@ -435,7 +451,7 @@ func (m agentPaneModel) rename(next agent.AgentRecord) (agentPaneModel, tea.Cmd)
 
 func (m agentPaneModel) register() (agentPaneModel, tea.Cmd) {
 	rt, acct, id, handle := m.mgr.Agents, m.acct, m.rec.ID, m.rec.Handle
-	return m.botOp("Registering @"+handle+"…", func(ctx context.Context) agentBotDone {
+	return m.botOp("Registering @"+handle+"…", "Bot not registered", func(ctx context.Context) agentBotDone {
 		err := rt.Register(ctx, acct, id)
 		return agentBotDone{err: err, done: "Registered @" + handle}
 	})
@@ -443,14 +459,14 @@ func (m agentPaneModel) register() (agentPaneModel, tea.Cmd) {
 
 func (m agentPaneModel) rotate() (agentPaneModel, tea.Cmd) {
 	rt, acct, id := m.mgr.Agents, m.acct, m.rec.ID
-	return m.botOp("Rotating the token…", func(ctx context.Context) agentBotDone {
+	return m.botOp("Rotating the token…", "Token not rotated", func(ctx context.Context) agentBotDone {
 		return agentBotDone{err: rt.RotateToken(ctx, acct, id), done: "New token in use"}
 	})
 }
 
 func (m agentPaneModel) unregister() (agentPaneModel, tea.Cmd) {
 	rt, acct, id, handle := m.mgr.Agents, m.acct, m.rec.ID, m.rec.Handle
-	return m.botOp("Unregistering @"+handle+"…", func(ctx context.Context) agentBotDone {
+	return m.botOp("Unregistering @"+handle+"…", "Bot not unregistered", func(ctx context.Context) agentBotDone {
 		return agentBotDone{err: rt.Unregister(ctx, acct, id), done: "@" + handle + " disabled"}
 	})
 }
@@ -538,9 +554,9 @@ func (m agentPaneModel) deleteAgent() (agentPaneModel, tea.Cmd) {
 		return m, func() tea.Msg { return agentPaneClosed{} }
 	}
 	// The server goes first: a deleted bot would leave no way to disable it.
-	return m.botOp("Disabling the bot on the server…", func(ctx context.Context) agentBotDone {
+	return m.botOp("Disabling the bot on the server…", "Bot not deleted", func(ctx context.Context) agentBotDone {
 		if err := rt.Unregister(ctx, acct, id); err != nil {
-			return agentBotDone{err: fmt.Errorf("not deleted, the server said: %w", err)}
+			return agentBotDone{err: fmt.Errorf("the server said: %w", err)}
 		}
 		return agentBotDone{err: del(), gone: true}
 	})

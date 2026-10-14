@@ -370,6 +370,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m, nil
 
+	case agentBotAlert:
+		m.alert = newAlertModal(m.st, msg.title, msg.text)
+		return m, nil
+
 	case agentBotDone:
 		if !m.agentOpen {
 			return m, nil

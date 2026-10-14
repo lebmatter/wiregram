@@ -241,6 +241,8 @@ These are project constraints, not suggestions:
   in with `ConnectBot` (`internal/account/bots.go`) and answers DMs sent to the bot as the
   bot (`ConvKey.Bot`); every DM to the bot is its own, outside the claims rule. Renames go
   to the server first; deleting the bot or removing its account disables it there first.
+  These requests run in the background; a failure is an alert over the screen
+  (`agentBotAlert`), success a footer notice.
   Messages from other bots are never answered. A registered bot's Inbox row
   (`internal/tui/inbox.go`) opens its private chats as Unread-style cards over the bot's
   connection (`BotBackend`); a chat opened there runs on that connection with its own
