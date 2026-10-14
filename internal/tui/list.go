@@ -343,12 +343,15 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(m.active, true, false, focused, width))
 	}
 	var pending map[backend.ChatID]bool
+	answers := func(backend.ChatEntry) bool { return false }
 	if m.mgr != nil && m.mgr.Agents != nil && m.active != nil {
-		pending = m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active))
+		key := m.mgr.AccountKey(m.active)
+		pending = m.mgr.Agents.PendingChats(key)
+		answers = func(e backend.ChatEntry) bool { return m.mgr.Agents.Answers(key, e) }
 	}
 	for _, entry := range m.entries {
 		mark := ""
-		if pending[entry.ID] {
+		if pending[entry.ID] || answers(entry) {
 			mark = m.st.agent.Render(agentIcon)
 		}
 		rows = append(rows, "    "+m.st.chatListLine(entry, mark, index == m.selected, focused,

@@ -611,8 +611,8 @@ func (s *styles) chatListLine(entry backend.ChatEntry, mark string, selected, fo
 	return row + pill
 }
 
-// agentIcon marks Chat Agents: an account that has one, a chat with a
-// suggestion waiting, and the messages an agent sent.
+// agentIcon marks Chat Agents: an account that has one, a DM it answers or
+// with a suggestion waiting, and the messages an agent sent.
 const agentIcon = "✦"
 
 // agentMark is the agent icon, dim while the agent is paused.

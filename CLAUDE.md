@@ -211,8 +211,8 @@ These are project constraints, not suggestions:
   agent through the scripted wizard (`internal/tui/agentwiz.go`), then opens the agent pane
   (`internal/tui/agentpane.go`) in the chat's place: Settings-style rows, including which
   private chats it answers (all, or those in `agent_chats`). The theme's agent colour
-  (violet, `styles.agent`) and `agentIcon` `✦` mark accounts with an agent, chats with a
-  suggestion waiting and the messages an agent sent; those are recorded in `agent_sent`
+  (violet, `styles.agent`) and `agentIcon` `✦` mark accounts with an agent, the DMs it
+  answers while on, chats with a suggestion waiting and the messages an agent sent; those are recorded in `agent_sent`
   and drawn with `✦ NAME` in the nick column (`Message.Agent`). An "ask me first" agent's
   draft is a card over the composer (`suggestionCard`, `internal/tui/chat.go`): Approve
   (^Y) sends it as the agent, Edit (^E) moves it into the composer as the user's own,

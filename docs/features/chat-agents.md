@@ -98,7 +98,8 @@ rows; <kbd>Enter</kbd> toggles one. If the last reply failed, a line on top says
 <kbd>Esc</kbd> goes back, and <kbd>Tab</kbd> moves focus as usual.
 
 In the sidebar a violet ✦ follows the account's name (dim while the agent is paused),
-and the account chooser shows it beside the agent's name.
+and the account chooser shows it beside the agent's name. While the agent is on, each
+private chat it answers gets a ✦ after its title too.
 
 ## Approving replies
 

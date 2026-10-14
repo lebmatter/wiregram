@@ -172,6 +172,17 @@ func (rt *agentRuntime) AgentFor(a *Account) (agent.AgentRecord, bool) {
 	return rec, ok
 }
 
+// Answers reports whether the account's agent is on and answers entry, a DM.
+func (rt *agentRuntime) Answers(accountKey string, entry backend.ChatEntry) bool {
+	if !entry.IsDM || entry.IsSelf {
+		return false
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	ag := rt.agents[rt.bindings[accountKey]]
+	return ag != nil && (ag.record.AllChats || ag.chats[entry.ID.Id])
+}
+
 // Changed signals the UI when suggestions or agent problems change.
 func (rt *agentRuntime) Changed() <-chan struct{} { return rt.changed }
 

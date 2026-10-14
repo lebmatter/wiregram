@@ -52,8 +52,8 @@ Chat Agents answer an account's incoming private messages through an
 OpenAI-compatible provider, added in Settings > AI providers. Each account
 but email can have one: the row under its Search… reads New agent…, then
 Agent: NAME, which opens the agent's settings in place of the chat. A violet
-✦ marks accounts with an agent, chats with a reply waiting for approval, and
-the messages an agent sent. Messages go to the provider.
+✦ marks accounts with an agent, the private chats it answers while on, chats
+with a reply waiting for approval, and the messages an agent sent. Messages go to the provider.
 
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,
