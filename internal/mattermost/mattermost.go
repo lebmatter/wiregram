@@ -242,7 +242,7 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	email, password = strings.TrimSpace(email), strings.TrimSpace(password)
 	resp, err := mb.login(ctx, email, password, "")
 	var apiErr *mmAPIError
-	if errors.As(err, &apiErr) && apiErr.ID == mfaRequiredID {
+	if errors.As(err, &apiErr) && apiErr.mfaRequired() {
 		code, perr := prompt("Authenticator code: ", false)
 		if perr != nil {
 			return fmt.Errorf("read authenticator code: %w", perr)
@@ -266,16 +266,19 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	return nil
 }
 
-// mfaRequiredID is the error Mattermost returns from /users/login when the
-// account has MFA on and the request carried no valid code.
-const mfaRequiredID = "mfa.validate_token.authenticate.app_error"
-
 type mmAPIError struct {
 	ID      string `json:"id"`
 	Message string `json:"message"`
 }
 
 func (e *mmAPIError) Error() string { return "login failed: " + e.Message }
+
+// mfaRequired reports a login refused for lacking an MFA code; depending on
+// the server version an empty code fails to parse or fails to validate.
+func (e *mmAPIError) mfaRequired() bool {
+	return e.ID == "mfa.validate_token.authenticate.app_error" ||
+		e.ID == "api.user.check_user_mfa.bad_code.app_error"
+}
 
 // login posts the credentials, with the MFA code when given, and returns the
 // successful response for the caller to read and close.
