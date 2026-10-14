@@ -18,7 +18,7 @@ never load inline.
 
 ## Videos and other files
 
-Videos, video notes and GIFs get a small card with a play mark beside their details.
+Videos, video notes and GIFs get a small card with a colour play-button icon beside their details.
 Nothing is downloaded until you open it.
 
 Other attachments show as dim tags, such as:

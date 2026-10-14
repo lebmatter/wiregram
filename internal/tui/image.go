@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"image"
@@ -166,7 +167,15 @@ func (s *styles) imageText(msg backend.Message, c *chatImage, indent, lineWidth,
 	return "", card
 }
 
-// videoCard draws a video as a small card with a play mark beside its
+// videoIcon is a play button drawn in half-blocks, made from
+// assets/video-icon.png (Noto Emoji, Apache 2.0) at 10x5 cells.
+//
+//go:embed video-icon.ans
+var videoIcon string
+
+const videoIconWidth = 10
+
+// videoCard draws a video as a small card with a play-button icon beside its
 // details and the caption below, so videos stand out while scrolling; nil
 // for any other message or when it does not fit.
 func (s *styles) videoCard(msg backend.Message, indent, lineWidth int) []string {
@@ -176,23 +185,23 @@ func (s *styles) videoCard(msg backend.Message, indent, lineWidth int) []string 
 		return nil
 	}
 	width := min(lineWidth-indent, 48)
-	if width < 16 {
+	if width < videoIconWidth+16 {
 		return nil
 	}
-	videoArt := []string{"|\\ ", "| >", "|/ "} // a play mark in place of a frame
+	videoArt := strings.Split(strings.TrimSuffix(videoIcon, "\n"), "\n")
 	label := textfmt.Plain(msg.MediaLabel)
 	detail := strings.TrimSpace(label[strings.Index(label, "]")+1:])
 	var details []string
 	for _, part := range strings.Split(detail, ", ") {
-		details = append(details, textfmt.WrapLineIndent(part, width-9, 0)...)
+		details = append(details, textfmt.WrapLineIndent(part, width-7-videoIconWidth, 0)...)
 	}
 	var body []string
 	for i := range max(len(videoArt), len(details)) {
-		art := "   "
+		art := strings.Repeat(" ", videoIconWidth)
 		if i < len(videoArt) {
 			art = videoArt[i]
 		}
-		line := " " + s.accent.Render(art)
+		line := " " + art
 		if i < len(details) {
 			line += "  " + s.subtle.Render(strings.TrimLeft(details[i], " "))
 		}
