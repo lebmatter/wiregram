@@ -637,7 +637,13 @@ func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key Con
 	if err := rt.Db.RecordSent(key.AccountKey, key.Chat.Id, sent.ID, name); err != nil {
 		return err
 	}
-	return rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id, "", sent, sent.Text, true)
+	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id, "", sent, sent.Text, true); err != nil {
+		return err
+	}
+	// Telegram never echoes a session's own sends, so the open chat would miss
+	// the reply. Backends that do echo repeat the ID, which the chat dedupes.
+	b.Events().Publish(backend.Event{Kind: backend.EventMessage, Chat: entry.ID, DM: true, Message: &sent})
+	return nil
 }
 
 func (rt *agentRuntime) buildMessages(ag *runningAgent, history []agent.AgentLoggedMessage) ([]aiMessage, error) {
