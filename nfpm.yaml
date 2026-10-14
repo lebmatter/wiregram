@@ -1,4 +1,5 @@
-# Linux packages built by the release workflow from dist/wiregram-linux-$GOARCH.
+# Linux packages built by the release workflow, which copies
+# dist/wiregram-linux-$GOARCH to pkg/wiregram for each arch.
 name: wiregram
 arch: ${GOARCH}
 platform: linux
@@ -11,7 +12,7 @@ homepage: https://github.com/lebmatter/wiregram
 license: AGPL-3.0
 
 contents:
-  - src: dist/wiregram-linux-${GOARCH}
+  - src: pkg/wiregram
     dst: /usr/bin/wiregram
     file_info:
       mode: 0755

@@ -33,8 +33,11 @@ jobs:
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           export VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p pkg
           for GOARCH in amd64 arm64; do
             export GOARCH
+            # nfpm does not expand env vars in contents src, so stage a fixed path.
+            cp "dist/wiregram-linux-${GOARCH}" pkg/wiregram
             nfpm package -f nfpm.yaml -p deb -t "dist/wiregram-linux-${GOARCH}.deb"
             nfpm package -f nfpm.yaml -p rpm -t "dist/wiregram-linux-${GOARCH}.rpm"
           done
