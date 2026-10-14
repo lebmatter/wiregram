@@ -88,7 +88,10 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		if active.BackendType == "telegram" {
 			needsAuth = needsAuth || s.Identity.ID == 0
 		}
+		// A sign-in that succeeds for a new account ends in the welcome modal.
+		welcome := false
 		if needsAuth {
+			welcome = active.NeverAuthenticated()
 			if err := tuiLogin(ctx, m, active, ""); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -109,7 +112,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			s = active.Snapshot()
 		}
 		if s.Backend != nil && s.Status == "online" {
-			err := runModes(s.Ctx, m, active, s.Backend, active.Histories)
+			err := runModes(s.Ctx, m, active, s.Backend, active.Histories, welcome)
 			if err == nil {
 				return nil
 			}
@@ -176,7 +179,7 @@ type accountSwitch struct{ to *account.Account }
 
 func (accountSwitch) Error() string { return "switch account" }
 
-func runModes(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string) error {
+func runModes(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, welcome bool) error {
 	for {
 		entries, archiveUnread, err := b.Dialogs(ctx, false)
 		if err != nil {
@@ -189,6 +192,6 @@ func runModes(ctx context.Context, mgr *account.AccountManager, active *account.
 			}
 			continue
 		}
-		return tuiSelectChat(ctx, mgr, active, b, histories, entries, archiveUnread)
+		return tuiSelectChat(ctx, mgr, active, b, histories, entries, archiveUnread, welcome)
 	}
 }

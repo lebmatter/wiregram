@@ -1,0 +1,62 @@
+package tui
+
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+
+	"wiregram/internal/backend"
+	"wiregram/internal/textfmt"
+)
+
+// welcomeModal greets an account the first time it opens after being added,
+// with the keys to get around. Any key or click closes it.
+type welcomeModal struct {
+	st    *styles
+	label string
+	keys  []helpKey
+}
+
+const welcomeModalWidth = 44
+
+func newWelcomeModal(st *styles, b backend.Backend, twoPane bool) welcomeModal {
+	keys := []helpKey{
+		{"↑↓ k j", "select"},
+		{"⏎", "open"},
+		{"esc", "back"},
+	}
+	if twoPane {
+		keys = append(keys, helpKey{"tab", "list ↔ chat"})
+	}
+	keys = append(keys, helpKey{"u", "unread"})
+	if _, ok := b.(backend.MentionFetcher); ok {
+		keys = append(keys, helpKey{"m", "mentions"})
+	}
+	keys = append(keys, helpKey{"a", "accounts"},
+		helpKey{"", ""},
+		helpKey{"/", "search users"},
+		helpKey{"ctrl+f", "search in chat"})
+	return welcomeModal{st: st, label: textfmt.Plain(b.AccountLabel()), keys: keys}
+}
+
+func (m welcomeModal) size() (int, int) {
+	return welcomeModalWidth, 8 + len(m.keys) // borders, account, blanks, headings, hint
+}
+
+func (m welcomeModal) View() string {
+	w, h := m.size()
+	glyph := lipgloss.NewStyle().Foreground(colorGreen).Render("●")
+	body := []string{glyph + " " + m.label, "", m.st.subtle.Render("Navigate")}
+	for _, k := range m.keys {
+		if k.key == "" {
+			body = append(body, "", m.st.subtle.Render("Search"))
+			continue
+		}
+		pad := strings.Repeat(" ", max(1, 9-textfmt.DisplayWidth(k.key)))
+		body = append(body, "  "+m.st.accent.Render(k.key)+pad+k.desc)
+	}
+	body = append(body, "", m.st.dim.Render("Press any key to start"))
+	return renderBox("Account connected", body, w, h, m.st.accentColor)
+}
+
+var welcomeModalHelp = []helpKey{{"⏎", "start"}}

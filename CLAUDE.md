@@ -201,6 +201,8 @@ These are project constraints, not suggestions:
   server URL) and the sign-in prompts are form modals centred over
   the screen they were opened from, faded behind it (`styles.overlay`): answered
   steps as label and value rows, then the current question (`wizardModel.formView`).
+- A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
+  over its screen, faded behind it: navigation and search keys; any key or click closes it.
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat. Email publishes no DM events,
   so agents never answer mail.

@@ -48,6 +48,8 @@ type tuiModel struct {
 	searchOpen    bool
 	unread        unreadModel
 	unreadOpen    bool
+	// welcome is up the first time an account opens after being added.
+	welcome *welcomeModal
 	// backToMentions sends Esc from the open chat back to Mentions, the
 	// view it was opened from, rather than Unread.
 	backToMentions bool
@@ -232,9 +234,16 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, chipsTick()
 
 	case tea.MouseClickMsg:
+		if m.welcome != nil {
+			m.welcome = nil
+			return m, nil
+		}
 		return m.handleClick(msg.Mouse())
 
 	case tea.MouseWheelMsg:
+		if m.welcome != nil {
+			return m, nil
+		}
 		return m.handleWheel(msg)
 
 	case busEvent:
@@ -344,6 +353,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.welcome != nil {
+			m.welcome = nil
+			return m, nil
+		}
 		return m.handleKey(msg)
 
 	case tea.PasteMsg:
@@ -646,6 +659,9 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) footer() string {
+	if m.welcome != nil {
+		return m.st.footer(welcomeModalHelp, "", m.width)
+	}
 	if m.chatOpen && !m.searchOpen && (m.focus == focusChat || m.chat.opening != nil) {
 		if line, ok := m.chat.footerLine(); ok {
 			return truncate(line, m.width)
@@ -737,6 +753,11 @@ func (m tuiModel) render() string {
 		x, y, _, _ := m.searchRect()
 		body = m.st.fadeUnder(body, m.search.View(), x, y)
 	}
+	if m.welcome != nil {
+		w, h := m.welcome.size()
+		x, y := modalRect(m.width, bodyHeight, w, h)
+		body = m.st.fadeUnder(body, m.welcome.View(), x, y)
+	}
 	return body + "\n" + m.footer()
 }
 
@@ -786,12 +807,16 @@ func (m tuiModel) emptyPane(width, height int) string {
 
 // tuiSelectChat runs one account's main screen until the user quits (nil),
 // asks for the account picker, or switches account.
-func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) error {
+func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int, welcome bool) error {
 	events := b.Events().Subscribe(backend.Filter{})
 	defer events.Close()
 	active.ClearUnseen()
 	defer active.ClearUnseen()
 	m := newTuiModel(ctx, mgr, active, b, events, histories, entries, archiveUnread)
+	if welcome {
+		w := newWelcomeModal(m.st, b, m.twoPane())
+		m.welcome = &w
+	}
 	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil {
 		return fmt.Errorf("run TUI: %w", err)
