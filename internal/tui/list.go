@@ -91,8 +91,12 @@ func (m chatListModel) actions() []listAction {
 	if m.archived {
 		archive = backend.ChatEntry{Title: "Back to chats"}
 	}
+	search := "Search users…"
+	if m.caps.ChannelSearch {
+		search = "Users & channels…"
+	}
 	return append(acts, listAction{archive, chatListArchiveToggle{}},
-		listAction{backend.ChatEntry{Title: "Search users…"}, chatListSearch{}})
+		listAction{backend.ChatEntry{Title: search}, chatListSearch{}})
 }
 
 // others splits the accounts other than the active one into those listed

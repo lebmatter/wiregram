@@ -77,7 +77,8 @@ Keyboard shortcuts:
   Chat list
     Up/k, Down/j      Select chat or account
     Enter             Open chat, or switch to the selected account
-    /                 Search users (a modal over the screen)
+    /                 Search users (a modal over the screen); on Mattermost
+                      also channels, joining a public one when picked
     u                 Unread: cards for every chat with unread messages
     m                 Mentions: cards for the groups and channels with the
                       latest messages mentioning you (not email)

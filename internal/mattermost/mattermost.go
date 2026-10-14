@@ -163,6 +163,7 @@ func (mb *MmBackend) Capabilities() backend.Capabilities {
 		Pin:           true,
 		Upload:        true,
 		Search:        true,
+		ChannelSearch: true,
 		Typing:        true,
 		DeleteChat:    false,
 	}
@@ -1283,7 +1284,73 @@ func (mb *MmBackend) UserSearchBase(ctx context.Context, recentChats []backend.C
 			}
 		}
 	}
-	return backend.UserSearchBase{Heading: "Recent DMs", Base: base, Local: base}, nil
+	channels, err := mb.joinedChannels(ctx)
+	local := append(base, channels...)
+	return backend.UserSearchBase{Heading: "Recent DMs", Base: base, Local: local}, err
+}
+
+// mmChannelChoice is a channel row in the search; one the user has not
+// joined is joined when picked, as Mattermost's Browse channels does.
+type mmChannelChoice struct {
+	ch     mmChannel
+	joined bool
+}
+
+func (mb *MmBackend) channelCandidate(ch mmChannel, teamName string, joined bool) backend.UserCandidate {
+	name := ch.DisplayName
+	if name == "" {
+		name = ch.Name
+	}
+	label := name + "  ~" + ch.Name
+	if ch.Type == "G" {
+		label = name + "  group"
+	}
+	if teamName != "" {
+		label += " · " + teamName
+	}
+	if !joined {
+		label += " · join"
+	}
+	match := strings.ToLower(ch.Name + " " + ch.DisplayName)
+	return backend.UserCandidate{Key: ch.ID, Label: label, Match: match,
+		Raw: mmChannelChoice{ch, joined}}
+}
+
+func (mb *MmBackend) teams(ctx context.Context) ([]mmTeam, error) {
+	var teams []mmTeam
+	if err := mb.apiJSON(ctx, "GET", "/users/me/teams", nil, &teams); err != nil {
+		return nil, fmt.Errorf("load teams: %w", err)
+	}
+	return teams, nil
+}
+
+// joinedChannels lists every channel and group DM the user is in, for the
+// search to filter locally.
+func (mb *MmBackend) joinedChannels(ctx context.Context) ([]backend.UserCandidate, error) {
+	teams, err := mb.teams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	teamNames := make(map[string]string, len(teams))
+	for _, team := range teams {
+		teamNames[team.ID] = team.DisplayName
+	}
+	var out []backend.UserCandidate
+	for page := 0; ; page++ {
+		var batch []mmChannel
+		path := fmt.Sprintf("/users/me/channels?page=%d&per_page=200", page)
+		if err := mb.apiJSON(ctx, "GET", path, nil, &batch); err != nil {
+			return out, fmt.Errorf("load channels: %w", err)
+		}
+		for _, ch := range batch {
+			if ch.Type != "D" {
+				out = append(out, mb.channelCandidate(ch, teamNames[ch.TeamID], true))
+			}
+		}
+		if len(batch) < 200 {
+			return out, nil
+		}
+	}
 }
 
 func (mb *MmBackend) UserSearchRemote(ctx context.Context, query string) ([]backend.UserCandidate, error) {
@@ -1297,15 +1364,59 @@ func (mb *MmBackend) UserSearchRemote(ctx context.Context, query string) ([]back
 			out = append(out, mb.userCandidate(u))
 		}
 	}
+	// Public channels in the user's teams; joined ones are already listed
+	// locally under the same key, so these rows are the ones to join.
+	teams, err := mb.teams(ctx)
+	if err != nil {
+		return out, err
+	}
+	for _, team := range teams {
+		var channels []mmChannel
+		path := fmt.Sprintf("/teams/%s/channels/search", team.ID)
+		if err := mb.apiJSON(ctx, "POST", path, map[string]string{"term": query}, &channels); err != nil {
+			return out, fmt.Errorf("search channels: %w", err)
+		}
+		for _, ch := range channels {
+			out = append(out, mb.channelCandidate(ch, team.DisplayName, false))
+		}
+	}
 	return out, nil
 }
 
 func (mb *MmBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandidate) (backend.ChatEntry, error) {
-	user, ok := c.Raw.(mmUser)
-	if !ok {
-		return backend.ChatEntry{}, fmt.Errorf("open chat: unexpected search result")
+	switch raw := c.Raw.(type) {
+	case mmUser:
+		return mb.openDM(ctx, raw)
+	case mmChannelChoice:
+		return mb.openChannel(ctx, raw)
 	}
-	return mb.openDM(ctx, user)
+	return backend.ChatEntry{}, fmt.Errorf("open chat: unexpected search result")
+}
+
+func (mb *MmBackend) openChannel(ctx context.Context, choice mmChannelChoice) (backend.ChatEntry, error) {
+	ch := choice.ch
+	if !choice.joined {
+		path := "/channels/" + ch.ID + "/members"
+		if err := mb.apiJSON(ctx, "POST", path, map[string]string{"user_id": mb.UserID}, nil); err != nil {
+			return backend.ChatEntry{}, fmt.Errorf("join channel %s: %w", ch.DisplayName, err)
+		}
+	}
+	teamName := ""
+	if teams, err := mb.teams(ctx); err == nil {
+		for _, team := range teams {
+			if team.ID == ch.TeamID {
+				teamName = team.DisplayName
+			}
+		}
+	}
+	isDM := ch.Type == "G"
+	return backend.ChatEntry{
+		ID:      backend.ChatID{Backend: "mattermost", Id: ch.ID},
+		Title:   mb.channelTitle(ctx, ch, teamName),
+		IsDM:    isDM,
+		IsGroup: !isDM,
+		Raw:     ch,
+	}, nil
 }
 
 // CanMention is true for channels and group DMs; a DM has no one else to name.

@@ -33,10 +33,12 @@ type userSearchModel struct {
 	opening bool
 	forward *forwardRequest
 	mention *backend.ChatEntry // the group chat being written in
-	busy    bool               // loading, searching or opening
-	status  string             // the last error
-	width   int
-	height  int
+	// channels is set when the backend lists channels beside people.
+	channels bool
+	busy     bool   // loading, searching or opening
+	status   string // the last error
+	width    int
+	height   int
 }
 
 // forwardRequest is a message waiting for a recipient.
@@ -108,6 +110,10 @@ func newMentionSearch(ctx context.Context, st *styles, b backend.Backend, mn bac
 
 func newUserSearch(ctx context.Context, st *styles, b backend.Backend, recent []backend.ChatEntry) (userSearchModel, tea.Cmd) {
 	m := newSearchModel(ctx, st, b)
+	if b.Capabilities().ChannelSearch {
+		m.channels = true
+		m.input.Placeholder = "Name, username or channel…"
+	}
 	load := func() tea.Msg {
 		base, err := b.UserSearchBase(ctx, recent)
 		return userSearchLoaded{base, err}
@@ -381,7 +387,11 @@ func (m userSearchModel) View() string {
 		}
 	}
 	if len(items) == 0 && !m.busy {
-		body = append(body, m.st.dim.Render("  no one found"))
+		empty := "  no one found"
+		if m.channels {
+			empty = "  nothing found"
+		}
+		body = append(body, m.st.dim.Render(empty))
 	}
 	title := "Search users"
 	switch {
@@ -389,6 +399,8 @@ func (m userSearchModel) View() string {
 		title = "Forward to"
 	case m.mention != nil:
 		title = "Mention"
+	case m.channels:
+		title = "Search users & channels"
 	}
 	return renderBox(title, body, m.width, m.height, m.st.accentColor)
 }

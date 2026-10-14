@@ -118,6 +118,8 @@ type Capabilities struct {
 	Pin           bool
 	Upload        bool
 	Search        bool
+	// ChannelSearch puts channels beside people in the user search.
+	ChannelSearch bool
 	Typing        bool
 	DeleteChat    bool
 	Archive       bool
