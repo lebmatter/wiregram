@@ -350,12 +350,9 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		answers = func(e backend.ChatEntry) bool { return m.mgr.Agents.Answers(key, e) }
 	}
 	for _, entry := range m.entries {
-		mark := ""
-		if pending[entry.ID] || answers(entry) {
-			mark = m.st.agent.Render(agentIcon)
-		}
-		rows = append(rows, "    "+m.st.chatListLine(entry, mark, index == m.selected, focused,
-			max(1, width-4)))
+		agent := pending[entry.ID] || answers(entry)
+		rows = append(rows, "    "+m.st.chatListLine(entry, agent, "", index == m.selected,
+			focused, max(1, width-4)))
 		index++
 	}
 	if len(m.entries) == 0 {
@@ -364,7 +361,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
 
 	for _, a := range m.actions() {
-		line := m.st.chatListLine(a.entry, a.mark, index == m.selected, focused, max(1, width-4))
+		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused, max(1, width-4))
 		if index != m.selected {
 			line = m.st.subtle.Render(line)
 		}
@@ -375,7 +372,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
 		index++
 	}
-	manage := m.st.chatListLine(backend.ChatEntry{Title: "Settings…"}, "", index == m.selected,
+	manage := m.st.chatListLine(backend.ChatEntry{Title: "Settings…"}, false, "", index == m.selected,
 		focused, width)
 	if index != m.selected {
 		manage = m.st.dim.Render(manage)

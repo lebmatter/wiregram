@@ -99,11 +99,11 @@ rows; <kbd>Enter</kbd> toggles one. If the last reply failed, a line on top says
 
 In the sidebar a violet ✦ follows the account's name (dim while the agent is paused),
 and the account chooser shows it beside the agent's name. While the agent is on, each
-private chat it answers gets a ✦ after its title too.
+private chat it answers gets a ✦ before its title.
 
 ## Approving replies
 
-With **Ask me first**, a chat whose agent has a reply waiting gets a ✦ after its title in
+With **Ask me first**, a chat whose agent has a reply waiting gets a ✦ before its title in
 the sidebar. In the open chat a violet **✦ Agent suggests** card sits above the composer
 with the reply:
 

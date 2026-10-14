@@ -187,7 +187,7 @@ func (m digestModel) card(a *account.Account, width int) string {
 		lines = []string{fmt.Sprintf("%d unread in %d %s", c.total, c.count,
 			plural(c.count, "chat", "chats"))}
 		for _, e := range c.chats {
-			lines = append(lines, m.st.chatListLine(e, "", false, false, width-4))
+			lines = append(lines, m.st.chatListLine(e, false, "", false, false, width-4))
 		}
 	}
 	return renderBox(title, lines, width, digestCardH, border)

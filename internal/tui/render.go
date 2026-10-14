@@ -587,9 +587,11 @@ func truncate(text string, width int) string {
 	return textfmt.ClipLine(text, width-1) + "…"
 }
 
-// chatListLine is a chat row: the title, then mark (such as an agent's
-// pending suggestion) and the unread pill at the right edge.
-func (s *styles) chatListLine(entry backend.ChatEntry, mark string, selected, focused bool, width int) string {
+// chatListLine is a chat row: the title, led by the agent icon when agent is
+// set (an agent answers the chat or has a suggestion waiting), then mark and
+// the unread pill at the right edge.
+func (s *styles) chatListLine(entry backend.ChatEntry, agent bool, mark string, selected,
+	focused bool, width int) string {
 	pill := ""
 	if entry.Unread > 0 {
 		pill = " " + s.badge.Render(fmt.Sprintf(" %d ", entry.Unread))
@@ -601,14 +603,24 @@ func (s *styles) chatListLine(entry backend.ChatEntry, mark string, selected, fo
 	if selected {
 		marker = "> "
 	}
-	row := marker + truncate(textfmt.Plain(entry.Title), max(1, width-2-textfmt.DisplayWidth(pill)))
-	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(pill)-textfmt.DisplayWidth(row)))
-	if selected && focused {
-		row = s.selectedRow.Render(row)
-	} else if selected {
-		row = styleTitle.Render(row)
+	lead := ""
+	if agent {
+		lead = agentIcon + " "
 	}
-	return row + pill
+	room := max(1, width-2-textfmt.DisplayWidth(lead)-textfmt.DisplayWidth(pill))
+	rest := truncate(textfmt.Plain(entry.Title), room)
+	rest += strings.Repeat(" ", max(0, room-textfmt.DisplayWidth(rest)))
+	plain := lipgloss.NewStyle()
+	switch {
+	case selected && focused:
+		plain = s.selectedRow
+	case selected:
+		plain = styleTitle
+	}
+	if lead != "" {
+		lead = s.agent.Inherit(plain).Render(lead)
+	}
+	return plain.Render(marker) + lead + plain.Render(rest) + pill
 }
 
 // agentIcon marks Chat Agents: an account that has one, a DM it answers or
