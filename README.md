@@ -56,6 +56,25 @@ on the accounts you connect to them. They work with any OpenAI-compatible provid
 draft replies for you to approve or answer on their own, and never reply in groups or start
 a conversation. Conversations are sent to the provider you configure.
 
+## Command line
+
+Scripts and AI agents can read and send messages without the TUI. Output is one JSON
+object per line.
+
+```sh
+wiregram accounts                                   # backend, account, label, status
+wiregram chats mattermost alice                     # chat ID, title, kind, unread
+wiregram stream                                     # incoming messages, every account
+wiregram stream mattermost alice bob                # one account, or one chat
+wiregram send mattermost alice bob "On my way"      # or pipe the message on stdin
+wiregram reset                                      # sign out everywhere, delete all data
+```
+
+Accounts are named by the Telegram phone number, Mattermost username, Matrix ID or email
+address. Sign in to them in the app first. The commands can run beside the app. WhatsApp
+is left out because it allows only one connection. Agents can learn the commands from
+[`skills/wiregram/SKILL.md`](skills/wiregram/SKILL.md).
+
 ## Developers
 
 Wiregram is free and open source software. See [CLAUDE.md](CLAUDE.md) for the project rules

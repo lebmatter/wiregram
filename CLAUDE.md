@@ -13,7 +13,10 @@ as ↑/↓ would, without moving focus. A click on a row selects it and acts as 
 a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`;
 a left click elsewhere on a message selects it and a right click on a message opens its
 actions modal. The login and connecting
-screens leave the mouse to the terminal. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
+screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|reset`
+(`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend
+and handle (`Account.Handle`); WhatsApp is refused there since a second connection would
+replace the app's. `skills/wiregram/SKILL.md` teaches agents to use them. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
 
 ## Build
 
@@ -219,7 +222,8 @@ These are project constraints, not suggestions:
 ## Architecture
 
 ```
-cmd/wiregram/        main(): flags, database and config load, hands off to tui
+cmd/wiregram/        main(): flags, database and config load, hands off to tui;
+                     cli.go: the non-interactive commands
 internal/
   textfmt/           pure text helpers: plain(), wrapping, cell widths, nick colours
   halfblock/         decodes, scales and draws images as truecolor half-blocks
@@ -241,6 +245,7 @@ internal/
                      account-owned agent runtime
   tui/               BubbleTea screens and the account/mode loop (run.go)
 docs/                design notes and plans
+skills/wiregram/     SKILL.md for AI agents using the CLI commands
 assets/              logo and other static files
 ```
 

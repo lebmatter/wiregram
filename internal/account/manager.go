@@ -91,6 +91,27 @@ func (a *Account) Label() string {
 	return fmt.Sprintf("[TG] %s (+%s)", textfmt.Plain(s.Identity.Name), strings.TrimPrefix(textfmt.Plain(s.Identity.Phone), "+"))
 }
 
+// Handle is the name the user knows the account by: the Telegram phone number,
+// the Mattermost username, the Matrix ID or the email address. It is empty
+// before the first sign-in.
+func (a *Account) Handle() string {
+	switch {
+	case a.BackendType == "mattermost" && a.mmBackend != nil:
+		return a.mmBackend.Username
+	case a.BackendType == "matrix" && a.mxBackend != nil:
+		return a.mxBackend.UserID
+	case a.BackendType == "whatsapp" && a.waBackend != nil && !a.waBackend.Jid.IsEmpty():
+		return "+" + a.waBackend.Jid.User
+	case a.BackendType == "email" && a.emBackend != nil:
+		return a.emBackend.Account.Email
+	case a.BackendType == "telegram":
+		if phone := a.Snapshot().Identity.Phone; phone != "" {
+			return "+" + strings.TrimPrefix(phone, "+")
+		}
+	}
+	return ""
+}
+
 type AccountManager struct {
 	cfg      config.Config
 	Dir      string

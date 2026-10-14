@@ -19,7 +19,7 @@ import (
 	"wiregram/internal/tui"
 )
 
-const usageText = `Usage: wiregram
+const usageText = `Usage: wiregram [COMMAND]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
 Mattermost, Matrix, WhatsApp, and email over IMAP (Gmail and Google Workspace
@@ -59,6 +59,30 @@ while dragging to select text with the terminal.
 Quitting, deleting a chat, message, agent or provider, removing an account
 and Reset ask first in a modal: y or Enter on the action goes ahead, Esc
 cancels. Deletes and Reset start on Cancel.
+
+Commands (for scripts and AI agents; output is one JSON object per line):
+
+  wiregram accounts
+      List the accounts: backend, account name, label, status.
+  wiregram chats BACKEND ACCOUNT
+      List the account's chats: chat ID, title, kind, unread count.
+  wiregram stream [BACKEND [ACCOUNT [RECIPIENT]]]
+      Print incoming messages as they arrive, from every signed-in account,
+      every account of a backend, one account, or one of its chats.
+      Until Ctrl+C. Connection changes are reported on stderr.
+  wiregram send [-reply ID] BACKEND ACCOUNT RECIPIENT [MESSAGE...]
+      Send MESSAGE, or stdin when none is given, and print the sent message.
+  wiregram reset [-y]
+      Sign out of every account and delete all local data, as Settings >
+      Reset does. Asks first unless -y is given.
+
+  BACKEND is telegram, mattermost, matrix or email (tg, mm, mx, em).
+  WhatsApp is not available: it allows one connection, and a command would
+  disconnect the running app. ACCOUNT is the Telegram phone number, the
+  Mattermost username, the Matrix ID or the email address, as accounts
+  shows it. RECIPIENT is a chat ID or title, or, for send, a username,
+  Matrix ID or email address. Accounts are signed in from the app first.
+  The commands can run beside the app.
 
 Keyboard shortcuts:
 
@@ -204,6 +228,13 @@ func main() {
 }
 
 func run() (result error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if len(os.Args) > 1 {
+		if command, ok := commands[os.Args[1]]; ok {
+			return command(ctx, os.Args[2:])
+		}
+	}
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -214,10 +245,8 @@ func run() (result error) {
 		return fmt.Errorf("parse arguments: %w", err)
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("wiregram does not accept positional arguments")
+		return fmt.Errorf("unknown command %q; wiregram -h lists the commands", flags.Arg(0))
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return fmt.Errorf("wiregram needs an interactive terminal")
 	}
