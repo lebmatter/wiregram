@@ -204,7 +204,8 @@ func (c *Client) resolveUserChoice(ctx context.Context, choice userChoice) (chat
 	if choice.resolveUsername == "" {
 		return choice.entry, nil
 	}
-	result, err := c.Api.ContactsResolveUsername(ctx, choice.resolveUsername)
+	result, err := c.Api.ContactsResolveUsername(ctx,
+		&tg.ContactsResolveUsernameRequest{Username: choice.resolveUsername})
 	if err != nil {
 		return chat{}, fmt.Errorf("open @%s: %w", choice.resolveUsername, err)
 	}

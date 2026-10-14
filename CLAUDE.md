@@ -50,7 +50,10 @@ adding a test framework.
 
 These are project constraints, not suggestions:
 
-- **No new dependencies** beyond the approved set: gotd/td,
+- **No new dependencies** beyond the approved set: gotd/td (v0.162+ for
+  managed bots; it pulls in github.com/gotd/log,
+  github.com/refraction-networking/utls, github.com/andybalholm/brotli and
+  github.com/cespare/xxhash/v2, approved as transitive dependencies),
   x/crypto, nhooyr.io/websocket, go.mau.fi/whatsmeow,
   modernc.org/sqlite, charm.land/bubbletea/v2, charm.land/lipgloss/v2,
   charm.land/bubbles/v2 (its list component pulls in
