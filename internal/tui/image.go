@@ -147,7 +147,13 @@ func (s *styles) imageCard(msg backend.Message, c *chatImage, indent, lineWidth,
 func (s *styles) imageText(msg backend.Message, c *chatImage, indent, lineWidth,
 	maxRows int) (string, []string) {
 	text := messageText(msg)
-	if !msg.Image || c == nil || c.failed {
+	if !msg.Image {
+		if card := s.videoCard(msg, indent, lineWidth); card != nil {
+			return "", card
+		}
+		return text, nil
+	}
+	if c == nil || c.failed {
 		return text, nil
 	}
 	if c.img == nil {
@@ -158,6 +164,55 @@ func (s *styles) imageText(msg backend.Message, c *chatImage, indent, lineWidth,
 		return text, nil
 	}
 	return "", card
+}
+
+// videoCard draws a video as a small card with a play mark beside its
+// details and the caption below, so videos stand out while scrolling; nil
+// for any other message or when it does not fit.
+func (s *styles) videoCard(msg backend.Message, indent, lineWidth int) []string {
+	switch mediaTag(msg.MediaLabel) {
+	case "[video]", "[video note]", "[gif]":
+	default:
+		return nil
+	}
+	width := min(lineWidth-indent, 48)
+	if width < 16 {
+		return nil
+	}
+	videoArt := []string{"|\\ ", "| >", "|/ "} // a play mark in place of a frame
+	label := textfmt.Plain(msg.MediaLabel)
+	detail := strings.TrimSpace(label[strings.Index(label, "]")+1:])
+	var details []string
+	for _, part := range strings.Split(detail, ", ") {
+		details = append(details, textfmt.WrapLineIndent(part, width-9, 0)...)
+	}
+	var body []string
+	for i := range max(len(videoArt), len(details)) {
+		art := "   "
+		if i < len(videoArt) {
+			art = videoArt[i]
+		}
+		line := " " + s.accent.Render(art)
+		if i < len(details) {
+			line += "  " + s.subtle.Render(strings.TrimLeft(details[i], " "))
+		}
+		body = append(body, line)
+	}
+	for _, para := range strings.Split(strings.TrimSpace(textfmt.Plain(msg.Text)), "\n") {
+		if para == "" {
+			continue
+		}
+		for _, line := range textfmt.WrapLineIndent(para, width-4, 0) {
+			body = append(body, strings.TrimLeft(line, " "))
+		}
+	}
+	pad := strings.Repeat(" ", indent)
+	lines := strings.Split(renderBox(mediaTitle(msg.MediaLabel), body, width, len(body)+2,
+		s.dimColor), "\n")
+	for i := range lines {
+		lines[i] = pad + lines[i]
+	}
+	return lines
 }
 
 // mediaTitle shortens a media label to its first kind for a card title, with

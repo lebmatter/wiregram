@@ -174,6 +174,8 @@ func (b *MailBackend) toMessage(r row) backend.Message {
 		kind := "attachment"
 		if strings.HasPrefix(p.Type, "image/") {
 			kind = "image"
+		} else if strings.HasPrefix(p.Type, "video/") {
+			kind = "video"
 		}
 		labels = append(labels, fmt.Sprintf("[%s] %s, %s", kind, textfmt.Plain(p.Name),
 			textfmt.FormatBytes(p.Size)))

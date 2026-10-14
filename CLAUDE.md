@@ -180,6 +180,9 @@ These are project constraints, not suggestions:
   and the thread pane. Only messages on screen are fetched; downloads live in
   `os.UserCacheDir()/wiregram/media`, shared with click-to-open, and are pruned
   after 7 days unseen. View-once and self-destructing media never load inline.
+  Videos (`[video]`, `[video note]`, `[gif]`) get a small card of the same kind with a
+  play mark beside their details (`videoCard`); nothing is fetched for it, and a click opens
+  the file.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   Multiline messages keep their line breaks.
 - Email (`internal/mail`, tag `EM`) is one chat per correspondent. A mail's
