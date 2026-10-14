@@ -57,8 +57,9 @@ Questions and pickers open as modals over the screen, with everything behind the
 - **Account connected.** A new account opens with a card listing the keys to get around
   and search; any key or click closes it.
 
-## Inactivity lock
+## Chat lock
 
-Telegram accounts lock the open chat after a spell of inactivity, hiding its messages.
-Any key unlocks it. <kbd>Alt+H</kbd> toggles private mode, which hides the history on
-demand.
+The open chat locks, hiding the whole screen, as soon as you switch to another terminal
+tab or window (in terminals that report focus; under tmux, set `focus-events on`), and
+when you press <kbd>Alt+L</kbd>. Any key or click unlocks it. <kbd>Alt+H</kbd> toggles
+private mode, which hides the history on demand.

@@ -282,8 +282,6 @@ func (tb *TelegramBackend) Identity() backend.AccountIdentity {
 
 func (tb *TelegramBackend) AccountLabel() string { return "[TG] " + tb.C.AccountName }
 
-func (tb *TelegramBackend) AutoLockEnabled() bool { return tb.C.autoLock }
-
 func (tb *TelegramBackend) Logout(ctx context.Context) error {
 	if _, err := tb.C.Api.AuthLogOut(ctx); err != nil {
 		return fmt.Errorf("log out of Telegram: %w", err)

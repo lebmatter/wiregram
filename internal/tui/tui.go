@@ -342,6 +342,13 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
+	case tea.BlurMsg:
+		// Leaving the terminal's tab or window locks the chat at once.
+		if m.chatOpen {
+			m.chat.locked = true
+		}
+		return m, nil
+
 	case tuiChipsTick:
 		return m, chipsTick()
 
@@ -561,7 +568,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			return m, cmd
 		}
 		if m.chatOpen {
-			m.chat, cmd = m.chat.resetLock().updateInput(msg)
+			m.chat, cmd = m.chat.updateInput(msg)
 		}
 		return m, cmd
 	}
@@ -642,9 +649,6 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		case !inside:
 			return m, m.search.cancel()
 		case !right:
-			if m.chatOpen {
-				m.chat = m.chat.resetLock()
-			}
 			m.search, cmd = m.search.click(mouse.Y - y)
 		}
 		return m, cmd
@@ -759,16 +763,16 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.Update(msg)
 		return m, cmd
 	}
+	if m.chatOpen && (msg.String() == "alt+l" || msg.String() == "alt+L") {
+		m.chat.locked = true
+		return m, nil
+	}
 	if m.wiz != nil {
 		wiz, cmd := m.wiz.Update(msg)
 		m.wiz = &wiz
 		return m, cmd
 	}
 	if m.searchOpen {
-		if m.chatOpen {
-			// Typing in the modal counts as activity for the chat's lock.
-			m.chat = m.chat.resetLock()
-		}
 		m.search, cmd = m.search.Update(msg)
 		return m, cmd
 	}
@@ -963,6 +967,7 @@ func (m tuiModel) View() tea.View {
 	// The mouse clicks and scrolls; this takes over native selection
 	// (Shift+drag in most terminals).
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true // terminals without focus events just never blur
 	return v
 }
 

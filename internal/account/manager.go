@@ -523,7 +523,7 @@ func (m *AccountManager) forgetUnprovenCredentials() error {
 			return nil
 		}
 	}
-	if err := config.Save(m.Store, config.Config{AutoLock: m.cfg.AutoLock}); err != nil {
+	if err := config.Save(m.Store, config.Config{}); err != nil {
 		return fmt.Errorf("clear Telegram API credentials: %w", err)
 	}
 	cfg, err := config.LoadConfig(m.Store)

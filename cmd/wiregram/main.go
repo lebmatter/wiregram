@@ -183,7 +183,8 @@ Keyboard shortcuts:
     Ctrl+X            Discard it
     Esc               Cancel the reply, else back to Unread (or Mentions)
     Ctrl+C            Close chat
-    Any key           Unlock after the inactivity lock
+    Alt+L             Lock the chat (it also locks when the terminal loses focus)
+    Any key           Unlock the locked chat
 
   Email chat
     Up/Down           Select mail

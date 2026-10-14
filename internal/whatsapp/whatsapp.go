@@ -217,8 +217,6 @@ func (wa *WaBackend) AccountLabel() string {
 	return fmt.Sprintf("[WA] +%s", phone)
 }
 
-func (wa *WaBackend) AutoLockEnabled() bool { return false }
-
 func (wa *WaBackend) Logout(ctx context.Context) error {
 	if err := wa.Client.Logout(ctx); err != nil {
 		return fmt.Errorf("unlink WhatsApp device: %w", err)

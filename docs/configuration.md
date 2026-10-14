@@ -65,7 +65,3 @@ Telegram needs an API ID and hash. Official builds may embed them; otherwise Wir
 asks on first launch and stores them in `wiregram.db`. See the
 [Telegram guide](/setup-guides/telegram).
 
-## Inactivity lock
-
-Telegram chats lock after a spell of inactivity. It is on by default and stored as the
-`autolock` setting (`1` on, `0` off).

@@ -316,8 +316,6 @@ func (mb *MmBackend) AccountLabel() string {
 	return fmt.Sprintf("[MM] %s@%s", mb.Username, host)
 }
 
-func (mb *MmBackend) AutoLockEnabled() bool { return false }
-
 func (mb *MmBackend) Logout(ctx context.Context) error {
 	if err := mb.apiJSON(ctx, "POST", "/users/logout", nil, nil); err != nil {
 		return fmt.Errorf("log out of Mattermost: %w", err)

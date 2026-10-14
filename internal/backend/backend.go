@@ -141,7 +141,6 @@ type Backend interface {
 	Authenticate(ctx context.Context, prompt config.PromptFunc, report func(error)) error
 	Identity() AccountIdentity
 	AccountLabel() string
-	AutoLockEnabled() bool
 
 	// Chat list
 	Dialogs(ctx context.Context, archived bool) ([]ChatEntry, int, error)

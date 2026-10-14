@@ -120,9 +120,9 @@ type chatViewModel struct {
 	// its outgoing messages are the bot's, shown as ✦ NAME.
 	bot *inboxBot
 
-	locked       bool
-	autoLock     bool
-	lockDeadline time.Time
+	// locked hides the chat until a key or click: set when the terminal
+	// loses focus and by Alt+L.
+	locked bool
 
 	// embedded is set by the root model in two-pane mode: Esc then returns
 	// focus to the sidebar instead of closing the chat.
@@ -203,7 +203,6 @@ type mediaDownload struct {
 }
 
 type mediaProgressTick struct{}
-type lockTick struct{}
 
 // reactionFlashTick steps the blink of the reaction just toggled.
 type reactionFlashTick struct{ seq int }
@@ -275,7 +274,6 @@ func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry 
 		kitty:           kitty,
 		input:           ti,
 		sends:           make(chan chatOutgoing),
-		autoLock:        b.AutoLockEnabled(),
 		spin:            spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(st.accent)),
 		focused:         true,
 		width:           w,
@@ -284,25 +282,7 @@ func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry 
 }
 
 func (m chatViewModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadHistory(), m.input.Focus(), m.spin.Tick}
-	if m.autoLock {
-		m.lockDeadline = time.Now().Add(10 * time.Second)
-		cmds = append(cmds, m.lockTickCmd())
-	}
-	return tea.Batch(cmds...)
-}
-
-func (m chatViewModel) lockTickCmd() tea.Cmd {
-	return tea.Tick(10*time.Second, func(time.Time) tea.Msg {
-		return lockTick{}
-	})
-}
-
-func (m chatViewModel) resetLock() chatViewModel {
-	if m.autoLock {
-		m.lockDeadline = time.Now().Add(10 * time.Second)
-	}
-	return m
+	return tea.Batch(m.loadHistory(), m.input.Focus(), m.spin.Tick)
 }
 
 func (m chatViewModel) loadHistory() tea.Cmd {
@@ -470,7 +450,7 @@ func (m chatViewModel) markAgents() chatViewModel {
 // root then fetches and places them once it has laid out the chat.
 func imagesMoved(msg tea.Msg) bool {
 	switch msg.(type) {
-	case spinner.TickMsg, lockTick, mediaProgressTick, reactionFlashTick:
+	case spinner.TickMsg, mediaProgressTick, reactionFlashTick:
 		return false
 	}
 	return true
@@ -668,12 +648,6 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		if m.subMode == chatSubSearch && m.searchQuery != "" {
 			return m, m.doSearch()
 		}
-
-	case lockTick:
-		if m.autoLock && !m.locked && time.Now().After(m.lockDeadline) {
-			m.locked = true
-		}
-		return m, m.lockTickCmd()
 
 	case mediaReady:
 		return m, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
@@ -899,7 +873,6 @@ func (m chatViewModel) handleEvent(ev backend.Event) (chatViewModel, tea.Cmd) {
 }
 
 func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	m = m.resetLock()
 
 	if m.locked {
 		m.locked = false
@@ -1098,7 +1071,6 @@ func (m chatViewModel) handleMenuKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cm
 // menuClick acts on a click at column x and row y of the open modal, counted
 // from its top-left corner; a click outside it closes the modal.
 func (m chatViewModel) menuClick(x, y int, inside bool) (chatViewModel, tea.Cmd) {
-	m = m.resetLock()
 	if !inside {
 		return m.menuDone(nil, true)
 	}
@@ -1507,7 +1479,6 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 // handleClick selects the clicked message; a left click opens its attachment
 // in the desktop's default application and a right click opens its actions.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
-	m = m.resetLock()
 	switch m.subMode {
 	case chatSubSearch, chatSubUpload:
 		if msg.right {
@@ -1955,7 +1926,8 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if m.caps.DeleteChat && m.entry.IsDM {
 		keys = append(keys, helpKey{"M-d", "delete chat"})
 	}
-	keys = append(keys, helpKey{"M-h", "private"}, helpKey{"esc", "back"})
+	keys = append(keys, helpKey{"M-h", "private"}, helpKey{"M-l", "lock"},
+		helpKey{"esc", "back"})
 	return keys
 }
 

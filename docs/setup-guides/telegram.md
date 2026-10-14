@@ -24,8 +24,6 @@ Wiregram asks for both when you add the first Telegram account and keeps them in
 
 ## Notes
 
-- Telegram chats lock after a spell of inactivity; any key unlocks them.
-  See [Configuration](/configuration#inactivity-lock).
 - Removing the account in Settings logs the session out on Telegram's side too.
 - You can add several Telegram accounts. Each is tagged with its backend and position
   in the account list, like `TG1`.

@@ -82,11 +82,12 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Ctrl+F</kbd> | Search messages (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> cancels) |
 | <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
 | <kbd>Alt+H</kbd> | Toggle private mode (hide history) |
+| <kbd>Alt+L</kbd> | Lock the chat (also locks when the terminal loses focus) |
 | <kbd>Alt+D</kbd> | Delete chat (you only) |
 | <kbd>Ctrl+Alt+D</kbd> | Delete chat (both sides) |
 | <kbd>Esc</kbd> | Cancel the reply, else back to Unread (or Mentions) |
 | <kbd>Ctrl+C</kbd> | Close chat |
-| Any key | Unlock after the inactivity lock |
+| Any key | Unlock the locked chat |
 
 ## Email chat
 

@@ -56,7 +56,6 @@ type Client struct {
 	emojiRecent    []string
 	active         peerKey
 	peerTyping     bool
-	autoLock       bool
 	events         backend.Bus
 	Report         func(error)
 }
@@ -87,8 +86,8 @@ func NewClient(cfg config.Config, db *store.DB, account string, report func(erro
 func newClient(cfg config.Config, storage telegram.SessionStorage, report func(error)) *Client {
 	c := &Client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
-		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
-		cfg: cfg,
+		unreads: make(map[peerKey]int),
+		cfg:     cfg,
 	}
 	middleware := telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
 		return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {

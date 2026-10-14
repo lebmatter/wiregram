@@ -108,7 +108,6 @@ func importConfig(db *store.DB, dir string) error {
 	legacy := struct {
 		APIID      int    `json:"api_id"`
 		APIHash    string `json:"api_hash"`
-		AutoLock   int    `json:"autolock"`
 		Mattermost []struct {
 			URL   string `json:"url"`
 			Token string `json:"token"`
@@ -116,7 +115,7 @@ func importConfig(db *store.DB, dir string) error {
 		Matrix []struct {
 			Homeserver string `json:"homeserver"`
 		} `json:"matrix"`
-	}{AutoLock: 1}
+	}{}
 	if err := json.Unmarshal(data, &legacy); err != nil {
 		return fmt.Errorf("read configuration: %w", err)
 	}
@@ -138,7 +137,7 @@ func importConfig(db *store.DB, dir string) error {
 			return err
 		}
 	}
-	cfg := config.Config{APIID: max(legacy.APIID, 0), APIHash: strings.TrimSpace(legacy.APIHash), AutoLock: legacy.AutoLock}
+	cfg := config.Config{APIID: max(legacy.APIID, 0), APIHash: strings.TrimSpace(legacy.APIHash)}
 	if err := config.Save(db, cfg); err != nil {
 		return err
 	}

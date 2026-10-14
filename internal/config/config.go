@@ -18,9 +18,8 @@ var buildGoogleClientID string
 var buildGoogleClientSecret string
 
 type Config struct {
-	APIID    int
-	APIHash  string
-	AutoLock int
+	APIID   int
+	APIHash string
 }
 
 type PromptFunc func(string, bool) (string, error)
@@ -63,7 +62,7 @@ func Wipe(dir string) error {
 // LoadConfig reads the saved settings. Telegram API credentials come from the
 // settings, else from the build, else stay empty until a Telegram account is added.
 func LoadConfig(db *store.DB) (Config, error) {
-	cfg := Config{AutoLock: 1}
+	cfg := Config{}
 	id, err := db.Setting("api_id")
 	if err == nil {
 		// An API ID of 0 comes from configurations without Telegram.
@@ -76,15 +75,6 @@ func LoadConfig(db *store.DB) (Config, error) {
 		}
 		if cfg.APIID > 0 && strings.TrimSpace(cfg.APIHash) == "" {
 			return cfg, fmt.Errorf("configuration needs an API hash")
-		}
-		lock, err := db.Setting("autolock")
-		if err == nil {
-			cfg.AutoLock, err = strconv.Atoi(lock)
-		} else if errors.Is(err, store.ErrNotFound) {
-			err = nil
-		}
-		if err != nil || (cfg.AutoLock != 0 && cfg.AutoLock != 1) {
-			return cfg, fmt.Errorf("configuration autolock must be 0 or 1")
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return cfg, err
@@ -103,9 +93,6 @@ func LoadConfig(db *store.DB) (Config, error) {
 // what marks the configuration as complete.
 func Save(db *store.DB, cfg Config) error {
 	if err := db.SetSetting("api_hash", cfg.APIHash); err != nil {
-		return err
-	}
-	if err := db.SetSetting("autolock", strconv.Itoa(cfg.AutoLock)); err != nil {
 		return err
 	}
 	return db.SetSetting("api_id", strconv.Itoa(cfg.APIID))

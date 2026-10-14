@@ -310,7 +310,8 @@ lowest package that needs them rather than importing sideways.
 - `Publish` never blocks and no lock is held across a channel operation;
   backends release their own mutex before publishing. Lock order is
   `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`.
-- The inactivity lock lives in the chat model (`lockTick`); media plays through
+- The chat lock lives in the chat model (`locked`): the root sets it on `tea.BlurMsg`
+  (focus reporting) and Alt+L; there is no idle timer. Media plays through
   `tea.ExecProcess`.
 - Read receipts are batched with a timer to avoid flooding Telegram.
 
@@ -318,7 +319,7 @@ lowest package that needs them rather than importing sideways.
 
 `os.UserConfigDir()/wiregram/` (typically `~/.config/wiregram/`):
 - `wiregram.db` — the single SQLite database (`internal/store`): `settings`
-  (API credentials, autolock, mail retention, theme), `account_data` (identity,
+  (API credentials, mail retention, theme), `account_data` (identity,
   Telegram session and Matrix sync token per account key), the Chat Agent
   tables, the email cache (`mail_messages`, `mail_sync`) and plugins'
   key-value rows (`plugin_kv`); plugin settings are `plugin.NAME.*` settings

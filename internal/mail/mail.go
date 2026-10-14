@@ -124,8 +124,6 @@ func (b *MailBackend) Identity() backend.AccountIdentity {
 
 func (b *MailBackend) AccountLabel() string { return "[EM] " + b.Account.Email }
 
-func (b *MailBackend) AutoLockEnabled() bool { return false }
-
 func (b *MailBackend) Logout(ctx context.Context) error {
 	if b.Account.Auth == authGoogle && b.Account.RefreshToken != "" {
 		return b.revokeGoogle(ctx)
