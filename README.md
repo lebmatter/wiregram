@@ -4,6 +4,10 @@ Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Ma
 Mattermost in one keyboard-driven window, with optional AI Chat Agents that answer your
 DMs. It is a single static binary, written in Go.
 
+> **Alpha software.** Wiregram is under active development. Expect rough edges, and
+> settings or the database format may change between releases. Please report bugs in
+> [issues](https://github.com/lebmatter/wiregram/issues).
+
 Visit [wiregram.chat](https://wiregram.chat) for more info.
 
 ## Installation
