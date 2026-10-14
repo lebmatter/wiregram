@@ -1,0 +1,8 @@
+# Cloudflare Worker serving the built docs site as static assets: make deploy-docs.
+# Attach docs.wiregram.chat to it in the Cloudflare dashboard.
+name = "wiregram-docs"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./.vitepress/dist"
+not_found_handling = "404-page"

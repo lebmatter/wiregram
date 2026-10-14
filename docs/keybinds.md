@@ -1,0 +1,169 @@
+# Keybinds
+
+The footer shows the keys for whatever has focus, and hides those the account's network
+doesn't support. This page lists all of them; `wiregram -h` prints the same list.
+
+Messages have no per-message shortcuts: select a message and press <kbd>Enter</kbd> on
+an empty composer (or right-click it) to open its actions.
+
+## Anywhere
+
+| Key | Action |
+|-----|--------|
+| <kbd>Alt+A</kbd> | Chat Agents (from the chat list, or a chat with an empty input) |
+| <kbd>Tab</kbd> | Move between chat list and chat (wide terminals) |
+
+## Accounts
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select account or menu row |
+| <kbd>Enter</kbd> | Open the account, or the selected row (Chat Agents, Settings…, Add account, Quit) |
+| <kbd>r</kbd> | Reconnect the selected account |
+| <kbd>Esc</kbd> | Back to the open account (when it is online) |
+| <kbd>q</kbd>, <kbd>Ctrl+C</kbd> | Quit (asks first) |
+
+## Chat list
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat or account |
+| <kbd>Enter</kbd> | Open chat, or switch to the selected account |
+| <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
+| <kbd>u</kbd> | Unread: cards for every chat with unread messages |
+| <kbd>m</kbd> | Mentions: cards for the groups and channels mentioning you (not email) |
+| <kbd>a</kbd> | Accounts (add, sign in, retry, Settings…) |
+| <kbd>r</kbd> | Refresh chats |
+| <kbd>Alt+D</kbd> | Delete private chat (you only) |
+| <kbd>Ctrl+Alt+D</kbd> | Delete private chat (both sides) |
+| <kbd>Esc</kbd> | Close the open chat (wide terminals), else back to Accounts |
+
+## Unread / Mentions
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select card |
+| <kbd>Enter</kbd> | Open the chat; a mention opens selected, in its thread on Mattermost |
+| <kbd>/</kbd> | Search users |
+| <kbd>r</kbd> | Reload |
+| <kbd>Esc</kbd> | Back |
+
+## Search users / Forward to / Mention
+
+| Key | Action |
+|-----|--------|
+| Type | Filter |
+| <kbd>↑</kbd>/<kbd>Ctrl+P</kbd>, <kbd>↓</kbd>/<kbd>Ctrl+N</kbd> | Select |
+| <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | Page |
+| <kbd>Enter</kbd> | Open the chat, forward the message to it, or insert the mention |
+| <kbd>Esc</kbd> | Clear the query, then close; Mention closes at once and types the `@` and query as written |
+| Click outside | Close |
+
+## Settings
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select an account on the left, or a setting on the right |
+| <kbd>Enter</kbd> | Show the account's settings, or change the selected one |
+| <kbd>Tab</kbd>, <kbd>→</kbd>/<kbd>l</kbd> | Move to the account's settings |
+| <kbd>Space</kbd> | Change the selected setting |
+| <kbd>Esc</kbd>, <kbd>←</kbd>/<kbd>h</kbd> | Back to the accounts, then to where Settings was opened |
+| <kbd>q</kbd> | Quit |
+
+## Chat
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>↓</kbd> | Select message (<kbd>↑</kbd> at the top loads older ones) |
+| <kbd>Enter</kbd> | Send text; with an empty input, open the selected message's actions |
+| <kbd>Ctrl+U</kbd> | Upload file (browse, or <kbd>/</kbd> to type a path) |
+| <kbd>Ctrl+F</kbd> | Search messages (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> cancels) |
+| <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
+| <kbd>Alt+H</kbd> | Toggle private mode (hide history) |
+| <kbd>Alt+D</kbd> | Delete chat (you only) |
+| <kbd>Ctrl+Alt+D</kbd> | Delete chat (both sides) |
+| <kbd>Esc</kbd> | Cancel the reply, else back to Unread (or Mentions) |
+| <kbd>Ctrl+C</kbd> | Close chat |
+| Any key | Unlock after the inactivity lock |
+
+## Email chat
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>↓</kbd> | Select mail |
+| <kbd>Enter</kbd> | Open the selected mail's actions (Read first) |
+| Type | Write: <kbd>Enter</kbd> adds a line, <kbd>Ctrl+S</kbd> sends, <kbd>Esc</kbd> keeps the draft |
+
+A new mail's first line is its subject; a first line `Subject: ...` starts a new
+conversation instead of a reply.
+
+## Mail reader
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Scroll |
+| <kbd>PgUp</kbd>/<kbd>b</kbd>, <kbd>PgDn</kbd>/<kbd>Space</kbd> | Page |
+| <kbd>Home</kbd>/<kbd>g</kbd>, <kbd>End</kbd>/<kbd>G</kbd> | Top, bottom |
+| <kbd>Enter</kbd> | Actions (reply, save attachment, move to Trash…) |
+| <kbd>Esc</kbd>, <kbd>q</kbd> | Close |
+
+## Thread
+
+The thread pane opens by itself on a threaded message in wide terminals.
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>↓</kbd> | Move through the chat's messages |
+| <kbd>Enter</kbd> | Reply in thread; with an empty input, open the selected message's actions |
+| <kbd>@</kbd> | Mention a member, as in the chat |
+| <kbd>Esc</kbd> | Close thread |
+
+## Upload
+
+| Key | Action |
+|-----|--------|
+| Arrows, <kbd>Enter</kbd> | Browse folders and pick a file |
+| <kbd>/</kbd>, <kbd>~</kbd> | Type a path instead (<kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> cycle matches) |
+| <kbd>Enter</kbd> | Send with the optional caption |
+| <kbd>Esc</kbd> | Back, then cancel |
+
+## Message actions
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>↓</kbd> | Select an action: reply, thread, go to quote, edit, forward, open/play/save attachment, pin, delete |
+| Type | Search reactions by name in the `reaction:` field (<kbd>Backspace</kbd> deletes) |
+| <kbd>←</kbd>/<kbd>→</kbd> | Select a reaction on the emoji row |
+| <kbd>Enter</kbd> | Do it (deletes ask first) |
+| <kbd>Esc</kbd> | Close (a click outside it closes it too) |
+
+## Chat Agents
+
+| Key | Action |
+|-----|--------|
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select |
+| <kbd>Enter</kbd> | Show conversations / open one |
+| <kbd>n</kbd> | New agent (connects a provider first if needed) |
+| <kbd>e</kbd> | Edit agent |
+| <kbd>c</kbd> | Connect accounts (each answers to one agent) |
+| <kbd>Space</kbd> | Pause or resume agent |
+| <kbd>d</kbd> | Delete agent |
+| <kbd>p</kbd> | AI providers (<kbd>n</kbd> new, <kbd>e</kbd> edit, <kbd>d</kbd> delete) |
+| <kbd>y</kbd> / <kbd>n</kbd> | Send / discard a suggested reply |
+| <kbd>Esc</kbd> | Back |
+
+## Chat Agent wizard
+
+| Key | Action |
+|-----|--------|
+| <kbd>Enter</kbd> | Answer or pick |
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Choose |
+| <kbd>Space</kbd> | Toggle an account |
+| <kbd>Esc</kbd> | Previous question |
+| <kbd>Ctrl+C</kbd> | Cancel |
+
+## Media viewer
+
+| Key | Action |
+|-----|--------|
+| <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> | Stop and return to chat |

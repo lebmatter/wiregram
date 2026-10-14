@@ -1,0 +1,63 @@
+/* The Zest theme from internal/tui/theme.go: lime accent on purples. */
+:root {
+  --wg-lime: #e8fe96;
+  --wg-purple-900: #2b1f4a;
+  --wg-purple-800: #3a2d5e;
+  --wg-purple-600: #6b6188;
+  --wg-purple-400: #9a92b5;
+  --wg-violet: #af87ff;
+
+  --vp-c-brand-1: #4b3a7a;
+  --vp-c-brand-2: #5d4a90;
+  --vp-c-brand-3: #6b6188;
+  --vp-c-brand-soft: rgba(107, 97, 136, 0.14);
+
+  --vp-button-brand-bg: var(--wg-purple-800);
+  --vp-button-brand-hover-bg: var(--wg-purple-900);
+  --vp-button-brand-text: var(--wg-lime);
+  --vp-button-brand-hover-text: var(--wg-lime);
+}
+
+.dark {
+  --vp-c-bg: #1d1533;
+  --vp-c-bg-alt: #181029;
+  --vp-c-bg-elv: #241a40;
+  --vp-c-bg-soft: var(--wg-purple-900);
+  --vp-c-divider: #3a2d5e;
+  --vp-c-gutter: #120c20;
+  --vp-c-text-2: var(--wg-purple-400);
+
+  --vp-c-brand-1: var(--wg-lime);
+  --vp-c-brand-2: #d6f077;
+  --vp-c-brand-3: #c4e25c;
+  --vp-c-brand-soft: rgba(232, 254, 150, 0.14);
+
+  --vp-button-brand-bg: var(--wg-lime);
+  --vp-button-brand-hover-bg: #d6f077;
+  --vp-button-brand-text: var(--wg-purple-900);
+  --vp-button-brand-hover-text: var(--wg-purple-900);
+
+  --vp-code-block-bg: #181029;
+}
+
+.wg-logo {
+  display: block;
+  max-width: 360px;
+  width: 100%;
+  margin: 8px 0 24px;
+}
+
+.vp-doc img.wg-shot {
+  border-radius: 8px;
+  border: 1px solid var(--vp-c-divider);
+}
+
+kbd {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border: 1px solid var(--vp-c-divider);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--vp-c-bg-soft);
+}

@@ -75,6 +75,9 @@ These are project constraints, not suggestions:
   TUI, or stderr outside it. Keep going where possible; exit 1 only when fatal.
 - `gofmt` formatted, soft 100-column lines, comments only where the *why* is
   non-obvious.
+- **Docs follow the code.** A change to shortcuts or user-visible behaviour updates
+  `usageText` and the matching pages under `docs/` (the VitePress site). The site's
+  npm packages stay pinned with a committed lockfile; add none beyond vitepress.
 
 ## Display conventions
 
@@ -103,7 +106,7 @@ These are project constraints, not suggestions:
   a grid of cards, one per online account, each fetched once when the account comes
   online, showing its unread total and busiest chats. An account's Unread digest
   setting leaves it out (`store.DigestSkip` in `account_data`). Clicking a card opens the account.
-- Lua plugins (`internal/plugin`, `docs/PLUGINS.md`) each run in their own
+- Lua plugins (`internal/plugin`, `docs/features/plugins.md`) each run in their own
   sandboxed VM: no `os`/`io`/`debug`/`require`, every call under a deadline,
   HTTPS only to the hosts the plugin declares. Built-ins are embedded from
   `internal/plugin/builtin` and start off; user plugins in
@@ -244,7 +247,7 @@ internal/
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime
   tui/               BubbleTea screens and the account/mode loop (run.go)
-docs/                design notes and plans
+docs/                VitePress docs site (make docs, make deploy-docs)
 skills/wiregram/     SKILL.md for AI agents using the CLI commands
 assets/              logo and other static files
 ```
@@ -291,7 +294,3 @@ Directories are `0700`; `wiregram.db` is `0600`. Wiregram writes no JSON files.
 `account.json`, `session/session.json`, `sync_token`) once at startup and
 renames each to `*.bak`, then removes the empty per-account directories they made
 for every backend but WhatsApp.
-
-## Planned work
-
-`docs/TASKS.md` sequences the remaining work.

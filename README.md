@@ -17,7 +17,7 @@ Visit [wiregram.chat](https://wiregram.chat) for more info.
 - Download the [latest release](https://github.com/lebmatter/wiregram/releases/latest) for
   your platform, or see [wiregram.chat](https://wiregram.chat/#download).
 - `chmod +x wiregram-*` and run it in an interactive terminal.
-- Press `?` inside the app for shortcuts, or run `wiregram -h`.
+- Run `wiregram -h` for the shortcuts, or read the [docs](docs).
 
 ```sh
 curl -fLo wiregram https://github.com/lebmatter/wiregram/releases/latest/download/wiregram-linux-amd64
@@ -78,7 +78,7 @@ is left out because it allows only one connection. Agents can learn the commands
 ## Developers
 
 Wiregram is free and open source software. See [CLAUDE.md](CLAUDE.md) for the project rules
-and layout, and [`docs/`](docs) for design notes. It is pure Go with no cgo; the UI is built
+and layout, and [`docs/`](docs) for the documentation site. It is pure Go with no cgo; the UI is built
 on [BubbleTea](https://github.com/charmbracelet/bubbletea).
 
 ## License
