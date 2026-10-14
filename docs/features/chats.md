@@ -35,6 +35,7 @@ Each message is one block:
   drawn from each network's own formatting; links are underlined.
 - Under the text: an image or link preview card, then a dim meta row with reactions
   (your own count in copper), the reply count, pinned, and `✓`/`✓✓` for sent and read.
+  Clicking a reaction adds yours or takes it back; the reaction blinks as it changes.
 
 Private chats are named by the person's first name, else username. Groups show their
 title and channels show `Channel: TITLE`.

@@ -122,19 +122,19 @@ func (c *Client) sendReaction(ctx context.Context, entry chat, message *tg.Messa
 	if message == nil || message.ID <= 0 {
 		return tg.MessageReactions{}, fmt.Errorf("select a sent message before reacting")
 	}
-	if current, ok := message.GetReactions(); ok && current.Min {
-		result, err := c.Api.MessagesGetMessagesReactions(ctx, &tg.MessagesGetMessagesReactionsRequest{
-			Peer: entry.peer,
-			ID:   []int{message.ID},
-		})
-		if err != nil {
-			return tg.MessageReactions{}, fmt.Errorf("load current reactions: %w", err)
-		}
-		if reactions, ok := reactionUpdateFromResult(result, entry, message.ID); ok {
-			copy := *message
-			copy.SetReactions(reactions)
-			message = &copy
-		}
+	// The message the chat holds may predate earlier toggles, so read the
+	// current reactions before deciding whether this one adds or removes.
+	current, err := c.Api.MessagesGetMessagesReactions(ctx, &tg.MessagesGetMessagesReactionsRequest{
+		Peer: entry.peer,
+		ID:   []int{message.ID},
+	})
+	if err != nil {
+		return tg.MessageReactions{}, fmt.Errorf("load current reactions: %w", err)
+	}
+	if reactions, ok := reactionUpdateFromResult(current, entry, message.ID); ok {
+		copy := *message
+		copy.SetReactions(reactions)
+		message = &copy
 	}
 	selected := &tg.ReactionEmoji{Emoticon: emoticon}
 	reactions, remove := chosenReactions(message, selected)

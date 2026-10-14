@@ -58,7 +58,8 @@ with a reply waiting for approval, and the messages an agent sent. Messages go t
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
-message selects it; right-clicking it opens its actions. Clicking its
+message selects it; right-clicking it opens its actions. Clicking a reaction
+under it adds yours or takes it back, and the reaction blinks. Clicking its
 attachment (the image or the [tag] row) downloads it and opens it with
 xdg-open (open on macOS, the default app on Windows). Hold Shift
 while dragging to select text with the terminal.

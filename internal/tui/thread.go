@@ -224,18 +224,18 @@ func (m chatViewModel) threadComposer(inner int, focused bool) []string {
 }
 
 // threadLines lays out the thread inner columns wide and returns, for each
-// line, the index into threadMessages it belongs to (-1 for none) and
-// whether it draws that message's attachment.
-func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) {
+// line, the index into threadMessages it belongs to (-1 for none) and what
+// it draws.
+func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []rowKind) {
 	thread := m.threadMessages(m.threadRoot)
 	var lines []string
 	var owners []int
-	var media []bool
+	var kinds []rowKind
 	add := func(owner int, more ...string) {
 		lines = append(lines, more...)
 		for range more {
 			owners = append(owners, owner)
-			media = append(media, false)
+			kinds = append(kinds, rowText)
 		}
 	}
 	if len(thread) == 0 {
@@ -255,16 +255,16 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 		}
 		// The thread is the chain itself, so replies are drawn without a quote.
 		msg.ReplyToID = ""
-		block, blockMedia := m.st.messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
-			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID], inner,
-			imageRows(height))
+		block, blockKinds := m.st.messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
+			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID],
+			m.flashing().on(msg.ID), inner, imageRows(height))
 		if bg := m.st.blockShade(msg, false); bg != "" {
 			for j := range block {
 				block[j] = shadeLine(block[j], bg, inner)
 			}
 		}
 		add(i, block...)
-		copy(media[len(media)-len(block):], blockMedia)
+		copy(kinds[len(kinds)-len(block):], blockKinds)
 		if i == 0 {
 			n := len(thread) - 1
 			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))
@@ -278,18 +278,18 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []bool) 
 			}
 		}
 	}
-	return lines, owners, media
+	return lines, owners, kinds
 }
 
 // threadOwners maps each row inside a thread pane width columns wide, below
 // its top border, to the threadMessages index drawn there (-1 for none) and
-// whether the row draws its attachment.
-func (m chatViewModel) threadOwners(width int) ([]int, []bool) {
+// what the row draws.
+func (m chatViewModel) threadOwners(width int) ([]int, []rowKind) {
 	inner := width - 4
 	height := m.height - 2 - len(m.threadComposer(inner, false))
-	_, owners, media := m.threadLines(inner, height)
+	_, owners, kinds := m.threadLines(inner, height)
 	return screenRows(scrolled(owners, height, m.threadScroll), height, -1),
-		screenRows(scrolled(media, height, m.threadScroll), height, false)
+		screenRows(scrolled(kinds, height, m.threadScroll), height, rowText)
 }
 
 // scrolled drops the rows the thread pane is scrolled past, so the last of
@@ -321,23 +321,23 @@ func (m chatViewModel) scrollThread(delta int) chatViewModel {
 }
 
 // threadMessageAt returns the thread message drawn at column x and row y
-// of the chat pane, when the thread pane is there, and whether the row
-// draws its attachment.
-func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, bool, bool) {
+// of the chat pane, when the thread pane is there, and where it was hit.
+func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, msgHit, bool) {
 	if m.subMode != chatSubThread || m.privateMode {
-		return backend.Message{}, false, false
+		return backend.Message{}, msgHit{}, false
 	}
 	left, split := m.threadSplit()
 	if !split {
 		left = 0
 	}
 	if x < left {
-		return backend.Message{}, false, false
+		return backend.Message{}, msgHit{}, false
 	}
-	owners, media := m.threadOwners(m.width - left)
+	owners, kinds := m.threadOwners(m.width - left)
 	row := y - 1
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
-		return backend.Message{}, false, false
+		return backend.Message{}, msgHit{}, false
 	}
-	return m.threadMessages(m.threadRoot)[owners[row]], media[row], true
+	return m.threadMessages(m.threadRoot)[owners[row]],
+		msgHit{kinds[row], x - left - 2 - textIndent(m.entry)}, true
 }

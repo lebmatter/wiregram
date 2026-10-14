@@ -53,6 +53,9 @@ type chatViewModel struct {
 	selected         int
 	seen             map[string]bool
 	changedMessages  map[string]bool
+	flash            reactionKey // the reaction blinking after a react
+	flashStep        int
+	flashSeq         int                             // tells this blink's ticks from an earlier one's
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	images           map[string]*chatImage           // by message ID
 	kitty            *kittyImages                    // nil without kitty graphics
@@ -198,6 +201,12 @@ type mediaDownload struct {
 
 type mediaProgressTick struct{}
 type lockTick struct{}
+
+// reactionFlashTick steps the blink of the reaction just toggled.
+type reactionFlashTick struct{ seq int }
+
+// flashSteps is how many on and off phases a toggled reaction blinks for.
+const flashSteps = 6
 
 type chatReactionResult struct {
 	messageID string
@@ -454,7 +463,7 @@ func (m chatViewModel) markAgents() chatViewModel {
 // root then fetches and places them once it has laid out the chat.
 func imagesMoved(msg tea.Msg) bool {
 	switch msg.(type) {
-	case spinner.TickMsg, lockTick, mediaProgressTick:
+	case spinner.TickMsg, lockTick, mediaProgressTick, reactionFlashTick:
 		return false
 	}
 	return true
@@ -540,6 +549,17 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 			return m, nil
 		}
 		m = m.appendMessage(msg.msg)
+
+	case reactionFlashTick:
+		if msg.seq != m.flashSeq || m.flash == (reactionKey{}) {
+			return m, nil
+		}
+		m.flashStep++
+		if m.flashStep >= flashSteps {
+			m.flash = reactionKey{}
+			return m, nil
+		}
+		return m, m.flashTickCmd()
 
 	case chatReactionResult:
 		if msg.err != nil {
@@ -1107,7 +1127,7 @@ func (m chatViewModel) runMenuAction(c msgMenuChoice) (chatViewModel, tea.Cmd) {
 	}
 	switch c.kind {
 	case actReact:
-		return m, m.doReact(sel, c.emoji)
+		return m.reactWithFlash(sel, c.emoji)
 	case actRead:
 		return m.openReader()
 	case actReply:
@@ -1361,6 +1381,30 @@ func (m chatViewModel) handleConfirmMsgDeleteKey(msg tea.KeyPressMsg) (chatViewM
 	return m, nil
 }
 
+// reactWithFlash toggles the user's emoticon reaction on target and blinks
+// it while the backend answers.
+func (m chatViewModel) reactWithFlash(target backend.Message, emoticon string) (chatViewModel, tea.Cmd) {
+	m.flashSeq++
+	m.flash, m.flashStep = reactionKey{target.ID, emoticon}, 0
+	return m, tea.Batch(m.doReact(target, emoticon), m.flashTickCmd())
+}
+
+// flashing is the reaction to draw highlighted now: the blinking one in its
+// on phases.
+func (m chatViewModel) flashing() reactionKey {
+	if m.flashStep%2 == 1 {
+		return reactionKey{}
+	}
+	return m.flash
+}
+
+func (m chatViewModel) flashTickCmd() tea.Cmd {
+	seq := m.flashSeq
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+		return reactionFlashTick{seq}
+	})
+}
+
 func (m chatViewModel) doReact(target backend.Message, emoticon string) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
@@ -1470,10 +1514,10 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		return m, func() tea.Msg { return chatSuggestion{act} }
 	}
 	var follow tea.Cmd
-	sel, media, ok := m.threadMessageAt(msg.x, msg.y)
+	sel, hit, ok := m.threadMessageAt(msg.x, msg.y)
 	if !ok {
 		var i int
-		i, media, ok = m.messageAt(msg.x, msg.y)
+		i, hit, ok = m.messageAt(msg.x, msg.y)
 		if !ok {
 			return m, nil
 		}
@@ -1481,8 +1525,15 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		sel = m.messages[i]
 		m, follow = m.followThread()
 	}
+	if hit.kind == rowMeta && !msg.right {
+		if emoji, ok := reactionAt(sel, hit.col); ok {
+			var cmd tea.Cmd
+			m, cmd = m.reactWithFlash(sel, emoji)
+			return m, tea.Batch(follow, cmd)
+		}
+	}
 	if !msg.right {
-		if _, saveable := m.b.MediaSaveable(sel); !media || !saveable {
+		if _, saveable := m.b.MediaSaveable(sel); hit.kind != rowMedia || !saveable {
 			return m, follow
 		}
 		var cmd tea.Cmd
@@ -1604,36 +1655,43 @@ func (m chatViewModel) footerLine() (string, bool) {
 	return line, true
 }
 
-// messageAt maps a row of the chat pane to the message drawn there, and
-// whether the row draws its attachment, using the same layout as chatBox and
-// messageLines.
-func (m chatViewModel) messageAt(x, y int) (int, bool, bool) {
+// msgHit is where a click landed in a message: the kind of row, and the
+// column counted from the start of the message's text.
+type msgHit struct {
+	kind rowKind
+	col  int
+}
+
+// messageAt maps a point of the chat pane to the message drawn there, and
+// where it was hit, using the same layout as chatBox and messageLines.
+func (m chatViewModel) messageAt(x, y int) (int, msgHit, bool) {
 	width, split := m.threadSplit()
 	if (m.subMode != chatSubNone && !split) || m.privateMode || m.messages == nil {
-		return 0, false, false
+		return 0, msgHit{}, false
 	}
 	if x >= width {
-		return 0, false, false
+		return 0, msgHit{}, false
 	}
-	owners, media := m.chatOwners(width)
+	owners, kinds := m.chatOwners(width)
 	row := y - 1
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
-		return 0, false, false
+		return 0, msgHit{}, false
 	}
-	return owners[row], media[row], true
+	return owners[row], msgHit{kinds[row], x - 2 - textIndent(m.entry)}, true
 }
 
 // chatOwners maps each message row of a chat box width columns wide, below
-// its top border, to the message drawn there (-1 for none) and whether the
-// row draws its attachment.
-func (m chatViewModel) chatOwners(width int) ([]int, []bool) {
+// its top border, to the message drawn there (-1 for none) and what the row
+// draws.
+func (m chatViewModel) chatOwners(width int) ([]int, []rowKind) {
 	_, split := m.threadSplit()
 	// The chat beside an open thread draws its composer unfocused.
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
-	_, owners, media := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
-		m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, inner, height)
-	return screenRows(owners, height, -1), screenRows(media, height, false)
+	_, owners, kinds := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
+		m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, m.flashing(),
+		inner, height)
+	return screenRows(owners, height, -1), screenRows(kinds, height, rowText)
 }
 
 // screenRows pads with blank or trims per-line values the way bottomLines
@@ -1728,9 +1786,9 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, nil, false, "", nil, width, height)
+		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, nil, false, "", nil, reactionKey{}, width, height)
 	} else {
-		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, width, height)
+		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, m.flashing(), width, height)
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, m.st.subtle.Render("No messages yet. Say hi!"))

@@ -43,7 +43,10 @@ type WaBackend struct {
 	userCache map[types.JID]string
 	// members are each group's participants as last listed for a mention,
 	// so Send can tell which @numbers in a message are mentions.
-	members     map[types.JID][]types.JID
+	members map[types.JID][]types.JID
+	// reactions holds who reacted with what, by message ID then reacting
+	// user, since WhatsApp sends reactions as separate messages.
+	reactions   map[string]map[string]string
 	recentEmoji []string
 	events      backend.Bus
 	// PairDeadline is told when the pairing socket will close.
@@ -72,6 +75,7 @@ func NewWABackend(configDir string) *WaBackend {
 		msgCache:  make(map[types.JID][]backend.Message),
 		userCache: make(map[types.JID]string),
 		members:   make(map[types.JID][]types.JID),
+		reactions: make(map[string]map[string]string),
 		configDir: configDir,
 	}
 }
@@ -278,6 +282,16 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 	if !evt.IsEdit && reaction == nil && !evt.Info.IsFromMe {
 		wa.unreads[chatJID]++
 	}
+	var reactions []backend.MessageReaction
+	if reaction != nil {
+		user := evt.Info.Sender.User
+		if evt.Info.IsFromMe {
+			user = wa.Jid.User
+		}
+		target := reaction.GetKey().GetID()
+		wa.setReaction(target, user, reaction.GetText())
+		reactions = wa.reactionsOf(target)
+	}
 	// Person-to-person only: not groups, broadcasts or the own number.
 	dm := (chatJID.Server == types.DefaultUserServer || chatJID.Server == types.HiddenUserServer) &&
 		chatJID.User != wa.Jid.User
@@ -290,7 +304,9 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 	case reaction != nil:
 		wa.events.Publish(backend.Event{
 			Kind: backend.EventReaction, Chat: chat,
-			Reaction: &backend.GenericReactionUpdate{MessageID: reaction.GetKey().GetID()},
+			Reaction: &backend.GenericReactionUpdate{
+				MessageID: reaction.GetKey().GetID(), Reactions: reactions,
+			},
 		})
 	default:
 		wa.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chat, DM: dm, Message: &msg})
@@ -435,6 +451,9 @@ func (wa *WaBackend) historySyncMessages(chatJID types.JID, hsmsgs []*waHistoryS
 		if msg.ID == "" {
 			continue
 		}
+		for _, r := range wmi.GetReactions() {
+			wa.setReaction(msg.ID, wa.reactionUser(r.GetKey()), r.GetText())
+		}
 		result = append(result, msg)
 	}
 	return result
@@ -568,13 +587,16 @@ func (wa *WaBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backe
 		return nil, err
 	}
 	wa.mu.Lock()
+	defer wa.mu.Unlock()
 	cached := wa.msgCache[jid]
-	wa.mu.Unlock()
 	if len(cached) > 50 {
 		cached = cached[len(cached)-50:]
 	}
 	result := make([]backend.Message, len(cached))
 	copy(result, cached)
+	for i := range result {
+		result[i].Reactions = wa.reactionsOf(result[i].ID)
+	}
 	return result, nil
 }
 
@@ -817,11 +839,18 @@ func (wa *WaBackend) DeleteChat(ctx context.Context, ch backend.ChatEntry, forEv
 	return fmt.Errorf("chat deletion is not supported for WhatsApp")
 }
 
+// React toggles the user's emoji on msg. WhatsApp allows one reaction per
+// person, so another emoji replaces it and an empty one removes it.
 func (wa *WaBackend) React(ctx context.Context, ch backend.ChatEntry, msg backend.Message, emoji string) ([]backend.MessageReaction, error) {
 	jid, err := wa.chatJID(ch)
 	if err != nil {
 		return nil, err
 	}
+	wa.mu.Lock()
+	if wa.reactions[msg.ID][wa.Jid.User] == emoji {
+		emoji = ""
+	}
+	wa.mu.Unlock()
 	reactionMsg := &waE2E.Message{
 		ReactionMessage: &waE2E.ReactionMessage{
 			Key: &waCommon.MessageKey{
@@ -833,47 +862,67 @@ func (wa *WaBackend) React(ctx context.Context, ch backend.ChatEntry, msg backen
 			SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
 		},
 	}
-	_, err = wa.Client.SendMessage(ctx, jid, reactionMsg)
-	if err != nil {
+	if _, err := wa.Client.SendMessage(ctx, jid, reactionMsg); err != nil {
 		return nil, fmt.Errorf("send reaction: %w", err)
 	}
-	updated := make([]backend.MessageReaction, len(msg.Reactions))
-	copy(updated, msg.Reactions)
-	found := false
-	for i, r := range updated {
-		if r.Chosen {
-			if r.Emoji == emoji {
-				updated[i].Count--
-				updated[i].Chosen = false
-				if updated[i].Count <= 0 {
-					updated = append(updated[:i], updated[i+1:]...)
-				}
-				found = true
-				break
-			}
-			updated[i].Count--
-			updated[i].Chosen = false
-			if updated[i].Count <= 0 {
-				updated = append(updated[:i], updated[i+1:]...)
-			}
-			break
+	wa.mu.Lock()
+	defer wa.mu.Unlock()
+	wa.setReaction(msg.ID, wa.Jid.User, emoji)
+	return wa.reactionsOf(msg.ID), nil
+}
+
+// setReaction records user's reaction to msgID; an empty emoji removes it.
+// The caller holds wa.mu.
+func (wa *WaBackend) setReaction(msgID, user, emoji string) {
+	if emoji == "" {
+		delete(wa.reactions[msgID], user)
+		return
+	}
+	if wa.reactions[msgID] == nil {
+		wa.reactions[msgID] = make(map[string]string)
+	}
+	wa.reactions[msgID][user] = emoji
+}
+
+// reactionsOf counts msgID's reactions, most used first. The caller holds wa.mu.
+func (wa *WaBackend) reactionsOf(msgID string) []backend.MessageReaction {
+	var result []backend.MessageReaction
+	index := make(map[string]int)
+	for user, emoji := range wa.reactions[msgID] {
+		i, ok := index[emoji]
+		if !ok {
+			i = len(result)
+			index[emoji] = i
+			result = append(result, backend.MessageReaction{Emoji: emoji})
+		}
+		result[i].Count++
+		if user == wa.Jid.User {
+			result[i].Chosen = true
 		}
 	}
-	if !found {
-		added := false
-		for i, r := range updated {
-			if r.Emoji == emoji {
-				updated[i].Count++
-				updated[i].Chosen = true
-				added = true
-				break
-			}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
 		}
-		if !added {
-			updated = append(updated, backend.MessageReaction{Emoji: emoji, Count: 1, Chosen: true})
-		}
+		return result[i].Emoji < result[j].Emoji
+	})
+	return result
+}
+
+// reactionUser is the user who sent the reaction with key.
+func (wa *WaBackend) reactionUser(key *waCommon.MessageKey) string {
+	if key.GetFromMe() {
+		return wa.Jid.User
 	}
-	return updated, nil
+	sender := key.GetParticipant()
+	if sender == "" {
+		sender = key.GetRemoteJID()
+	}
+	jid, err := types.ParseJID(sender)
+	if err != nil {
+		return sender
+	}
+	return jid.User
 }
 
 func (wa *WaBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID string) error {

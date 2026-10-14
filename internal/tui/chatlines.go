@@ -104,7 +104,7 @@ func (s *styles) genericSearchResultLines(b backend.Backend, results []backend.M
 // Day and unread dividers sit above the message they introduce; firstUnread
 // is the ID of the oldest message unread when the chat opened ("" for none)
 // and unread holds the IDs of all of them, drawn in bold.
-func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, quotes map[string]*backend.Message, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, width, height int) ([]string, []int, []bool) {
+func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, quotes map[string]*backend.Message, replying *backend.Message, typing bool, firstUnread string, unread map[string]bool, flash reactionKey, width, height int) ([]string, []int, []rowKind) {
 	lineWidth := min(width, textfmt.MaxChatLineWidth)
 	reserved := 0
 	if replying != nil {
@@ -122,7 +122,7 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 			replies[messages[i].ReplyToID]++
 		}
 	}
-	messageLines := func(i int) ([]string, []bool) {
+	messageLines := func(i int) ([]string, []rowKind) {
 		msg := messages[i]
 		quoted := byID[msg.ReplyToID]
 		if quoted == nil {
@@ -132,27 +132,27 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 			quoted = msg.Quote
 		}
 		return s.messageBlock(b, msg, entry, quoted, replies[msg.ID],
-			changed[msg.ID], unread[msg.ID], images[msg.ID],
+			changed[msg.ID], unread[msg.ID], images[msg.ID], flash.on(msg.ID),
 			lineWidth, imageRows(height))
 	}
 	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
-		lines, owners, media := []string{}, []int{}, []bool{}
+		lines, owners, kinds := []string{}, []int{}, []rowKind{}
 		if replying != nil {
 			lines = append(lines, textfmt.ClipLine("replying to "+backend.GenericReplySummary(*replying, entry), lineWidth))
 			owners = append(owners, -1)
-			media = append(media, false)
+			kinds = append(kinds, rowText)
 		}
-		return lines, owners, media
+		return lines, owners, kinds
 	}
 	now := time.Now()
 	dividers := make(map[int]int) // divider lines at the top of each block
 	blocks := make(map[int][]string)
-	blockMedia := make(map[int][]bool)
+	blockKinds := make(map[int][]rowKind)
 	block := func(i int) []string {
 		if lines := blocks[i]; lines != nil {
 			return lines
 		}
-		lines, media := messageLines(i)
+		lines, kinds := messageLines(i)
 		if bg := s.blockShade(messages[i], i == selected); bg != "" {
 			for j := range lines {
 				lines[j] = shadeLine(lines[j], bg, lineWidth)
@@ -169,7 +169,7 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 		dividers[i] = len(top)
 		lines = append(top, lines...)
 		blocks[i] = lines
-		blockMedia[i] = append(make([]bool, len(top)), media...)
+		blockKinds[i] = append(make([]rowKind, len(top)), kinds...)
 		return lines
 	}
 	selectedBlock := block(selected)
@@ -195,14 +195,14 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 	}
 	lines := make([]string, 0, used+1)
 	owners := make([]int, 0, used+1)
-	media := make([]bool, 0, used+1)
+	kinds := make([]rowKind, 0, used+1)
 	for i := start; i < end; i++ {
 		visible := block(i)
 		if i == selected && len(visible) > available {
 			visible = selectedBlock
 		}
 		lines = append(lines, visible...)
-		media = append(media, blockMedia[i][:len(visible)]...)
+		kinds = append(kinds, blockKinds[i][:len(visible)]...)
 		for j := range visible {
 			if j < dividers[i] {
 				owners = append(owners, -1)
@@ -214,14 +214,14 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 	if replying != nil {
 		lines = append(lines, textfmt.ClipLine("replying to "+backend.GenericReplySummary(*replying, entry), lineWidth))
 		owners = append(owners, -1)
-		media = append(media, false)
+		kinds = append(kinds, rowText)
 	}
 	if typing {
 		lines = append(lines, textfmt.ClipLine(textfmt.Plain(entry.Title)+" is typing...", lineWidth))
 		owners = append(owners, -1)
-		media = append(media, false)
+		kinds = append(kinds, rowText)
 	}
-	return lines, owners, media
+	return lines, owners, kinds
 }
 
 // dividerLine centres label in a rule across the chat, like ── yesterday ──.
@@ -280,10 +280,11 @@ func dayLabel(t, now time.Time) string {
 // gutter and header, the text at textIndent, any image or preview card, and
 // a meta row. Nothing in it depends on selection, so columns never move.
 // An unread message has its header and text in bold. Alongside the lines it
-// marks those that draw the attachment: its image card or its [tag] row.
+// marks those that draw the attachment (its image card or its [tag] row) and
+// the meta row. flash is the reaction drawn highlighted, if any.
 func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
-	quoted *backend.Message, replies int, edited, unread bool, img *chatImage,
-	lineWidth, maxImageRows int) ([]string, []bool) {
+	quoted *backend.Message, replies int, edited, unread bool, img *chatImage, flash string,
+	lineWidth, maxImageRows int) ([]string, []rowKind) {
 	gutter := "  "
 	if edited {
 		gutter = "* "
@@ -308,21 +309,45 @@ func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry back
 			lines[i] = boldLine(lines[i])
 		}
 	}
-	media := make([]bool, len(lines), len(lines)+len(below))
+	kinds := make([]rowKind, len(lines), len(lines)+len(below))
 	if tag := mediaTag(msg.MediaLabel); tag != "" {
 		for i, line := range lines {
-			media[i] = strings.Contains(ansi.Strip(line), tag)
+			if strings.Contains(ansi.Strip(line), tag) {
+				kinds[i] = rowMedia
+			}
 		}
 	}
 	lines = append(lines, below...)
 	for range below {
-		media = append(media, true)
+		kinds = append(kinds, rowMedia)
 	}
 	lines = append(lines, s.previewCard(msg.Preview, indent, lineWidth)...)
-	if meta := s.metaRow(b, msg, entry, replies); meta != "" {
+	kinds = append(kinds, make([]rowKind, len(lines)-len(kinds))...)
+	if meta := s.metaRow(b, msg, entry, replies, flash); meta != "" {
 		lines = append(lines, textfmt.ClipLine(strings.Repeat(" ", indent)+meta, lineWidth))
+		kinds = append(kinds, rowMeta)
 	}
-	return lines, append(media, make([]bool, len(lines)-len(media))...)
+	return lines, kinds
+}
+
+// rowKind is what a line of a message block draws, so a click knows what it hit.
+type rowKind uint8
+
+const (
+	rowText  rowKind = iota
+	rowMedia         // the attachment: its image card or [tag] row
+	rowMeta          // reactions, reply count, pin and ticks
+)
+
+// reactionKey names one reaction on one message; the zero value names none.
+type reactionKey struct{ msgID, emoji string }
+
+// on is the emoji to highlight on message id, or "".
+func (k reactionKey) on(id string) string {
+	if k.msgID != id {
+		return ""
+	}
+	return k.emoji
 }
 
 // mediaTag is the first bracket tag of a media label, like "[photo]".
@@ -405,17 +430,20 @@ func messageText(msg backend.Message) string {
 }
 
 // metaRow joins a message's reactions, reply count, pin and read ticks into
-// one dim row, or "" when there is nothing to show.
-func (s *styles) metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry, replies int) string {
+// one dim row, or "" when there is nothing to show. The reaction flash names
+// is drawn reversed.
+func (s *styles) metaRow(b backend.Backend, msg backend.Message, entry backend.ChatEntry,
+	replies int, flash string) string {
 	var reactions []string
-	for _, r := range msg.Reactions {
-		if r.Emoji == "" || r.Count < 1 {
-			continue
-		}
+	for _, r := range shownReactions(msg) {
 		count := fmt.Sprint(r.Count)
-		if r.Chosen {
+		switch {
+		case r.Emoji == flash:
+			reactions = append(reactions, s.accent.Reverse(true).Render(r.Emoji+" "+count))
+			continue
+		case r.Chosen:
 			count = s.accent.Render(count)
-		} else {
+		default:
 			count = s.subtle.Render(count)
 		}
 		reactions = append(reactions, r.Emoji+" "+count)
@@ -435,6 +463,31 @@ func (s *styles) metaRow(b backend.Backend, msg backend.Message, entry backend.C
 		parts = append(parts, s.subtle.Render(tick))
 	}
 	return strings.Join(parts, s.dim.Render(" · "))
+}
+
+// shownReactions are the reactions metaRow draws, in order.
+func shownReactions(msg backend.Message) []backend.MessageReaction {
+	var shown []backend.MessageReaction
+	for _, r := range msg.Reactions {
+		if r.Emoji != "" && r.Count > 0 {
+			shown = append(shown, r)
+		}
+	}
+	return shown
+}
+
+// reactionAt is the reaction metaRow draws at column col of the meta row,
+// counted from the start of the message's text column.
+func reactionAt(msg backend.Message, col int) (string, bool) {
+	x := 0
+	for _, r := range shownReactions(msg) {
+		w := textfmt.DisplayWidth(r.Emoji) + 1 + len(fmt.Sprint(r.Count))
+		if col >= x && col < x+w {
+			return r.Emoji, true
+		}
+		x += w + 2
+	}
+	return "", false
 }
 
 // previewCard draws a link preview as a small box under the message text,
