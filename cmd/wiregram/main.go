@@ -52,8 +52,10 @@ Bots answer an account's incoming private messages as you, through an
 OpenAI-compatible provider added in Settings > AI providers. Every account
 but email can have several: under its Search… sits a Bots section with a
 NAME @handle row for each, which opens the bot's settings in place of the
-chat (a bot registered on Mattermost also gets an Inbox row: its own private
-chats, where what you send goes out as the bot), then New bot….
+chat (a bot registered on Mattermost or Telegram also gets an Inbox row: its
+own private chats, where what you send goes out as the bot), then New bot….
+On Telegram, bots are created through a manager bot of yours (Bot Management
+on in @BotFather), whose token goes in a bot pane's Manager bot row.
 A bot answers all of the account's private chats or the ones picked for it;
 no chat has two bots. The @handle is unique on the account and names the bot
 if it is registered on the network later. A violet ✦ marks accounts with a
@@ -223,8 +225,9 @@ Keyboard shortcuts:
     Up/k, Down/j      Select a setting: status, name, @handle, provider,
                       model, prompt, knowledge files, media, replies (ask me
                       first or automatically), history, chats, bot account
-                      (Mattermost: Register… creates @handle on the server,
-                      then Rotate token… and Unregister…), delete
+                      (Register… creates @handle on Mattermost or Telegram,
+                      then Rotate token… and Unregister…; Telegram first
+                      needs the account's manager bot token), delete
     Enter, Space      Change it; text opens for typing (Enter saves, Esc
                       cancels); Chats opens the chat picker
     Esc, Left/h       Back

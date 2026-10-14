@@ -34,6 +34,7 @@ const (
 	fieldReplies
 	fieldRetention
 	fieldChats
+	fieldManager    // the account's manager bot, on Telegram
 	fieldBotAccount // registering on the network, where the backend can
 	fieldRotate     // these two only while registered
 	fieldUnregister
@@ -117,7 +118,8 @@ func (m agentPaneModel) rows() []agentRow {
 	var rows []agentRow
 	for f := fieldStatus; f <= fieldDelete; f++ {
 		switch {
-		case f == fieldBotAccount && !registered && !m.mgr.Agents.CanRegister(m.acct),
+		case f == fieldManager && !m.mgr.Agents.NeedsManager(m.acct),
+			f == fieldBotAccount && !registered && !m.mgr.Agents.CanRegister(m.acct),
 			(f == fieldRotate || f == fieldUnregister) && !registered:
 			continue
 		}
@@ -273,12 +275,25 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		m.rec.RetentionDays = days
 	case fieldChats:
 		return m.openPicker(), nil
+	case fieldManager:
+		in := textinput.New()
+		in.Prompt = ""
+		in.Placeholder = "paste the manager bot's token"
+		in.EchoMode = textinput.EchoPassword
+		in.CharLimit = 200
+		m.edit, m.editing = in, true
+		m.notice = "A bot with Bot Management on in @BotFather; it creates this account's bots"
+		return m, m.edit.Focus()
 	case fieldBotAccount:
 		if _, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
 			return m, nil
 		}
-		m.confirm = newConfirmModal(m.st, "Register bot", "Create @"+m.rec.Handle+
-			" on "+accountLabel(m.acct)+"? People can then message it, and "+
+		name := "@" + m.rec.Handle
+		if m.mgr.Agents.NeedsManager(m.acct) {
+			name += " (Telegram adds _bot unless it ends in bot)"
+		}
+		m.confirm = newConfirmModal(m.st, "Register bot", "Create "+name+" on "+
+			accountLabel(m.acct)+"? People can then message it, and "+
 			textfmt.Plain(m.rec.Name)+" answers them as the bot.", "Register", false)
 	case fieldRotate:
 		m.confirm = newConfirmModal(m.st, "Rotate token",
@@ -370,6 +385,15 @@ func (m agentPaneModel) saveText(v string) (agentPaneModel, tea.Cmd) {
 		next := m.rec
 		next.Handle = v
 		return m.rename(next)
+	case fieldManager:
+		if v == "" {
+			return m, nil
+		}
+		rt, acct := m.mgr.Agents, m.acct
+		return m.botOp("Checking the manager bot…", func(ctx context.Context) agentBotDone {
+			mgr, err := rt.SetManager(ctx, acct, v)
+			return agentBotDone{err: err, done: "Manager bot @" + mgr.Username + " set"}
+		})
 	case fieldPrompt:
 		m.rec.Prompt = v
 	case fieldKnowledge:
@@ -559,6 +583,11 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 		return "Replies", on(m.rec.Auto, "automatically", "ask me first")
 	case fieldRetention:
 		return "History", fmt.Sprintf("%d days", m.rec.RetentionDays)
+	case fieldManager:
+		if mgr, ok := m.mgr.Agents.Manager(m.acct); ok {
+			return "Manager bot", "@" + mgr.Username + ", for all of " + accountLabel(m.acct)
+		}
+		return "Manager bot", "none: set one to register bots"
 	case fieldBotAccount:
 		if bot, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
 			return "Bot account", "@" + bot.Username + " on " + accountLabel(m.acct)

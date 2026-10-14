@@ -104,11 +104,12 @@ func (m chatListModel) actions() []listAction {
 				entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
 				mark:  m.st.agentMark(rec.Enabled), msg: chatListAgent{id: rec.ID}, bot: true,
 			})
-			if _, ok := m.mgr.Agents.Registration(rec.ID); ok {
+			if reg, ok := m.mgr.Agents.Registration(rec.ID); ok {
+				// The registered username, which on Telegram ends in bot.
 				acts = append(acts, listAction{
 					entry: backend.ChatEntry{Title: "  Inbox",
 						Unread: m.mgr.Agents.InboxWaiting(rec.ID)},
-					msg: chatListInbox{inboxBot{id: rec.ID, name: rec.Name, handle: rec.Handle}},
+					msg: chatListInbox{inboxBot{id: rec.ID, name: rec.Name, handle: reg.Username}},
 					bot: true,
 				})
 			}

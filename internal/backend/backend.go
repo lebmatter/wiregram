@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -262,6 +263,19 @@ type BotRegistrar interface {
 	// ConnectBot signs in as the bot; the caller runs the returned backend.
 	ConnectBot(ctx context.Context, bot BotAccount) (Backend, error)
 }
+
+// BotManaged is implemented by backends whose bots are created and
+// controlled through a manager bot the user owns (Telegram's managed bots).
+type BotManaged interface {
+	// CheckManager signs in as the manager bot and confirms it may manage bots.
+	CheckManager(ctx context.Context, token string) (BotAccount, error)
+	// WithManager is the registrar acting through manager; with none, the
+	// calls that need it fail with ErrNoBotManager.
+	WithManager(manager BotAccount) BotRegistrar
+}
+
+// ErrNoBotManager means the account needs a manager bot set first.
+var ErrNoBotManager = errors.New("set a manager bot for this account first")
 
 // BotAccount is a bot registered on the network and the token it signs in with.
 type BotAccount struct {

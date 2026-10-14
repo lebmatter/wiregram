@@ -233,7 +233,10 @@ These are project constraints, not suggestions:
   the thread as context (`replyTarget`); elsewhere it quotes the message.
   `wiregram dry-run` drafts the owning bot's reply without sending (`agentRuntime.DryRun`).
 - A bot can be registered on its network where the backend implements
-  `backend.BotRegistrar` (Mattermost): Register… creates `@handle` as a bot the user owns and
+  `backend.BotRegistrar` (Mattermost) or `backend.BotManaged` (Telegram, through managed
+  bots: the user's session calls `bots.createBot` with the account's manager bot, kept in
+  `bot_managers`, which exports the token; a Telegram bot connects as `telegram.BotBackend`,
+  which keeps the chats it sees because bots cannot load history): Register… creates `@handle` as a bot the user owns and
   stores its token in `agent_registrations`. The runtime signs each enabled, registered bot
   in with `ConnectBot` (`internal/account/bots.go`) and answers DMs sent to the bot as the
   bot (`ConvKey.Bot`); every DM to the bot is its own, outside the claims rule. Renames go

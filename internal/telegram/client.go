@@ -80,6 +80,11 @@ func (s sessionStorage) StoreSession(_ context.Context, data []byte) error {
 }
 
 func NewClient(cfg config.Config, db *store.DB, account string, report func(error)) (*Client, error) {
+	return newClient(cfg, sessionStorage{db: db, account: account}, report), nil
+}
+
+// newClient builds a client keeping its MTProto session in storage.
+func newClient(cfg config.Config, storage telegram.SessionStorage, report func(error)) *Client {
 	c := &Client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
 		unreads: make(map[peerKey]int), autoLock: cfg.AutoLock == 1,
@@ -102,13 +107,13 @@ func NewClient(cfg config.Config, db *store.DB, account string, report func(erro
 	})
 	c.Updates = updates.New(updates.Config{Handler: telegram.UpdateHandlerFunc(c.handleUpdates)})
 	c.Telegram = telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
-		SessionStorage: sessionStorage{db: db, account: account},
+		SessionStorage: storage,
 		UpdateHandler:  c.Updates,
 		Middlewares:    []telegram.Middleware{middleware, hook.UpdateHook(c.Updates.Handle)},
 	})
 	c.Api = c.Telegram.API()
 	c.Report = report
-	return c, nil
+	return c
 }
 
 func (c *Client) Remember(users []tg.UserClass, chats []tg.ChatClass) {

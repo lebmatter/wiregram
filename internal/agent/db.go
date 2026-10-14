@@ -9,7 +9,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 6
+const currentDBVersion = 7
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -142,6 +142,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV6)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV7)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -162,6 +166,17 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV7 keeps each account's manager bot, through which its Telegram bots
+// are created and their tokens exported.
+const schemaV7 = `
+CREATE TABLE bot_managers (
+	account_key TEXT PRIMARY KEY,
+	bot_user_id TEXT NOT NULL,
+	username    TEXT NOT NULL,
+	token       TEXT NOT NULL
+);
+`
 
 // schemaV6 records the agents registered as bots on their network, with the
 // token each signs in with.
@@ -719,6 +734,29 @@ func (d *AgentDB) DeleteRegistration(agentID int64) error {
 	return nil
 }
 
+// Manager is the account's manager bot, if it has one.
+func (d *AgentDB) Manager(accountKey string) (backend.BotAccount, bool, error) {
+	var b backend.BotAccount
+	err := d.db.QueryRow(`SELECT bot_user_id, username, token FROM bot_managers
+		WHERE account_key = ?`, accountKey).Scan(&b.UserID, &b.Username, &b.Token)
+	switch {
+	case err == sql.ErrNoRows:
+		return b, false, nil
+	case err != nil:
+		return b, false, fmt.Errorf("read the manager bot: %w", err)
+	}
+	return b, true, nil
+}
+
+func (d *AgentDB) SetManager(accountKey string, b backend.BotAccount) error {
+	if _, err := d.db.Exec(`INSERT OR REPLACE INTO bot_managers
+		(account_key, bot_user_id, username, token) VALUES (?, ?, ?, ?)`,
+		accountKey, b.UserID, b.Username, b.Token); err != nil {
+		return fmt.Errorf("save the manager bot: %w", err)
+	}
+	return nil
+}
+
 // DeleteAccount drops the account's agent and the record of what it sent.
 func (d *AgentDB) DeleteAccount(key string) error {
 	if _, err := d.db.Exec(`DELETE FROM agents WHERE account_key = ?`, key); err != nil {
@@ -726,6 +764,9 @@ func (d *AgentDB) DeleteAccount(key string) error {
 	}
 	if _, err := d.db.Exec(`DELETE FROM agent_sent WHERE account_key = ?`, key); err != nil {
 		return fmt.Errorf("delete agent sent messages: %w", err)
+	}
+	if _, err := d.db.Exec(`DELETE FROM bot_managers WHERE account_key = ?`, key); err != nil {
+		return fmt.Errorf("delete the manager bot: %w", err)
 	}
 	return nil
 }

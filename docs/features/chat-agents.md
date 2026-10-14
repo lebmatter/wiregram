@@ -96,7 +96,8 @@ some, a new bot starts with none and its chat picker opens right away.
 | Replies | ask me first, or automatically |
 | History | 7, 30 or 90 days |
 | Chats | all private chats, or N selected; opens the chat picker |
-| Bot account | Mattermost only: not registered (Register…), or `@handle on` the account |
+| Manager bot | Telegram only: the account's manager bot; <kbd>Enter</kbd> pastes its token |
+| Bot account | Mattermost and Telegram: not registered (Register…), or `@username on` the account |
 | Rotate token…, Unregister… | while registered; each asks first |
 | Delete bot… | asks first, starting on Cancel; a registered bot is disabled on the server first |
 
@@ -154,9 +155,37 @@ bot accounts.
   token and disables the bot on the server; you can register it again later.
 - Deleting a registered bot, or removing its account, disables it on the server first.
 
+## Registering a bot on Telegram
+
+Telegram bots are created inside wiregram through Telegram's
+[managed bots](https://core.telegram.org/api/bots/managed-bots): your account creates the
+bot, which you own, and a **manager bot** of yours controls it and hands wiregram its
+token. Each Telegram account needs its manager bot once:
+
+1. In @BotFather, create a bot (or pick one of yours) and turn on **Bot Management** in
+   its settings.
+2. In any bot's pane on that account, <kbd>Enter</kbd> on **Manager bot** and paste that
+   bot's token. Wiregram checks that it may manage bots and keeps it in `wiregram.db`.
+
+Then **Register…** on a bot's Bot account row creates it on Telegram:
+
+- Its username is the handle, with `_bot` added unless it already ends in `bot`
+  (Telegram requires it). If it's taken, change the handle and register again; one of your
+  own bots under the same manager is taken back instead.
+- A Telegram bot's username can't change afterwards, so the handle stays as registered;
+  renaming the Name renames the bot.
+- **Rotate token…** has the manager issue a new token. **Unregister…** revokes the token,
+  so the bot stops answering; Telegram has no call to delete a bot, so delete it in
+  @BotFather to free the username.
+- Errors come back in one line: too many bots (delete one in @BotFather; Premium raises the
+  limit), a manager without Bot Management, a refused token.
+
+A Telegram bot can't load its chats or their history, so its inbox holds only the private
+chats and messages it receives while wiregram runs.
+
 ### The bot inbox
 
-A registered bot gets an **Inbox** row under its row in the Bots section, with the number
+A registered bot (on Mattermost or Telegram) gets an **Inbox** row under its row in the Bots section, with the number
 of replies waiting for approval. <kbd>Enter</kbd> on it opens the bot's own private chats
 as cards over its connection, those with a reply waiting first, marked
 **✦ reply waiting**. <kbd>Enter</kbd> or a click on a card opens the chat, titled
@@ -171,8 +200,7 @@ as cards over its connection, those with a reply waiting first, marked
 The inbox needs the bot on and its account online, since it reads over the bot's
 connection.
 
-The token is kept in `wiregram.db` and never shown. Telegram registration is planned
-through Telegram's managed bots.
+Tokens are kept in `wiregram.db` and never shown.
 
 ## Approving replies
 

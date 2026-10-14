@@ -29,11 +29,11 @@ func (rt *agentRuntime) syncBots() {
 	wanted := make(map[int64]bool)
 	for _, acct := range accounts {
 		s := acct.Snapshot()
-		reg, ok := s.Backend.(backend.BotRegistrar)
+		key := rt.mgr.AccountKey(acct)
+		reg, ok := rt.registrarOf(key, s.Backend)
 		if !ok || s.Status != "online" {
 			continue
 		}
-		key := rt.mgr.AccountKey(acct)
 		for _, rec := range rt.records[key] {
 			bot, registered := rt.regs[rec.ID]
 			if rt.agents[rec.ID] == nil || !registered {
@@ -136,24 +136,72 @@ func (rt *agentRuntime) BotBackend(agentID int64) backend.Backend {
 	return nil
 }
 
-// registrar is the account's backend when it is online and can manage bots.
-func registrar(a *Account) (backend.BotRegistrar, error) {
+// registrar is the account's backend when it is online and can manage bots,
+// acting through the account's manager bot where the network needs one.
+func (rt *agentRuntime) registrar(a *Account) (backend.BotRegistrar, error) {
 	s := a.Snapshot()
-	r, ok := s.Backend.(backend.BotRegistrar)
-	switch {
-	case s.Backend == nil || s.Status != "online":
+	if s.Backend == nil || s.Status != "online" {
 		return nil, fmt.Errorf("%s is offline; connect it first", a.Handle())
-	case !ok:
-		return nil, fmt.Errorf("bots can't be registered on this network yet")
+	}
+	r, ok := rt.registrarOf(rt.mgr.AccountKey(a), s.Backend)
+	if !ok {
+		return nil, fmt.Errorf("bots can't be registered on this network")
 	}
 	return r, nil
+}
+
+// registrarOf is b as a registrar, through the account's manager bot if it
+// needs one; without a manager the calls needing it fail with ErrNoBotManager.
+func (rt *agentRuntime) registrarOf(key string, b backend.Backend) (backend.BotRegistrar, bool) {
+	if r, ok := b.(backend.BotRegistrar); ok {
+		return r, true
+	}
+	m, ok := b.(backend.BotManaged)
+	if !ok {
+		return nil, false
+	}
+	manager, _, _ := rt.Db.Manager(key)
+	return m.WithManager(manager), true
+}
+
+// NeedsManager reports whether the account's bots go through a manager bot.
+func (rt *agentRuntime) NeedsManager(a *Account) bool {
+	_, ok := a.Snapshot().Backend.(backend.BotManaged)
+	return ok
+}
+
+// Manager is the account's manager bot, if it has one.
+func (rt *agentRuntime) Manager(a *Account) (backend.BotAccount, bool) {
+	m, ok, err := rt.Db.Manager(rt.mgr.AccountKey(a))
+	return m, ok && err == nil
+}
+
+// SetManager checks that token belongs to a bot that may manage bots and
+// keeps it as the account's manager bot.
+func (rt *agentRuntime) SetManager(ctx context.Context, a *Account, token string) (
+	backend.BotAccount, error) {
+	s := a.Snapshot()
+	m, ok := s.Backend.(backend.BotManaged)
+	switch {
+	case s.Backend == nil || s.Status != "online":
+		return backend.BotAccount{}, fmt.Errorf("%s is offline; connect it first", a.Handle())
+	case !ok:
+		return backend.BotAccount{}, fmt.Errorf("this network has no manager bots")
+	}
+	manager, err := m.CheckManager(ctx, token)
+	if err != nil {
+		return manager, err
+	}
+	return manager, rt.Db.SetManager(rt.mgr.AccountKey(a), manager)
 }
 
 // CanRegister reports whether the account's bots can be registered on its
 // network.
 func (rt *agentRuntime) CanRegister(a *Account) bool {
-	_, ok := a.Snapshot().Backend.(backend.BotRegistrar)
-	return ok
+	b := a.Snapshot().Backend
+	_, registrar := b.(backend.BotRegistrar)
+	_, managed := b.(backend.BotManaged)
+	return registrar || managed
 }
 
 // Registration is the agent's bot account, if it is registered.
@@ -167,7 +215,7 @@ func (rt *agentRuntime) Registration(agentID int64) (backend.BotAccount, bool) {
 // Register creates the agent's bot on the account's network, named by its
 // handle, and connects it.
 func (rt *agentRuntime) Register(ctx context.Context, a *Account, agentID int64) error {
-	r, err := registrar(a)
+	r, err := rt.registrar(a)
 	if err != nil {
 		return err
 	}
@@ -195,7 +243,7 @@ func (rt *agentRuntime) Rename(ctx context.Context, a *Account, agentID int64,
 	if !ok {
 		return nil
 	}
-	r, err := registrar(a)
+	r, err := rt.registrar(a)
 	if err != nil {
 		return err
 	}
@@ -212,7 +260,7 @@ func (rt *agentRuntime) RotateToken(ctx context.Context, a *Account, agentID int
 	if !ok {
 		return fmt.Errorf("that bot is not registered")
 	}
-	r, err := registrar(a)
+	r, err := rt.registrar(a)
 	if err != nil {
 		return err
 	}
@@ -236,7 +284,7 @@ func (rt *agentRuntime) Unregister(ctx context.Context, a *Account, agentID int6
 	if !ok {
 		return nil
 	}
-	r, err := registrar(a)
+	r, err := rt.registrar(a)
 	if err != nil {
 		return err
 	}
