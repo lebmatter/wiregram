@@ -80,8 +80,8 @@ Commands (for scripts and AI agents; output is one JSON object per line):
   WhatsApp is not available: it allows one connection, and a command would
   disconnect the running app. ACCOUNT is the Telegram phone number, the
   Mattermost username, the Matrix ID or the email address, as accounts
-  shows it. RECIPIENT is a chat ID or title, or, for send, a username,
-  Matrix ID or email address. Accounts are signed in from the app first.
+  shows it. RECIPIENT is a chat ID or title, a username, a Matrix ID or
+  an email address; naming a public channel you have not joined joins it. Accounts are signed in from the app first.
   The commands can run beside the app.
 
 Keyboard shortcuts:

@@ -26,8 +26,9 @@ Every command that needs an account takes `BACKEND ACCOUNT`:
 - `ACCOUNT`: the `account` field of `wiregram accounts` — the Telegram phone
   number, Mattermost username, Matrix ID or email address.
 
-`RECIPIENT` is a chat ID (the `chat` field), a chat title, or — for `send`
-only — a username, Matrix ID or email address. A name that matches more than
+`RECIPIENT` is a chat ID (the `chat` field), a chat title, a username, a
+Matrix ID or an email address. A DM's title is the person's display name, so
+prefer the username for people. A name that matches more than
 one chat is an error; use the chat ID then.
 
 ## Commands

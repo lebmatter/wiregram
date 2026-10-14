@@ -174,10 +174,11 @@ func chatKind(e backend.ChatEntry) (kind, title string) {
 	return "group", title
 }
 
-// findChat resolves a recipient by chat ID or title among the chats, then,
-// when search is set, through the backend's user search.
+// findChat resolves a recipient by chat ID or title among the chats, then
+// through the backend's user search, since a DM's title is the person's
+// display name rather than their username.
 func findChat(ctx context.Context, b backend.Backend, entries []backend.ChatEntry,
-	recipient string, search bool) (backend.ChatEntry, error) {
+	recipient string) (backend.ChatEntry, error) {
 	for _, e := range entries {
 		if e.ID.Id == recipient {
 			return e, nil
@@ -196,12 +197,10 @@ func findChat(ctx context.Context, b backend.Backend, entries []backend.ChatEntr
 	if len(matches) > 1 {
 		return backend.ChatEntry{}, fmt.Errorf("%s matches more than one chat; use its chat ID", recipient)
 	}
-	if search {
-		if c, ok, err := searchUser(ctx, b, recipient); err != nil {
-			return backend.ChatEntry{}, err
-		} else if ok {
-			return b.OpenUserCandidate(ctx, c)
-		}
+	if c, ok, err := searchUser(ctx, b, recipient); err != nil {
+		return backend.ChatEntry{}, err
+	} else if ok {
+		return b.OpenUserCandidate(ctx, c)
 	}
 	return backend.ChatEntry{}, fmt.Errorf("no chat or user %s; wiregram chats lists them", recipient)
 }
@@ -365,7 +364,7 @@ func cmdSend(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load chats: %w", err)
 	}
-	ch, err := findChat(ctx, b, entries, flags.Arg(2), true)
+	ch, err := findChat(ctx, b, entries, flags.Arg(2))
 	if err != nil {
 		return err
 	}
@@ -436,7 +435,7 @@ func cmdStream(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("load chats: %w", err)
 		}
-		ch, err := findChat(ctx, b, entries, args[2], false)
+		ch, err := findChat(ctx, b, entries, args[2])
 		if err != nil {
 			return err
 		}
