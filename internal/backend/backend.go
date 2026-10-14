@@ -357,10 +357,14 @@ func GenericMessageLine(msg Message, ch ChatEntry, byID map[string]*Message) str
 // genericMessagePrefix is the fixed-width "[HH:MM] <nick>" column.
 func GenericMessagePrefix(msg Message, ch ChatEntry) string {
 	sender := GenericMessageSender(msg)
-	nickPart := "<" + textfmt.FormatNick(sender) + ">"
-	if ch.IsGroup {
-		nickPart = textfmt.NickColor(sender) + nickPart + "\033[0m"
+	color := textfmt.NickColor(sender)
+	if !ch.IsGroup {
+		color = textfmt.DMPeerColor
+		if msg.Outgoing {
+			color = textfmt.DMSelfColor
+		}
 	}
+	nickPart := color + "<" + textfmt.FormatNick(sender) + ">\033[0m"
 	return genericMessageTimestamp(msg.Timestamp) + " " + nickPart
 }
 

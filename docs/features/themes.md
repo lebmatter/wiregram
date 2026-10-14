@@ -15,7 +15,7 @@ the same in every theme:
 - status glyphs
 - chat kinds: DM green, group blue, channel yellow
 - links (underlined)
-- nick colours, one per sender
+- nick colours: one per sender in groups; in a DM, cyan for you and yellow for them
 
 Violet is kept for [AI powered chat bots](/features/chat-bots): the ✦ icon, the suggestion card
 and messages a bot sent.

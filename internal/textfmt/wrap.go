@@ -12,6 +12,13 @@ var nickColors = [...]string{
 	"\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[95m", "\033[96m",
 }
 
+// DMSelfColor and DMPeerColor are the two nick colours of a private chat:
+// fixed rather than hashed, so the two sides always differ.
+const (
+	DMSelfColor = "\033[36m"
+	DMPeerColor = "\033[33m"
+)
+
 func NickColor(name string) string {
 	h := uint32(0)
 	for _, r := range name {
