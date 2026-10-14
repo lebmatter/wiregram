@@ -681,6 +681,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			m.focus = focusChat
 		}
 		return m, nil
+	case k == "left" && m.twoPane() && paneFocused && m.unreadOpen:
+		m.focus = focusList
+		return m, nil
+	case k == "right" && m.twoPane() && !paneFocused && m.unreadOpen && m.list.confirm == nil:
+		m.focus = focusChat
+		return m, nil
 	case k == "esc" && !paneFocused && m.paneOpen() && m.list.confirm == nil:
 		m = m.closeChat()
 		return m, loadDialogs(m.ctx, m.b, m.archived)
