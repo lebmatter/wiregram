@@ -254,9 +254,9 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 	m.histories[entry.ID] = h
 	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h, m.kitty)
 	m.chat.target = target
-	m = m.withAgentSent()
 	m.backToMentions = false
 	m.chatOpen = true
+	m = m.withAgentSent()
 	m.focus = focusChat
 	m = m.sized()
 	return m, tea.Batch(m.chat.Init(), reload)
