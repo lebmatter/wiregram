@@ -171,6 +171,8 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 			return m, func() tea.Msg { return unreadClosed{} }
 		case "r":
 			return m.load()
+		case "/":
+			return m, func() tea.Msg { return chatListSearch{} }
 		case "up", "k":
 			m.selected = max(0, m.selected-1)
 		case "down", "j":
@@ -264,6 +266,7 @@ func (m unreadModel) helpKeys() []helpKey { return unreadHelp }
 var unreadHelp = []helpKey{
 	{"↑↓", "select"},
 	{"enter/click", "open chat"},
+	{"/", "search"},
 	{"r", "reload"},
 	{"esc", "back"},
 }

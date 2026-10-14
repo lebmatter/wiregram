@@ -91,6 +91,7 @@ Keyboard shortcuts:
     Up/k, Down/j      Select card
     Enter             Open the chat; a mention opens selected, in its thread
                       on Mattermost
+    /                 Search users
     r                 Reload
     Esc               Back
 
