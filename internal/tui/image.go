@@ -32,10 +32,15 @@ const (
 
 // chatImage is an inline image of one message: loading until img or failed
 // is set. Rendered lines are memoised per size; View fills the shared map.
+// With kitty graphics, placed holds the terminal image of each size drawn
+// and want the sizes asked for since Update last placed them.
 type chatImage struct {
 	img    image.Image
 	failed bool
 	lines  map[[2]int][]string
+	kitty  bool
+	placed map[[2]int]uint32
+	want   map[[2]int]bool
 }
 
 type chatImageLoaded struct {
@@ -46,12 +51,60 @@ type chatImageLoaded struct {
 
 func (c *chatImage) render(cols, rows int) []string {
 	key := [2]int{cols, rows}
+	if c.kitty {
+		c.want[key] = true
+		if id, ok := c.placed[key]; ok {
+			return kittyLines(id, cols, rows)
+		}
+	}
 	if lines, ok := c.lines[key]; ok {
 		return lines
 	}
 	lines := halfblock.Render(c.img, cols, rows)
 	c.lines[key] = lines
 	return lines
+}
+
+// placeImages sends the terminal each image size the last layout asked for.
+// An image drawn at a new size, after a resize, drops its other sizes; one
+// scrolled out of view keeps them for when it comes back.
+func (m chatViewModel) placeImages() tea.Cmd {
+	if m.kitty == nil {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, c := range m.images {
+		if c.img == nil || len(c.want) == 0 {
+			continue
+		}
+		for key, id := range c.placed {
+			if !c.want[key] {
+				m.kitty.stale = append(m.kitty.stale, id)
+				delete(c.placed, key)
+			}
+		}
+		for key := range c.want {
+			if _, ok := c.placed[key]; !ok {
+				id := m.kitty.newID()
+				c.placed[key] = id
+				cmds = append(cmds, kittyTransmit(c.img, id, key[0], key[1]))
+			}
+		}
+		clear(c.want)
+	}
+	return tea.Batch(cmds...)
+}
+
+// dropImages marks every image of the chat for deletion as it closes.
+func (m chatViewModel) dropImages() {
+	if m.kitty == nil {
+		return
+	}
+	for _, c := range m.images {
+		for _, id := range c.placed {
+			m.kitty.stale = append(m.kitty.stale, id)
+		}
+	}
 }
 
 // imageRows is the tallest an inline image may be in a pane height rows high.
@@ -158,12 +211,16 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 		if !ok {
 			continue
 		}
-		m.images[msg.ID] = &chatImage{lines: make(map[[2]int][]string)}
+		m.images[msg.ID] = &chatImage{lines: make(map[[2]int][]string), kitty: m.kitty != nil,
+			placed: make(map[[2]int]uint32), want: make(map[[2]int]bool)}
 		dir, err := mediaDir(m.b, m.entry, msg)
 		if err != nil {
 			continue
 		}
-		ctx, b := m.ctx, m.b
+		ctx, b, keep := m.ctx, m.b, imageKeepWidth
+		if m.kitty != nil {
+			keep = kittyKeepWidth
+		}
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
@@ -171,7 +228,7 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 			if err != nil {
 				return chatImageLoaded{id: msg.ID, err: err}
 			}
-			img, err := halfblock.Load(path, imageKeepWidth)
+			img, err := halfblock.Load(path, keep)
 			return chatImageLoaded{id: msg.ID, img: img, err: err}
 		})
 	}

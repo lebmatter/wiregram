@@ -55,6 +55,7 @@ type chatViewModel struct {
 	changedMessages  map[string]bool
 	previews         map[string]*backend.LinkPreview // by URL; nil = asked, none yet
 	images           map[string]*chatImage           // by message ID
+	kitty            *kittyImages                    // nil without kitty graphics
 	quotes           map[string]*backend.Message     // unloaded originals by ID; nil = asked
 	threads          map[string][]backend.Message    // whole threads by root ID; nil = asked
 	historyExhausted bool
@@ -223,7 +224,7 @@ type chatSearchResult struct {
 }
 type chatSearchDebounce struct{}
 
-func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry backend.ChatEntry, histories *[]string) chatViewModel {
+func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry backend.ChatEntry, histories *[]string, kitty *kittyImages) chatViewModel {
 	ctx, cancel := context.WithCancel(ctx)
 	w, h := termSize()
 	ti := textinput.New()
@@ -250,6 +251,7 @@ func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry 
 		threads:         make(map[string][]backend.Message),
 		previews:        make(map[string]*backend.LinkPreview),
 		images:          make(map[string]*chatImage),
+		kitty:           kitty,
 		input:           ti,
 		sends:           make(chan chatOutgoing),
 		autoLock:        b.AutoLockEnabled(),
@@ -421,14 +423,18 @@ func (m chatViewModel) clearSelectedChanged() chatViewModel {
 	return m
 }
 
-// Update handles msg, then fetches any image it brought into view.
 func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
-	m, cmd := m.update(msg)
+	return m.update(msg)
+}
+
+// imagesMoved reports whether msg may have brought images into view; the
+// root then fetches and places them once it has laid out the chat.
+func imagesMoved(msg tea.Msg) bool {
 	switch msg.(type) {
 	case spinner.TickMsg, lockTick, mediaProgressTick:
-		return m, cmd // nothing moved
+		return false
 	}
-	return m, tea.Batch(cmd, m.loadVisibleImages())
+	return true
 }
 
 func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {

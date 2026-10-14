@@ -77,7 +77,7 @@ These are project constraints, not suggestions:
 
 - The UI is a BubbleTea TUI styled with lipgloss; shared colors, boxes,
   footer and account tags live in `internal/tui/render.go`. Kitty graphics sequences are
-  used only by the media viewer (mpv via `tea.Exec`).
+  used by the media viewer (mpv via `tea.Exec`) and for inline images in kitty and Ghostty.
 - Startup shows the `wiregramLogo` splash (`internal/tui/splash.go`) for about a second.
 - There is no header bar. Inside an account the screen is the body and a
   `bubbles/help` footer with the notice on the right. Help hides keys the
@@ -172,7 +172,10 @@ These are project constraints, not suggestions:
   the Matrix homeserver's `preview_url`, fetched once per link in the
   background. Wiregram never fetches linked pages itself.
 - Still images (`Message.Image`, up to `backend.MaxInlineImage`) draw inline
-  with truecolor `▄` half-blocks (`internal/halfblock`) in a rounded card
+  in a rounded card. In kitty and Ghostty outside tmux (`kittyGraphics`, from `TERM`,
+  `TERM_PROGRAM` and `KITTY_WINDOW_ID`) they are kitty images sent with `tea.Raw` and drawn
+  with Unicode placeholder cells (`internal/tui/kitty.go`), one terminal image per card size,
+  blanked under modals. Elsewhere they use truecolor `▄` half-blocks (`internal/halfblock`). The card is
   titled with the media label, the caption inside under the image, in the chat
   and the thread pane. Only messages on screen are fetched; downloads live in
   `os.UserCacheDir()/wiregram/media`, shared with click-to-open, and are pruned

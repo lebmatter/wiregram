@@ -164,7 +164,7 @@ func (s *styles) fadeUnder(bg, box string, x, y int) string {
 	lines := strings.Split(bg, "\n")
 	rows := strings.Split(box, "\n")
 	for i, line := range lines {
-		line = ansi.Strip(line)
+		line = blankPlaceholders(ansi.Strip(line))
 		r := i - y
 		if r < 0 || r >= len(rows) {
 			lines[i] = s.dim.Render(line)

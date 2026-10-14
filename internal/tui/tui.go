@@ -55,6 +55,7 @@ type tuiModel struct {
 	backToMentions bool
 	focus          tuiFocus
 	result         *tuiResult
+	kitty          *kittyImages // nil without kitty graphics
 	loadErr        error
 	width          int
 	height         int
@@ -110,6 +111,9 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		width:         w,
 		height:        h,
 	}
+	if kittyGraphics() {
+		m.kitty = &kittyImages{}
+	}
 	m.list = newChatListModel(ctx, m.st, mgr, active, b, entries, false, archiveUnread)
 	return m.sized()
 }
@@ -162,7 +166,7 @@ func (m tuiModel) sized() tuiModel {
 
 func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
 	m.result = &result
-	return m, tea.Quit
+	return m, tea.Sequence(m.kitty.deleteAll(), tea.Quit)
 }
 
 func (m tuiModel) closeChat() tuiModel {
@@ -174,6 +178,7 @@ func (m tuiModel) closeChat() tuiModel {
 	}
 	m.histories[m.chat.entry.ID] = *m.chat.histories
 	m.chat.cleanup()
+	m.chat.dropImages()
 	m.chatOpen = false
 	m.focus = focusList
 	return m
@@ -210,7 +215,7 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 		h = make([]string, 0)
 	}
 	m.histories[entry.ID] = h
-	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h)
+	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h, m.kitty)
 	m.chat.target = target
 	m.backToMentions = false
 	m.chatOpen = true
@@ -219,9 +224,15 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 	return m, tea.Batch(m.chat.Init(), reload)
 }
 
+// Update handles msg, then fetches any image it brought into view and sends
+// the terminal the kitty images the chat now draws.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
-	return next.sized(), cmd
+	next = next.sized()
+	if next.chatOpen && imagesMoved(msg) {
+		cmd = tea.Batch(cmd, next.chat.loadVisibleImages(), next.chat.placeImages())
+	}
+	return next, tea.Batch(cmd, next.kitty.flush())
 }
 
 func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
