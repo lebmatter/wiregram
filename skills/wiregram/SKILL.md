@@ -51,11 +51,12 @@ wiregram send -reply p9x2… mattermost alice town-square "Thanks!"     # reply 
 
 `-reply` goes before the positional arguments.
 
-## Testing the user's Chat Agent
+## Testing the user's bots
 
-If the account has a Chat Agent (set up by the user in the app), `dry-run`
-prints the reply it would give, without sending or recording anything. It
-works while the agent is paused.
+An account can have several bots (Chat Agents, set up by the user in the
+app), each answering its own private chats; no chat has two. `dry-run`
+prints the reply the bot answering the chat would give, without sending or
+recording anything. It works while the bot is paused.
 
 ```sh
 wiregram dry-run mattermost alice bob                    # newest incoming message
@@ -65,10 +66,11 @@ wiregram dry-run -message p9x2… -message q7d1… mattermost alice bob
 #  "message":"are you coming?","reply":"Yes, in ten minutes."}
 ```
 
-- It uses up to 20 earlier messages as history, and the agent's prompt,
+- `agent` is the name of the bot that answered.
+- It uses up to 20 earlier messages as history, and the bot's prompt,
   knowledge and media mode. One line per message.
-- It refuses group chats, chats outside the agent's selected chats, the
-  user's own messages, and media messages for text-only agents.
+- It refuses group chats, chats no bot of the account answers, the user's
+  own messages, and media messages for text-only bots.
 - `-message` goes before the positional arguments.
 
 ## Message lines

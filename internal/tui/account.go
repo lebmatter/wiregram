@@ -285,9 +285,9 @@ func (m accountListModel) frame() string {
 		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, m.st.accountGlyph(s), label,
 			m.st.dim.Render(backendTag(a.BackendType)), m.st.subtle.Render(status))
 		if m.mgr.Agents != nil {
-			if rec, ok := m.mgr.Agents.AgentFor(a); ok {
-				row += "  " + m.st.agentMark(rec.Enabled) + " " +
-					m.st.subtle.Render(textfmt.Plain(rec.Name))
+			if bots := m.mgr.Agents.AgentsFor(a); len(bots) > 0 {
+				row += "  " + m.st.agentMark(anyEnabled(bots)) + " " +
+					m.st.subtle.Render(botNames(bots))
 			}
 		}
 		if i == m.selected {

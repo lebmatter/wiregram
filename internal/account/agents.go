@@ -68,16 +68,14 @@ type Suggestion struct {
 type runningAgent struct {
 	record   agent.AgentRecord
 	provider agent.AgentProvider
-	chats    map[string]bool // the DMs it answers when record.AllChats is off
 }
 
-// binding is one account's live subscription for its agent. It is replaced
-// when the backend, the agent or the agent's media mode changes.
+// binding is one account's live subscription for its agents. It is replaced
+// when the backend changes, or whether every enabled agent is text-only.
 type binding struct {
-	backend backend.Backend
-	sub     *backend.Subscription
-	agentID int64
-	media   string
+	backend  backend.Backend
+	sub      *backend.Subscription
+	textOnly bool
 }
 
 // convWorker serialises replies for one conversation. wake is a one-slot
@@ -95,10 +93,10 @@ type agentRuntime struct {
 	mgr *AccountManager
 
 	mu         sync.Mutex
-	agents     map[int64]*runningAgent      // enabled agents only
-	bindings   map[string]int64             // account key → enabled agent
-	records    map[string]agent.AgentRecord // account key → agent, paused ones too
-	problems   map[int64]string             // last failure per agent, one plain line
+	agents     map[int64]*runningAgent        // enabled agents only
+	records    map[string][]agent.AgentRecord // account key → agents, paused ones too
+	claims     map[string]agent.ChatClaims    // account key → which agent answers each DM
+	problems   map[int64]string               // last failure per agent, one plain line
 	pending    map[ConvKey]Suggestion
 	workers    map[ConvKey]*convWorker
 	subscribed map[*Account]*binding
@@ -115,8 +113,8 @@ func NewAgentRuntime(ctx context.Context, db *agent.AgentDB, mgr *AccountManager
 		Db:         db,
 		mgr:        mgr,
 		agents:     make(map[int64]*runningAgent),
-		bindings:   make(map[string]int64),
-		records:    make(map[string]agent.AgentRecord),
+		records:    make(map[string][]agent.AgentRecord),
+		claims:     make(map[string]agent.ChatClaims),
 		problems:   make(map[int64]string),
 		pending:    make(map[ConvKey]Suggestion),
 		workers:    make(map[ConvKey]*convWorker),
@@ -152,35 +150,37 @@ func (rt *agentRuntime) Count() int {
 	return len(rt.agents)
 }
 
-// AgentName is the name of the enabled agent of the account, or "".
-func (rt *agentRuntime) AgentName(a *Account) string {
+// AgentsFor lists the account's agents, paused or not, as last loaded.
+func (rt *agentRuntime) AgentsFor(a *Account) []agent.AgentRecord {
 	key := rt.mgr.AccountKey(a)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	if ag := rt.agents[rt.bindings[key]]; ag != nil {
-		return ag.record.Name
+	return rt.records[key]
+}
+
+// Agent is the agent with the ID, paused or not, as last loaded.
+func (rt *agentRuntime) Agent(id int64) (agent.AgentRecord, bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for _, list := range rt.records {
+		for _, rec := range list {
+			if rec.ID == id {
+				return rec, true
+			}
+		}
 	}
-	return ""
+	return agent.AgentRecord{}, false
 }
 
-// AgentFor is the account's agent, paused or not, as last loaded.
-func (rt *agentRuntime) AgentFor(a *Account) (agent.AgentRecord, bool) {
-	key := rt.mgr.AccountKey(a)
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rec, ok := rt.records[key]
-	return rec, ok
-}
-
-// Answers reports whether the account's agent is on and answers entry, a DM.
+// Answers reports whether one of the account's agents is on and answers
+// entry, a DM.
 func (rt *agentRuntime) Answers(accountKey string, entry backend.ChatEntry) bool {
 	if !entry.IsDM || entry.IsSelf {
 		return false
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	ag := rt.agents[rt.bindings[accountKey]]
-	return ag != nil && (ag.record.AllChats || ag.chats[entry.ID.Id])
+	return rt.agents[rt.claims[accountKey].Owner(entry.ID.Id)] != nil
 }
 
 // Changed signals the UI when suggestions or agent problems change.
@@ -201,10 +201,17 @@ func (rt *agentRuntime) Reload() {
 		return
 	}
 	agents := make(map[int64]*runningAgent)
-	bindings := make(map[string]int64)
-	records := make(map[string]agent.AgentRecord)
+	records := make(map[string][]agent.AgentRecord)
+	claims := make(map[string]agent.ChatClaims)
 	for _, rec := range list {
-		records[rec.AccountKey] = rec
+		records[rec.AccountKey] = append(records[rec.AccountKey], rec)
+		if _, ok := claims[rec.AccountKey]; !ok {
+			c, err := rt.Db.ChatClaims(rec.AccountKey)
+			if err != nil {
+				return
+			}
+			claims[rec.AccountKey] = c
+		}
 		if !rec.Enabled {
 			continue
 		}
@@ -212,21 +219,10 @@ func (rt *agentRuntime) Reload() {
 		if err != nil {
 			continue
 		}
-		ag := &runningAgent{record: rec, provider: prov, chats: make(map[string]bool)}
-		if !rec.AllChats {
-			chats, err := rt.Db.AgentChats(rec.ID)
-			if err != nil {
-				continue
-			}
-			for _, c := range chats {
-				ag.chats[c.ID] = true
-			}
-		}
-		agents[rec.ID] = ag
-		bindings[rec.AccountKey] = rec.ID
+		agents[rec.ID] = &runningAgent{record: rec, provider: prov}
 	}
 	rt.mu.Lock()
-	rt.agents, rt.bindings, rt.records = agents, bindings, records
+	rt.agents, rt.records, rt.claims = agents, records, claims
 	for id := range rt.problems {
 		if agents[id] == nil {
 			delete(rt.problems, id)
@@ -245,7 +241,8 @@ func (rt *agentRuntime) Reload() {
 // syncSubscriptions keeps one subscription on every online account that has
 // an enabled agent, and none elsewhere. The filter is applied as the
 // backend publishes, so agents only ever see DM messages, and only text ones
-// when the agent is text-only. What the UI has open does not matter.
+// when every enabled agent of the account is text-only. What the UI has open
+// does not matter.
 func (rt *agentRuntime) syncSubscriptions() {
 	accounts := rt.mgr.List()
 	rt.mu.Lock()
@@ -255,11 +252,16 @@ func (rt *agentRuntime) syncSubscriptions() {
 		live[acct] = true
 		s := acct.Snapshot()
 		key := rt.mgr.AccountKey(acct)
-		ag := rt.agents[rt.bindings[key]]
-		wanted := s.Backend != nil && s.Status == "online" && ag != nil
+		enabled, textOnly := false, true
+		for _, rec := range rt.records[key] {
+			if rt.agents[rec.ID] != nil {
+				enabled, textOnly = true, textOnly && rec.TextOnly()
+			}
+		}
+		wanted := s.Backend != nil && s.Status == "online" && enabled
 		current := rt.subscribed[acct]
 		if current != nil && (!wanted || current.backend != s.Backend ||
-			current.agentID != ag.record.ID || current.media != ag.record.Media) {
+			current.textOnly != textOnly) {
 			current.sub.Close()
 			delete(rt.subscribed, acct)
 			current = nil
@@ -270,13 +272,11 @@ func (rt *agentRuntime) syncSubscriptions() {
 		sub := s.Backend.Events().Subscribe(backend.Filter{
 			Kinds:    backend.EventMessage,
 			DMOnly:   true,
-			TextOnly: ag.record.TextOnly(),
+			TextOnly: textOnly,
 		})
-		rt.subscribed[acct] = &binding{
-			backend: s.Backend, sub: sub, agentID: ag.record.ID, media: ag.record.Media,
-		}
+		rt.subscribed[acct] = &binding{backend: s.Backend, sub: sub, textOnly: textOnly}
 		rt.wg.Add(1)
-		go rt.listen(acct, key, ag.record.ID, sub)
+		go rt.listen(acct, key, sub)
 	}
 	for acct, b := range rt.subscribed {
 		if !live[acct] {
@@ -298,7 +298,7 @@ func (rt *agentRuntime) watchAccounts() {
 	}
 }
 
-func (rt *agentRuntime) listen(acct *Account, key string, agentID int64, sub *backend.Subscription) {
+func (rt *agentRuntime) listen(acct *Account, key string, sub *backend.Subscription) {
 	defer rt.wg.Done()
 	for {
 		select {
@@ -309,7 +309,9 @@ func (rt *agentRuntime) listen(acct *Account, key string, agentID int64, sub *ba
 				return
 			}
 			if n := sub.Dropped(); n > 0 {
-				rt.fail(agentID, fmt.Errorf("missed %d messages while busy", n))
+				for _, rec := range rt.AgentsFor(acct) {
+					rt.fail(rec.ID, fmt.Errorf("missed %d messages while busy", n))
+				}
 			}
 			rt.handle(acct, key, ev)
 		}
@@ -341,10 +343,9 @@ func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.Even
 		return
 	}
 	rt.mu.Lock()
-	ag := rt.agents[rt.bindings[accountKey]]
+	ag := rt.agents[rt.claims[accountKey].Owner(ev.Chat.Id)]
 	rt.mu.Unlock()
-	if ag == nil || (ag.record.TextOnly() && msg.MediaLabel != "") ||
-		(!ag.record.AllChats && !ag.chats[ev.Chat.Id]) {
+	if ag == nil || (ag.record.TextOnly() && msg.MediaLabel != "") {
 		return
 	}
 	key := ConvKey{AgentID: ag.record.ID, AccountKey: accountKey, Chat: ev.Chat}
@@ -846,9 +847,11 @@ func (rt *agentRuntime) Approve(key ConvKey) error {
 	if err != nil {
 		return err
 	}
-	rt.mu.Lock()
-	name := rt.records[key.AccountKey].Name
-	rt.mu.Unlock()
+	rec, ok := rt.Agent(key.AgentID)
+	if !ok {
+		return fmt.Errorf("that bot has been deleted")
+	}
+	name := rec.Name
 	if err := rt.send(s.Backend, entry, key, name, sug.Text, sug.ReplyTo); err != nil {
 		return err
 	}
@@ -882,35 +885,42 @@ func (rt *agentRuntime) retentionLoop() {
 	}
 }
 
-// DryRun drafts the reply the account's agent would give to msg in entry,
-// with the messages before it as context, without sending or recording
-// anything. It runs even while the agent is paused, so it can be tried first.
+// DryRun drafts the reply the agent answering entry would give to msg, with
+// the messages before it as context, without sending or recording anything.
+// It runs even while the agent is paused, so it can be tried first.
 func (rt *agentRuntime) DryRun(a *Account, b backend.Backend, entry backend.ChatEntry,
 	history []backend.Message, msg backend.Message) (agent.AgentRecord, string, error) {
-	rec, ok := rt.findAgent(rt.mgr.AccountKey(a))
-	if !ok {
-		return rec, "", fmt.Errorf("%s has no agent", a.Handle())
-	}
+	var rec agent.AgentRecord
 	switch {
 	case !entry.IsDM:
-		return rec, "", fmt.Errorf("agents only answer private chats")
+		return rec, "", fmt.Errorf("bots only answer private chats")
 	case msg.Outgoing:
 		return rec, "", fmt.Errorf("message %s is your own; pick an incoming one", msg.ID)
-	case rec.TextOnly() && msg.MediaLabel != "":
-		return rec, "", fmt.Errorf("agent %s is text only and never sees media messages", rec.Name)
 	}
-	if !rec.AllChats {
-		chats, err := rt.Db.AgentChats(rec.ID)
-		if err != nil {
-			return rec, "", err
+	key := rt.mgr.AccountKey(a)
+	claims, err := rt.Db.ChatClaims(key)
+	if err != nil {
+		return rec, "", err
+	}
+	owner := claims.Owner(entry.ID.Id)
+	list, err := rt.Db.ListAgents()
+	if err != nil {
+		return rec, "", err
+	}
+	found, has := false, false
+	for _, r := range list {
+		has = has || r.AccountKey == key
+		if r.ID == owner {
+			rec, found = r, true
 		}
-		picked := false
-		for _, c := range chats {
-			picked = picked || c.ID == entry.ID.Id
-		}
-		if !picked {
-			return rec, "", fmt.Errorf("agent %s does not answer this chat", rec.Name)
-		}
+	}
+	switch {
+	case !has:
+		return rec, "", fmt.Errorf("%s has no bots", a.Handle())
+	case !found:
+		return rec, "", fmt.Errorf("no bot of %s answers this chat", a.Handle())
+	case rec.TextOnly() && msg.MediaLabel != "":
+		return rec, "", fmt.Errorf("bot %s is text only and never sees media messages", rec.Name)
 	}
 	prov, err := rt.Db.GetProvider(rec.ProviderID)
 	if err != nil {
@@ -934,18 +944,4 @@ func (rt *agentRuntime) DryRun(a *Account, b backend.Backend, entry backend.Chat
 	}
 	reply, err := rt.complete(ag, messages)
 	return rec, reply, err
-}
-
-// findAgent reads the account's agent from the database, paused or not.
-func (rt *agentRuntime) findAgent(key string) (agent.AgentRecord, bool) {
-	list, err := rt.Db.ListAgents()
-	if err != nil {
-		return agent.AgentRecord{}, false
-	}
-	for _, rec := range list {
-		if rec.AccountKey == key {
-			return rec, true
-		}
-	}
-	return agent.AgentRecord{}, false
 }

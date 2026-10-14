@@ -48,12 +48,16 @@ digest, such as the built-in Weather (on by default) and Hacker News.
 Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 
-Chat Agents answer an account's incoming private messages through an
-OpenAI-compatible provider, added in Settings > AI providers. Each account
-but email can have one: the row under its Search… reads New agent…, then
-Agent: NAME, which opens the agent's settings in place of the chat. A violet
-✦ marks accounts with an agent, the private chats it answers while on, chats
-with a reply waiting for approval, and the messages an agent sent. Messages go to the provider.
+Bots answer an account's incoming private messages as you, through an
+OpenAI-compatible provider added in Settings > AI providers. Every account
+but email can have several: under its Search… sits a Bots section with a
+NAME @handle row for each, which opens the bot's settings in place of the
+chat, then New bot….
+A bot answers all of the account's private chats or the ones picked for it;
+no chat has two bots. The @handle is unique on the account and names the bot
+if it is registered on the network later. A violet ✦ marks accounts with a
+bot, the private chats one answers while on, chats with a reply waiting for
+approval, and the messages a bot sent. Messages go to the provider.
 
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,
@@ -64,7 +68,7 @@ attachment (the image or the [tag] row) downloads it and opens it with
 xdg-open (open on macOS, the default app on Windows). Hold Shift
 while dragging to select text with the terminal.
 
-Quitting, deleting a chat, message, agent or provider, removing an account
+Quitting, deleting a chat, message, bot or provider, removing an account
 and Reset ask first in a modal: y or Enter on the action goes ahead, Esc
 cancels. Deletes and Reset start on Cancel.
 
@@ -81,9 +85,9 @@ Commands (for scripts and AI agents; output is one JSON object per line):
   wiregram send [-reply ID] BACKEND ACCOUNT RECIPIENT [MESSAGE...]
       Send MESSAGE, or stdin when none is given, and print the sent message.
   wiregram dry-run [-message ID]... BACKEND ACCOUNT RECIPIENT
-      Print the reply the account's Chat Agent would give to each message
+      Print the reply the bot answering the chat would give to each message
       ID, or to the newest incoming message, without sending it. Works
-      while the agent is paused.
+      while the bot is paused.
   wiregram reset [-y]
       Sign out of every account and delete all local data, as Settings >
       Reset does. Asks first unless -y is given.
@@ -111,7 +115,7 @@ Keyboard shortcuts:
   Chat list
     Up/k, Down/j      Select chat or account
     Enter             Open chat, switch to the selected account, or open
-                      the agent row: New agent… or the agent's settings
+                      a bot's settings or create one (New bot…), under Bots
     /                 Search users (a modal over the screen); on Mattermost
                       also channels, joining a public one when picked
     u                 Unread: cards for every chat with unread messages
@@ -152,9 +156,9 @@ Keyboard shortcuts:
                       arrows; Enter applies it to every screen
     AI providers…     Enter opens a provider's name, URL, key variable and
                       model, each edited in place, or deletes it (not while
-                      an agent uses it); Add provider… asks step by step
+                      a bot uses it); Add provider… asks step by step
     Reset…            Sign out of every account and delete all local data
-                      (settings, plugins, agents, cached mail and media),
+                      (settings, plugins, bots, cached mail and media),
                       then start over as a fresh installation
     Esc, Left/h       Back to the accounts, then to where Settings was opened
     q                 Quit
@@ -171,7 +175,7 @@ Keyboard shortcuts:
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
-    Ctrl+Y            Approve the agent's suggested reply (empty input)
+    Ctrl+Y            Approve the bot's suggested reply (empty input)
     Ctrl+E            Edit it: the text moves into the input, sent as yours
     Ctrl+X            Discard it
     Esc               Cancel the reply, else back to Unread (or Mentions)
@@ -214,16 +218,25 @@ Keyboard shortcuts:
     Enter             Do it (deletes ask first)
     Esc               Close (a click outside it closes it too)
 
-  Agent (the account's agent row)
-    Up/k, Down/j      Select a setting: status, name, provider, model,
-                      prompt, knowledge files, media, replies (ask me first
-                      or automatically), history, chats (all private chats
-                      or selected ones, ticked below), delete
+  Bot (a row in the Bots section)
+    Up/k, Down/j      Select a setting: status, name, @handle, provider,
+                      model, prompt, knowledge files, media, replies (ask me
+                      first or automatically), history, chats, delete
     Enter, Space      Change it; text opens for typing (Enter saves, Esc
-                      cancels)
+                      cancels); Chats opens the chat picker
     Esc, Left/h       Back
 
-  New agent and Add provider (form modals)
+  Chat picker (a modal over the bot's settings)
+    Type              Filter the private chats by name
+    Up/Down           Select a chat
+    Space             Tick or untick it; chats another bot answers show
+                      its name and cannot be ticked
+    Tab               Switch between all private chats and the ticked ones
+                      (all is unavailable while another bot answers any)
+    Enter             Save
+    Esc               Cancel (a click outside it cancels too)
+
+  New bot and Add provider (form modals)
     Enter             Answer or pick
     Up/k, Down/j      Choose
     Esc               Previous question, else cancel

@@ -47,7 +47,7 @@ type tuiModel struct {
 	searchOpen    bool
 	unread        unreadModel
 	unreadOpen    bool
-	// agentPane is the account's Chat Agent settings, open in the chat's place.
+	// agentPane is one of the account's bots (Chat Agents), open in the chat's place.
 	agentPane agentPaneModel
 	agentOpen bool
 	// wiz creates the account's agent, drawn as a form over the screen.
@@ -290,7 +290,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case agentApproveDone:
 		if m.chatOpen {
-			m.chat.notice = "Agent's reply sent"
+			m.chat.notice = "Bot's reply sent"
 			if msg.err != nil {
 				m.chat.notice = textfmt.CleanError(msg.err)
 			}
@@ -584,6 +584,11 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
 			return m.openCard(m.unread.cards[i])
 		}
+	case m.agentOpen && m.agentPane.picker != nil:
+		x, y := m.pickerAt()
+		if m.agentPane.picker.click(mouse.X-x, mouse.Y-y) {
+			m.agentPane.picker = nil
+		}
 	case m.agentOpen:
 		if i, ok := m.agentPane.rowAt(mouse.Y); ok && !m.agentPane.editing {
 			m.agentPane.sel = i
@@ -669,7 +674,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	paneFocused := m.paneOpen() && m.focus == focusChat
 	chatFocused := m.chatOpen && m.focus == focusChat
-	editing := m.agentOpen && (m.agentPane.editing || m.agentPane.confirm != nil)
+	editing := m.agentOpen && (m.agentPane.editing || m.agentPane.confirm != nil ||
+		m.agentPane.picker != nil)
 
 	k := msg.String()
 	switch {
@@ -785,7 +791,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m.done(tuiResult{switchTo: msg.to})
 
 	case chatListAgent:
-		return m.agentRow()
+		return m.agentRow(msg.id)
 	}
 
 	var cmd tea.Cmd
@@ -819,7 +825,8 @@ func (m tuiModel) footer() string {
 		}
 	case m.agentOpen && m.focus == focusChat:
 		keys = m.agentPane.helpKeys()
-		if m.twoPane() && m.agentPane.confirm == nil && !m.agentPane.editing {
+		if m.twoPane() && m.agentPane.confirm == nil && m.agentPane.picker == nil &&
+			!m.agentPane.editing {
 			keys = append(keys, helpKey{"tab", "chats"})
 		}
 		notice = m.agentPane.notice
@@ -835,7 +842,7 @@ func (m tuiModel) footer() string {
 			keys = append(keys, helpKey{"tab", name}, helpKey{"esc", "close " + name})
 		}
 		if m.agentOpen {
-			keys = append(keys, helpKey{"tab", "agent"}, helpKey{"esc", "close agent"})
+			keys = append(keys, helpKey{"tab", "bot"}, helpKey{"esc", "close bot"})
 		}
 		if m.chatOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
@@ -906,6 +913,10 @@ func (m tuiModel) render() string {
 	if c, x, y, ok := m.confirmShown(); ok {
 		body = m.st.fadeUnder(body, c.View(), x, y)
 	}
+	if m.agentOpen && m.agentPane.picker != nil {
+		x, y := m.pickerAt()
+		body = m.st.fadeUnder(body, m.agentPane.picker.View(), x, y)
+	}
 	if m.wiz != nil {
 		box, _ := m.wiz.modal(m.width, bodyHeight)
 		body = m.st.overlay(body, box, m.width, bodyHeight)
@@ -949,6 +960,17 @@ func (m tuiModel) confirmShown() (c *confirmModal, x, y int, ok bool) {
 	w, h := c.size()
 	x, y = modalRect(width, m.bodyHeight(), w, h)
 	return c, left + x, y, true
+}
+
+// pickerAt is the top-left corner of the bot's chat picker: centred over its pane.
+func (m tuiModel) pickerAt() (x, y int) {
+	left := 0
+	if m.twoPane() {
+		left = sidebarWidth
+	}
+	w, h := m.agentPane.picker.size()
+	x, y = modalRect(m.agentPane.width, m.bodyHeight(), w, h)
+	return left + x, y
 }
 
 // menuShown reports whether the open chat's message actions modal is up.
@@ -1065,7 +1087,7 @@ func (m tuiModel) suggestionAct(act string) (tuiModel, tea.Cmd) {
 	}
 	switch act {
 	case "approve":
-		m.chat.notice = "Sending the agent's reply…"
+		m.chat.notice = "Sending the bot's reply…"
 		return m, func() tea.Msg { return agentApproveDone{rt.Approve(key)} }
 	case "edit":
 		rt.Discard(key)
@@ -1078,13 +1100,13 @@ func (m tuiModel) suggestionAct(act string) (tuiModel, tea.Cmd) {
 	return m, nil
 }
 
-// agentRow opens the account's agent pane, or creates the agent first.
-func (m tuiModel) agentRow() (tuiModel, tea.Cmd) {
+// agentRow opens the bot's pane, or with id 0 creates a bot first.
+func (m tuiModel) agentRow(id int64) (tuiModel, tea.Cmd) {
 	if !agentsAllowed(m.mgr, m.active) {
 		return m, nil
 	}
-	if _, ok := m.mgr.Agents.AgentFor(m.active); ok {
-		return m.openAgentPane()
+	if id != 0 {
+		return m.openAgentPane(id)
 	}
 	providers, err := m.mgr.Agents.Db.ListProviders()
 	if err != nil {
@@ -1093,17 +1115,21 @@ func (m tuiModel) agentRow() (tuiModel, tea.Cmd) {
 	}
 	if len(providers) == 0 {
 		m.alert = newAlertModal(m.st, "No AI provider",
-			"Add an AI provider in Settings > AI providers first, then create the agent here.")
+			"Add an AI provider in Settings > AI providers first, then create the bot here.")
 		return m, nil
 	}
-	wiz := newWizard(m.st, "New agent for "+accountLabel(m.active),
-		agentSteps(providers, m.mgr.Dir), nil)
+	taken := make(map[string]string)
+	for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
+		taken[rec.Handle] = rec.Name
+	}
+	wiz := newWizard(m.st, "New bot for "+accountLabel(m.active),
+		agentSteps(providers, m.mgr.Dir, taken), nil)
 	m.wiz = &wiz
 	return m, wiz.Init()
 }
 
-func (m tuiModel) openAgentPane() (tuiModel, tea.Cmd) {
-	pane, err := newAgentPane(m.st, m.mgr, m.active, m.entries)
+func (m tuiModel) openAgentPane(id int64) (tuiModel, tea.Cmd) {
+	pane, err := newAgentPane(m.st, m.mgr, m.active, id, m.entries)
 	if err != nil {
 		m.notice = textfmt.CleanError(err)
 		return m, nil
@@ -1131,7 +1157,12 @@ func (m tuiModel) agentCreated(a wizardAnswers) (tuiModel, tea.Cmd) {
 		m.notice = textfmt.CleanError(err)
 		return m, nil
 	}
-	m, cmd := m.openAgentPane()
-	m.agentPane.notice = "Agent " + textfmt.Plain(rec.Name) + " created"
+	m, cmd := m.openAgentPane(rec.ID)
+	m.agentPane.notice = "Bot " + textfmt.Plain(rec.Name) + " created"
+	if m.agentOpen && !rec.AllChats {
+		// Other bots answer some of the account's chats, so this one starts with none.
+		m.agentPane = m.agentPane.openPicker()
+		m.agentPane.notice = "Bot " + textfmt.Plain(rec.Name) + " created; pick its chats"
+	}
 	return m, cmd
 }

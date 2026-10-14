@@ -602,7 +602,7 @@ func (m settingsModel) itemLines(width, height int) []string {
 	if a == nil {
 		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
 			"The colours of the whole app.", "Lua scripts that add widgets to the account list.",
-			"Where Chat Agents get their replies: any OpenAI-compatible API.",
+			"Where bots get their replies: any OpenAI-compatible API.",
 			"Delete every account and all local data, as on a fresh install.", "Leave wiregram."}
 		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
 		if m.onThemes() {
@@ -617,7 +617,7 @@ func (m settingsModel) itemLines(width, height int) []string {
 		if m.onReset() {
 			for _, w := range []string{"", "Warning: this cannot be undone.",
 				"Every account is signed out and removed. Settings, themes, plugins and",
-				"their data, Chat Agents, cached mail and downloaded media are deleted,",
+				"their data, bots, cached mail and downloaded media are deleted,",
 				"then wiregram starts over as a fresh installation."} {
 				lines = append(lines, styleError.Render(textfmt.ClipLine(w, width)))
 			}
@@ -630,8 +630,8 @@ func (m settingsModel) itemLines(width, height int) []string {
 		summary += " · current"
 	}
 	if m.mgr.Agents != nil {
-		if name := m.mgr.Agents.AgentName(a); name != "" {
-			summary += " · agent: " + textfmt.Plain(name)
+		if bots := m.mgr.Agents.AgentsFor(a); len(bots) > 0 {
+			summary += " · " + plural(len(bots), "bot", "bots") + ": " + botNames(bots)
 		}
 	}
 	lines := []string{m.st.subtle.Render(textfmt.ClipLine(summary, width)), ""}

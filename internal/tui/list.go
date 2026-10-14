@@ -50,7 +50,7 @@ type chatListSearch struct{}
 type chatListUnread struct{}
 type chatListMentions struct{}
 type chatListArchiveToggle struct{}
-type chatListAgent struct{}
+type chatListAgent struct{ id int64 } // 0 creates a bot
 type chatListDeleteDone struct{ err error }
 
 func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
@@ -78,6 +78,7 @@ type listAction struct {
 	entry backend.ChatEntry
 	mark  string
 	msg   tea.Msg
+	bot   bool // listed in the Bots section
 }
 
 func (m chatListModel) actions() []listAction {
@@ -97,17 +98,19 @@ func (m chatListModel) actions() []listAction {
 	acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}},
 		listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
 	if agentsAllowed(m.mgr, m.active) {
-		act := listAction{entry: backend.ChatEntry{Title: "New agent…"}, msg: chatListAgent{}}
-		if rec, ok := m.mgr.Agents.AgentFor(m.active); ok {
-			act.entry.Title = "Agent: " + rec.Name
-			act.mark = m.st.agentMark(rec.Enabled)
+		for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
+			acts = append(acts, listAction{
+				entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
+				mark:  m.st.agentMark(rec.Enabled), msg: chatListAgent{id: rec.ID}, bot: true,
+			})
 		}
-		acts = append(acts, act)
+		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "New bot…"},
+			msg: chatListAgent{}, bot: true})
 	}
 	return acts
 }
 
-// agentsAllowed reports whether the account can have a Chat Agent: agents
+// agentsAllowed reports whether the account can have bots (Chat Agents): they
 // answer DMs, and email publishes none.
 func agentsAllowed(mgr *account.AccountManager, a *account.Account) bool {
 	return mgr != nil && mgr.Agents != nil && a != nil && a.BackendType != "email"
@@ -152,8 +155,20 @@ func (m chatListModel) refreshUnread() chatListModel {
 	return m
 }
 
+// firstBot is the selection index of the Bots section's first row, or -1
+// when the account has none.
+func (m chatListModel) firstBot() int {
+	for i, a := range m.actions() {
+		if a.bot {
+			return m.before() + len(m.entries) + i
+		}
+	}
+	return -1
+}
+
 // row maps a selection index to its display row. The active account's
-// header sits above its chats, and a separator below them.
+// header sits above its chats, a separator below them, and the Bots
+// heading above its bots.
 func (m chatListModel) row(index int) int {
 	before := m.before()
 	if index < before {
@@ -162,7 +177,11 @@ func (m chatListModel) row(index int) int {
 	if index < before+len(m.entries) {
 		return index + 1
 	}
-	return index + 2 + max(0, 1-len(m.entries)) // "No chats here" placeholder
+	r := index + 2 + max(0, 1-len(m.entries)) // "No chats here" placeholder
+	if first := m.firstBot(); first >= 0 && index >= first {
+		r++
+	}
+	return r
 }
 
 // itemAt maps a body row on screen to a selection index; headers,
@@ -313,8 +332,8 @@ func (m chatListModel) accountRow(a *account.Account, expanded, selected, focuse
 	}
 	mark := ""
 	if m.mgr.Agents != nil {
-		if rec, ok := m.mgr.Agents.AgentFor(a); ok {
-			mark = " " + m.st.agentMark(rec.Enabled)
+		if bots := m.mgr.Agents.AgentsFor(a); len(bots) > 0 {
+			mark = " " + m.st.agentMark(anyEnabled(bots))
 		}
 	}
 	row := truncate(text, width-textfmt.DisplayWidth(mark))
@@ -360,7 +379,11 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	}
 	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
 
+	firstBot := m.firstBot()
 	for _, a := range m.actions() {
+		if index == firstBot {
+			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── Bots ", max(1, width-4))))
+		}
 		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused, max(1, width-4))
 		if index != m.selected {
 			line = m.st.subtle.Render(line)

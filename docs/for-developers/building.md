@@ -59,7 +59,7 @@ internal/
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache
-  agent/             SQLite store for providers, per-account agents, their chats,
+  agent/             SQLite store for providers, per-account agents (bots), their chats,
                      history and sent-message record
   plugin/            Lua plugin VMs, their API and the built-in plugins
   account/           account manager and the agent runtime, including dry runs

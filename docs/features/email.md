@@ -42,5 +42,5 @@ Deleting a mail moves it to Trash on the server.
 
 ## What email doesn't do
 
-Email has no reactions, mentions or Mentions row, and [Chat Agents](/features/chat-agents)
+Email has no reactions, mentions or Mentions row, and [bots](/features/chat-agents)
 never answer mail.

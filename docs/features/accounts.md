@@ -6,8 +6,8 @@ and email, as many of each as you like. Switching between them never reconnects.
 ## Account chooser
 
 After the splash comes the account chooser, with the logo. It lists every account with
-a status glyph and its tag, and its [agent](/features/chat-agents) with a violet ✦ if
-it has one, then:
+a status glyph and its tag, and its [bots](/features/chat-agents) with a violet ✦ if
+it has any, then:
 
 - **Settings…**: open [Settings](/configuration#settings)
 - **Add account**: pick a network and sign in
@@ -54,7 +54,7 @@ around and search. Any key or click closes it.
 
 In Settings, select the account and choose **Remove account…**. When the account is
 online, Wiregram logs it out on the server first. Then it deletes the account's local
-data, its Chat Agent and the record of messages that agent sent. Removing starts on Cancel.
+data, its bots and the record of messages they sent. Removing starts on Cancel.
 
 **Reset…** does this for every account, deletes all local data and starts over as a
 fresh installation.

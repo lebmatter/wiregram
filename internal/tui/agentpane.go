@@ -14,15 +14,16 @@ import (
 	"wiregram/internal/textfmt"
 )
 
-// The agent pane is an account's Chat Agent settings, opened from the
-// sidebar's agent row in place of a chat. Like Settings, each row is chosen
-// with the arrows and changed with Enter.
+// The agent pane is one Chat Agent's settings, a bot in the UI, opened from
+// its sidebar row in place of a chat. Like Settings, each row is chosen with
+// the arrows and changed with Enter; Chats opens the dmPicker modal.
 
 type agentField int
 
 const (
 	fieldStatus agentField = iota
 	fieldName
+	fieldHandle
 	fieldProvider
 	fieldModel
 	fieldPrompt
@@ -31,13 +32,11 @@ const (
 	fieldReplies
 	fieldRetention
 	fieldChats
-	fieldChat // one row per private chat while Chats is Selected
 	fieldDelete
 )
 
 type agentRow struct {
 	field agentField
-	chat  agent.AgentChat
 }
 
 type agentPaneModel struct {
@@ -47,12 +46,13 @@ type agentPaneModel struct {
 	rec       agent.AgentRecord
 	knowledge []string
 	providers []agent.AgentProvider
-	dms       []agent.AgentChat // the account's private chats, picked ones first
-	picked    map[string]bool
+	entries   []backend.ChatEntry // the account's chats, for the picker
+	chats     []agent.AgentChat   // the DMs it answers when AllChats is off
 	sel       int
 	edit      textinput.Model
 	editing   bool
 	confirm   *confirmModal
+	picker    *dmPicker
 	notice    string
 	width     int
 	height    int
@@ -63,12 +63,12 @@ type agentPaneClosed struct{}
 // agentPaneHeader is how many lines sit above the rows: the status line and a gap.
 const agentPaneHeader = 2
 
-func newAgentPane(st *styles, mgr *account.AccountManager, acct *account.Account,
+func newAgentPane(st *styles, mgr *account.AccountManager, acct *account.Account, id int64,
 	entries []backend.ChatEntry) (agentPaneModel, error) {
-	m := agentPaneModel{st: st, mgr: mgr, acct: acct, picked: make(map[string]bool)}
-	rec, ok := mgr.Agents.AgentFor(acct)
+	m := agentPaneModel{st: st, mgr: mgr, acct: acct, entries: entries}
+	rec, ok := mgr.Agents.Agent(id)
 	if !ok {
-		return m, fmt.Errorf("this account has no agent")
+		return m, fmt.Errorf("that bot has been deleted")
 	}
 	db := mgr.Agents.Db
 	var err error
@@ -78,46 +78,35 @@ func newAgentPane(st *styles, mgr *account.AccountManager, acct *account.Account
 	if m.providers, err = db.ListProviders(); err != nil {
 		return m, err
 	}
-	chosen, err := db.AgentChats(rec.ID)
-	if err != nil {
+	if m.chats, err = db.AgentChats(rec.ID); err != nil {
 		return m, err
 	}
 	m.rec = rec
-	listed := make(map[string]bool)
-	for _, c := range chosen {
-		m.picked[c.ID] = true
-		listed[c.ID] = true
-		m.dms = append(m.dms, c)
-	}
-	for _, e := range entries {
-		if e.IsDM && !e.IsSelf && !listed[e.ID.Id] {
-			m.dms = append(m.dms, agent.AgentChat{ID: e.ID.Id, Title: textfmt.Plain(e.Title)})
-		}
-	}
 	return m, nil
 }
 
 func (m agentPaneModel) resized(width, height int) agentPaneModel {
 	m.width, m.height = width, height
+	if m.picker != nil {
+		m.picker.resized(width, height)
+	}
 	return m
 }
 
 func (m agentPaneModel) rows() []agentRow {
 	var rows []agentRow
-	for f := fieldStatus; f <= fieldChats; f++ {
+	for f := fieldStatus; f <= fieldDelete; f++ {
 		rows = append(rows, agentRow{field: f})
 	}
-	if !m.rec.AllChats {
-		for _, c := range m.dms {
-			rows = append(rows, agentRow{field: fieldChat, chat: c})
-		}
-	}
-	return append(rows, agentRow{field: fieldDelete})
+	return rows
 }
 
 func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.PasteMsg:
+		if m.picker != nil {
+			return m, m.picker.paste(msg)
+		}
 		if m.editing {
 			var cmd tea.Cmd
 			m.edit, cmd = m.edit.Update(msg)
@@ -131,6 +120,16 @@ func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
 
 func (m agentPaneModel) key(msg tea.KeyPressMsg) (agentPaneModel, tea.Cmd) {
 	k := msg.String()
+	if m.picker != nil {
+		save, done, cmd := m.picker.key(msg)
+		if save {
+			return m.saveChats(), nil
+		}
+		if done {
+			m.picker = nil
+		}
+		return m, cmd
+	}
 	if m.confirm != nil {
 		yes, done := m.confirm.key(k)
 		if !done {
@@ -202,27 +201,10 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		days, _ := strconv.Atoi(nextOption(retentionOptions, strconv.Itoa(m.rec.RetentionDays)))
 		m.rec.RetentionDays = days
 	case fieldChats:
-		m.rec.AllChats = !m.rec.AllChats
-		if !m.rec.AllChats && len(m.picked) == 0 {
-			m.notice = "Pick the chats it answers below"
-		}
-	case fieldChat:
-		m.picked[r.chat.ID] = !m.picked[r.chat.ID]
-		var chats []agent.AgentChat
-		for _, c := range m.dms {
-			if m.picked[c.ID] {
-				chats = append(chats, c)
-			}
-		}
-		if err := m.mgr.Agents.Db.SetAgentChats(m.rec.ID, chats); err != nil {
-			m.notice = textfmt.CleanError(err)
-			return m, nil
-		}
-		m.mgr.Agents.Reload()
-		return m, nil
+		return m.openPicker(), nil
 	case fieldDelete:
-		m.confirm = newConfirmModal(m.st, "Delete agent",
-			"Delete agent "+textfmt.Plain(m.rec.Name)+" and its history?", "Delete", true)
+		m.confirm = newConfirmModal(m.st, "Delete bot",
+			"Delete bot "+textfmt.Plain(m.rec.Name)+" and its history?", "Delete", true)
 		return m, nil
 	default:
 		in := textinput.New()
@@ -258,6 +240,8 @@ func (m agentPaneModel) text(f agentField) string {
 	switch f {
 	case fieldName:
 		return m.rec.Name
+	case fieldHandle:
+		return m.rec.Handle
 	case fieldModel:
 		return m.rec.Model
 	case fieldPrompt:
@@ -284,6 +268,13 @@ func (m agentPaneModel) saveText(v string) agentPaneModel {
 		} else {
 			m.rec.Model = v
 		}
+	case fieldHandle:
+		v = strings.TrimPrefix(strings.ToLower(v), "@")
+		if err := agent.ValidHandle(v); err != nil {
+			m.notice = err.Error()
+			return m
+		}
+		m.rec.Handle = v
 	case fieldPrompt:
 		m.rec.Prompt = v
 	case fieldKnowledge:
@@ -306,8 +297,64 @@ func (m agentPaneModel) saveText(v string) agentPaneModel {
 func (m agentPaneModel) save() agentPaneModel {
 	if err := m.mgr.Agents.Db.UpdateAgent(m.rec); err != nil {
 		m.notice = textfmt.CleanError(err)
+		if rec, ok := m.mgr.Agents.Agent(m.rec.ID); ok {
+			m.rec = rec // back to what is stored
+		}
 		return m
 	}
+	m.mgr.Agents.Reload()
+	m.notice = "Saved"
+	return m
+}
+
+// openPicker opens the modal choosing the bot's chats, with the DMs other bots
+// of the account answer marked as theirs.
+func (m agentPaneModel) openPicker() agentPaneModel {
+	claims, err := m.mgr.Agents.Db.ChatClaims(m.mgr.AccountKey(m.acct))
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m
+	}
+	names := make(map[int64]string)
+	for _, rec := range m.mgr.Agents.AgentsFor(m.acct) {
+		names[rec.ID] = textfmt.Plain(rec.Name)
+	}
+	allBy := ""
+	if claims.All != 0 && claims.All != m.rec.ID {
+		allBy = names[claims.All]
+	}
+	owners := make(map[string]string)
+	for id, owner := range claims.Chats {
+		if owner != m.rec.ID {
+			owners[id] = names[owner]
+		}
+	}
+	picked := make(map[string]bool)
+	listed := make(map[string]bool)
+	var dms []agent.AgentChat
+	for _, c := range m.chats {
+		picked[c.ID], listed[c.ID] = true, true
+		dms = append(dms, c)
+	}
+	for _, e := range m.entries {
+		if e.IsDM && !e.IsSelf && !listed[e.ID.Id] {
+			dms = append(dms, agent.AgentChat{ID: e.ID.Id, Title: textfmt.Plain(e.Title)})
+		}
+	}
+	m.picker = newDMPicker(m.st, m.rec.Name, m.rec.AllChats, dms, picked, owners, allBy)
+	m.picker.resized(m.width, m.height)
+	return m
+}
+
+// saveChats stores the picker's choice; on failure the picker stays open with
+// the reason.
+func (m agentPaneModel) saveChats() agentPaneModel {
+	all, chats := m.picker.chosen()
+	if err := m.mgr.Agents.Db.SetAgentChats(m.rec.ID, all, chats); err != nil {
+		m.picker.notice = textfmt.CleanError(err)
+		return m
+	}
+	m.rec.AllChats, m.chats, m.picker = all, chats, nil
 	m.mgr.Agents.Reload()
 	m.notice = "Saved"
 	return m
@@ -343,6 +390,8 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 		return "Status", on(m.rec.Enabled, "on", "paused")
 	case fieldName:
 		return "Name", m.rec.Name
+	case fieldHandle:
+		return "Handle", "@" + m.rec.Handle
 	case fieldProvider:
 		return "Provider", m.provider().Name
 	case fieldModel:
@@ -358,19 +407,20 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 	case fieldRetention:
 		return "History", fmt.Sprintf("%d days", m.rec.RetentionDays)
 	case fieldChats:
-		if m.rec.AllChats {
+		switch {
+		case m.rec.AllChats:
 			return "Chats", "all private chats"
+		case len(m.chats) == 0:
+			return "Chats", "none yet: pick some"
 		}
-		return "Chats", fmt.Sprintf("selected (%d)", len(m.picked))
-	case fieldChat:
-		return "  " + on(m.picked[r.chat.ID], "[x] ", "[ ] ") + r.chat.Title, ""
+		return "Chats", fmt.Sprintf("%d selected", len(m.chats))
 	}
-	return styleError.Render("Delete agent…"), ""
+	return styleError.Render("Delete bot…"), ""
 }
 
 func (m agentPaneModel) view(focused bool) string {
 	inner, height := m.width-4, m.height-2
-	status := "Answers incoming private messages; never groups or channels."
+	status := "Answers its private chats as you; never groups or channels."
 	if problem := m.mgr.Agents.Problem(m.rec.ID); problem != "" {
 		status = styleError.Render(textfmt.ClipLine("Last reply failed: "+problem, inner))
 	} else {
@@ -380,10 +430,8 @@ func (m agentPaneModel) view(focused bool) string {
 	rows := m.rows()
 	labelW := 0
 	for _, r := range rows {
-		if r.field != fieldChat {
-			l, _ := m.label(r)
-			labelW = max(labelW, textfmt.DisplayWidth(l))
-		}
+		l, _ := m.label(r)
+		labelW = max(labelW, textfmt.DisplayWidth(l))
 	}
 	for i := window(m.sel, height-agentPaneHeader); i < len(rows) && len(lines) < height; i++ {
 		label, value := m.label(rows[i])
@@ -406,10 +454,31 @@ func (m agentPaneModel) rowAt(y int) (int, bool) {
 
 func (m agentPaneModel) helpKeys() []helpKey {
 	switch {
+	case m.picker != nil:
+		return m.picker.helpKeys()
 	case m.confirm != nil:
 		return m.confirm.helpKeys()
 	case m.editing:
 		return []helpKey{{"enter", "save"}, {"esc", "cancel"}}
 	}
 	return []helpKey{{"↑↓", "select"}, {"enter", "change"}, {"esc", "back"}}
+}
+
+// anyEnabled reports whether one of the bots is on.
+func anyEnabled(bots []agent.AgentRecord) bool {
+	for _, rec := range bots {
+		if rec.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// botNames joins the bots' names for a summary line.
+func botNames(bots []agent.AgentRecord) string {
+	var names []string
+	for _, rec := range bots {
+		names = append(names, textfmt.Plain(rec.Name))
+	}
+	return strings.Join(names, ", ")
 }

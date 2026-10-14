@@ -9,7 +9,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 4
+const currentDBVersion = 5
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -23,13 +23,14 @@ type AgentProvider struct {
 	Model     string
 }
 
-// AgentRecord is a Chat Agent. It belongs to one account and answers its
-// incoming DMs, all of them or only the chats in agent_chats; Model overrides
-// the provider's default when set.
+// AgentRecord is a Chat Agent, a bot in the UI. It belongs to one account and
+// answers its incoming DMs, all of them or only the chats in agent_chats; no
+// DM has two. Model overrides the provider's default when set.
 type AgentRecord struct {
 	ID            int64
 	AccountKey    string
 	Name          string
+	Handle        string // unique per account, reserved for registering the bot
 	Prompt        string
 	Auto          bool   // send replies directly instead of suggesting them
 	Media         string // MediaText, MediaTags or MediaVision
@@ -127,6 +128,16 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV4)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			if _, err := tx.Exec(schemaV5); err != nil {
+				return err
+			}
+			if err := fillHandles(tx); err != nil {
+				return err
+			}
+			_, err := tx.Exec(schemaV5Rules)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -143,6 +154,76 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit schema v%d: %w", v+1, err)
+		}
+	}
+	return nil
+}
+
+// schemaV5 lets an account have several agents, each DM answered by at most
+// one of them, and gives every agent a handle.
+const schemaV5 = `
+DROP INDEX idx_agents_account;
+ALTER TABLE agents ADD COLUMN handle TEXT NOT NULL DEFAULT '';
+ALTER TABLE agent_chats ADD COLUMN account_key TEXT NOT NULL DEFAULT '';
+UPDATE agent_chats SET account_key =
+	(SELECT account_key FROM agents WHERE agents.id = agent_chats.agent_id);
+DELETE FROM agent_chats WHERE agent_id IN (SELECT id FROM agents WHERE all_chats = 1);
+`
+
+// schemaV5Rules keeps every DM to one agent: an agent claims all of the
+// account's DMs or picks some, and the two exclude each other.
+const schemaV5Rules = `
+CREATE UNIQUE INDEX idx_agents_handle ON agents(account_key, handle);
+CREATE UNIQUE INDEX idx_agents_all ON agents(account_key) WHERE all_chats = 1;
+CREATE UNIQUE INDEX idx_agent_chats_owner ON agent_chats(account_key, chat_id);
+
+CREATE TRIGGER agent_chats_all_taken BEFORE INSERT ON agent_chats
+WHEN EXISTS (SELECT 1 FROM agents WHERE account_key = NEW.account_key AND all_chats = 1
+	AND id != NEW.agent_id)
+BEGIN SELECT RAISE(ABORT, 'another bot answers all private chats'); END;
+
+CREATE TRIGGER agents_all_insert BEFORE INSERT ON agents
+WHEN NEW.all_chats = 1 AND EXISTS (SELECT 1 FROM agent_chats WHERE account_key = NEW.account_key)
+BEGIN SELECT RAISE(ABORT, 'another bot answers some private chats'); END;
+
+CREATE TRIGGER agents_all_update BEFORE UPDATE OF all_chats ON agents
+WHEN NEW.all_chats = 1 AND EXISTS (SELECT 1 FROM agent_chats
+	WHERE account_key = NEW.account_key AND agent_id != NEW.id)
+BEGIN SELECT RAISE(ABORT, 'another bot answers some private chats'); END;
+`
+
+// fillHandles gives each existing agent a handle made from its name.
+func fillHandles(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, account_key, name FROM agents ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type named struct {
+		id        int64
+		key, name string
+	}
+	var list []named
+	for rows.Next() {
+		var n named
+		if err := rows.Scan(&n.id, &n.key, &n.name); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	used := make(map[string]bool)
+	for _, n := range list {
+		handle := SuggestHandle(n.name)
+		for i := 2; used[n.key+"/"+handle]; i++ {
+			handle = fmt.Sprintf("%s_%d", SuggestHandle(n.name), i)
+		}
+		used[n.key+"/"+handle] = true
+		if _, err := tx.Exec(`UPDATE agents SET handle = ? WHERE id = ?`, handle, n.id); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -320,7 +401,7 @@ func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 
 func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	rows, err := d.db.Query(
-		`SELECT id, account_key, name, prompt, autoreply, media, provider_id, model,
+		`SELECT id, account_key, name, handle, prompt, autoreply, media, provider_id, model,
 		 retention_days, enabled, all_chats
 		 FROM agents ORDER BY name`,
 	)
@@ -331,8 +412,9 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	var out []AgentRecord
 	for rows.Next() {
 		var a AgentRecord
-		if err := rows.Scan(&a.ID, &a.AccountKey, &a.Name, &a.Prompt, &a.Auto, &a.Media,
-			&a.ProviderID, &a.Model, &a.RetentionDays, &a.Enabled, &a.AllChats); err != nil {
+		if err := rows.Scan(&a.ID, &a.AccountKey, &a.Name, &a.Handle, &a.Prompt, &a.Auto,
+			&a.Media, &a.ProviderID, &a.Model, &a.RetentionDays, &a.Enabled,
+			&a.AllChats); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		out = append(out, a)
@@ -340,26 +422,75 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	return out, rows.Err()
 }
 
-func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
-	res, err := d.db.Exec(
-		`INSERT INTO agents (account_key, name, prompt, autoreply, media, provider_id, model,
-		 retention_days, enabled, all_chats)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.AccountKey, a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model,
+// querier is a *sql.DB or a *sql.Tx.
+type querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// checkHandle fails when another of the account's agents has the handle.
+func checkHandle(q querier, a AgentRecord) error {
+	if err := ValidHandle(a.Handle); err != nil {
+		return err
+	}
+	var name string
+	err := q.QueryRow(`SELECT name FROM agents WHERE account_key = ? AND handle = ? AND id != ?`,
+		a.AccountKey, a.Handle, a.ID).Scan(&name)
+	switch {
+	case err == sql.ErrNoRows:
+		return nil
+	case err != nil:
+		return fmt.Errorf("check handle: %w", err)
+	}
+	return fmt.Errorf("@%s is used by bot %s", a.Handle, name)
+}
+
+// CreateAgent saves a new agent. It answers every DM when the account's other
+// agents answer none, else no DM until some are picked; a.AllChats is set to say which.
+func (d *AgentDB) CreateAgent(a AgentRecord) (AgentRecord, error) {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return a, fmt.Errorf("begin create agent: %w", err)
+	}
+	defer tx.Rollback()
+	if err := checkHandle(tx, a); err != nil {
+		return a, err
+	}
+	claims, err := chatClaims(tx, a.AccountKey)
+	if err != nil {
+		return a, err
+	}
+	a.AllChats = claims.All == 0 && len(claims.Chats) == 0
+	res, err := tx.Exec(
+		`INSERT INTO agents (account_key, name, handle, prompt, autoreply, media, provider_id,
+		 model, retention_days, enabled, all_chats)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.AccountKey, a.Name, a.Handle, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model,
 		a.RetentionDays, a.Enabled, a.AllChats,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("create agent: %w", err)
+		return a, fmt.Errorf("create agent: %w", err)
 	}
-	return res.LastInsertId()
+	if a.ID, err = res.LastInsertId(); err != nil {
+		return a, fmt.Errorf("create agent: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return a, fmt.Errorf("create agent: %w", err)
+	}
+	return a, nil
 }
 
+// UpdateAgent saves the agent's settings. Which DMs it answers is changed
+// only by SetAgentChats.
 func (d *AgentDB) UpdateAgent(a AgentRecord) error {
+	if err := checkHandle(d.db, a); err != nil {
+		return err
+	}
 	_, err := d.db.Exec(
-		`UPDATE agents SET name = ?, prompt = ?, autoreply = ?, media = ?, provider_id = ?,
-		 model = ?, retention_days = ?, enabled = ?, all_chats = ? WHERE id = ?`,
-		a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays, a.Enabled,
-		a.AllChats, a.ID,
+		`UPDATE agents SET name = ?, handle = ?, prompt = ?, autoreply = ?, media = ?,
+		 provider_id = ?, model = ?, retention_days = ?, enabled = ? WHERE id = ?`,
+		a.Name, a.Handle, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays,
+		a.Enabled, a.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update agent: %w", err)
@@ -431,20 +562,102 @@ func (d *AgentDB) AgentChats(agentID int64) ([]AgentChat, error) {
 	return out, rows.Err()
 }
 
-func (d *AgentDB) SetAgentChats(agentID int64, chats []AgentChat) error {
+// ChatClaims says which agent answers each of an account's DMs: one agent
+// all of them, or each picked DM the agent that picked it.
+type ChatClaims struct {
+	All   int64            // the agent answering every DM, or 0
+	Chats map[string]int64 // DM ID → the agent that picked it
+}
+
+// Owner is the agent answering the DM, or 0.
+func (c ChatClaims) Owner(chatID string) int64 {
+	if c.All != 0 {
+		return c.All
+	}
+	return c.Chats[chatID]
+}
+
+func (d *AgentDB) ChatClaims(accountKey string) (ChatClaims, error) {
+	return chatClaims(d.db, accountKey)
+}
+
+func chatClaims(q querier, accountKey string) (ChatClaims, error) {
+	c := ChatClaims{Chats: make(map[string]int64)}
+	err := q.QueryRow(`SELECT id FROM agents WHERE account_key = ? AND all_chats = 1`,
+		accountKey).Scan(&c.All)
+	if err != nil && err != sql.ErrNoRows {
+		return c, fmt.Errorf("read chat claims: %w", err)
+	}
+	rows, err := q.Query(`SELECT chat_id, agent_id FROM agent_chats WHERE account_key = ?`,
+		accountKey)
+	if err != nil {
+		return c, fmt.Errorf("read chat claims: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var agentID int64
+		if err := rows.Scan(&id, &agentID); err != nil {
+			return c, fmt.Errorf("scan chat claim: %w", err)
+		}
+		c.Chats[id] = agentID
+	}
+	return c, rows.Err()
+}
+
+// SetAgentChats makes the agent answer every DM of its account, or only
+// chats, in one step. It fails, naming the other agent, when one already
+// answers a DM it would take.
+func (d *AgentDB) SetAgentChats(agentID int64, all bool, chats []AgentChat) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin agent chats tx: %w", err)
 	}
 	defer tx.Rollback()
 
+	var key string
+	if err := tx.QueryRow(`SELECT account_key FROM agents WHERE id = ?`, agentID).
+		Scan(&key); err != nil {
+		return fmt.Errorf("find agent: %w", err)
+	}
+	claims, err := chatClaims(tx, key)
+	if err != nil {
+		return err
+	}
+	name := func(id int64) string {
+		n := "another bot"
+		if tx.QueryRow(`SELECT 'bot ' || name FROM agents WHERE id = ?`, id).Scan(&n) != nil {
+			return "another bot"
+		}
+		return n
+	}
+	if claims.All != 0 && claims.All != agentID {
+		return fmt.Errorf("%s answers all private chats", name(claims.All))
+	}
+	for _, owner := range claims.Chats {
+		if all && owner != agentID {
+			return fmt.Errorf("%s answers some private chats here", name(owner))
+		}
+	}
+	for _, c := range chats {
+		if owner := claims.Chats[c.ID]; !all && owner != 0 && owner != agentID {
+			return fmt.Errorf("%s answers %s", name(owner), c.Title)
+		}
+	}
+
+	// Clear the agent's picks before claiming all, and drop all before picking.
 	if _, err := tx.Exec(`DELETE FROM agent_chats WHERE agent_id = ?`, agentID); err != nil {
 		return fmt.Errorf("clear agent chats: %w", err)
 	}
-	for _, c := range chats {
-		if _, err := tx.Exec(`INSERT INTO agent_chats (agent_id, chat_id, title) VALUES (?, ?, ?)`,
-			agentID, c.ID, c.Title); err != nil {
-			return fmt.Errorf("insert agent chat: %w", err)
+	if _, err := tx.Exec(`UPDATE agents SET all_chats = ? WHERE id = ?`, all, agentID); err != nil {
+		return fmt.Errorf("save agent chats: %w", err)
+	}
+	if !all {
+		for _, c := range chats {
+			if _, err := tx.Exec(`INSERT INTO agent_chats (agent_id, account_key, chat_id, title)
+				VALUES (?, ?, ?, ?)`, agentID, key, c.ID, c.Title); err != nil {
+				return fmt.Errorf("insert agent chat: %w", err)
+			}
 		}
 	}
 	return tx.Commit()

@@ -26,7 +26,7 @@ an empty composer (or right-click it) to open its actions.
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat or account |
-| <kbd>Enter</kbd> | Open chat, switch to the selected account, or open the agent row |
+| <kbd>Enter</kbd> | Open chat, switch to the selected account, or open a bot or create one (**New bot…**) in the Bots section |
 | <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
 | <kbd>u</kbd> | Unread: cards for every chat with unread messages |
 | <kbd>m</kbd> | Mentions: cards for the groups and channels mentioning you (not email) |
@@ -139,27 +139,38 @@ The thread pane opens by itself on a threaded message in wide terminals.
 | <kbd>Enter</kbd> | Do it (deletes ask first) |
 | <kbd>Esc</kbd> | Close (a click outside it closes it too) |
 
-## Agent pane
+## Bot pane
 
-The agent row (**New agent…** or **Agent: NAME ✦**) at the end of an account's rows.
+A bot's **NAME @handle** row in the account's Bots section.
 
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select a row |
-| <kbd>Enter</kbd> | Change it (edits in place: <kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels) |
+| <kbd>Enter</kbd> | Change it (edits in place: <kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels); Chats opens the chat picker |
 | <kbd>Esc</kbd> | Back |
 
-The New agent… and Add provider… wizards: <kbd>Enter</kbd> answers or picks,
+### Chat picker
+
+| Key | Action |
+|-----|--------|
+| Type | Filter the private chats by name |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Select a chat |
+| <kbd>Space</kbd> | Tick or untick it (chats another bot answers can't be ticked) |
+| <kbd>Tab</kbd> | Switch between all private chats and the ticked ones |
+| <kbd>Enter</kbd> | Save |
+| <kbd>Esc</kbd> | Cancel (a click outside it cancels too) |
+
+The New bot… and Add provider… wizards: <kbd>Enter</kbd> answers or picks,
 <kbd>↑</kbd>/<kbd>↓</kbd> choose, <kbd>Esc</kbd> goes back a question.
 
-## Agent suggestion
+## Bot suggestion
 
-When an agent asks first, its reply waits in a card above the composer. These keys work
+When a bot asks first, its reply waits in a card above the composer. These keys work
 while the composer is empty; the card's buttons can be clicked too.
 
 | Key | Action |
 |-----|--------|
-| <kbd>Ctrl+Y</kbd> | Approve: send it as the agent |
+| <kbd>Ctrl+Y</kbd> | Approve: send it as the bot |
 | <kbd>Ctrl+E</kbd> | Edit: move it into the composer, to send as yourself |
 | <kbd>Ctrl+X</kbd> | Discard |
 

@@ -618,7 +618,7 @@ func cmdReset(ctx context.Context, args []string) error {
 	return nil
 }
 
-// cmdDryRun prints the reply the account's Chat Agent would send to each
+// cmdDryRun prints the reply the bot answering the chat would send to each
 // given message, or to the newest incoming one, without sending anything.
 func cmdDryRun(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("dry-run", flag.ContinueOnError)

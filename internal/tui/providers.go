@@ -114,7 +114,7 @@ func (m settingsModel) askDeleteProvider(p agent.AgentProvider) settingsModel {
 	}
 	for _, a := range agents {
 		if a.ProviderID == p.ID {
-			m.notice = "Agent " + textfmt.Plain(a.Name) + " uses " + p.Name +
+			m.notice = "Bot " + textfmt.Plain(a.Name) + " uses " + p.Name +
 				"; pick another provider for it first"
 			return m
 		}
@@ -212,7 +212,7 @@ func (m settingsModel) providerAdded(a wizardAnswers) (tea.Model, tea.Cmd) {
 
 func (m settingsModel) providerLines(width, height int) []string {
 	if m.mgr.Agents == nil {
-		return []string{m.st.dim.Render("Chat Agents are unavailable: the agent tables could not be opened.")}
+		return []string{m.st.dim.Render("Bots are unavailable: their tables could not be opened.")}
 	}
 	rows := m.providerRows()
 	focused := m.focus == paneItems

@@ -1,7 +1,7 @@
 [<img src="assets/wiregram-animated.svg" alt="" height="117"> <img src="assets/wiregram-logo.svg" alt="Wiregram" width="360">](https://wiregram.chat)
 
 Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Matrix and
-Mattermost in one keyboard-driven window, with optional AI Chat Agents that answer your
+Mattermost in one keyboard-driven window, with optional AI bots that answer your
 DMs. It is a single static binary, written in Go.
 
 > **Alpha software.** Wiregram is under active development. Expect rough edges, and
@@ -57,13 +57,14 @@ make
   your default app (`xdg-open`, `open` on macOS, the default app on Windows). Hold
   Shift while dragging to select text.
 
-## Chat Agents
+## Bots
 
-Optional AI bots, one per account, that answer **incoming private messages**. Add an
-OpenAI-compatible provider under Settings → AI providers…, then create the agent from the
-account's **New agent…** row in the sidebar. An agent can suggest replies for you to
-approve or answer on its own; its messages are marked `✦ NAME` in the chat. It never replies
-in groups or starts a conversation. Try it with `wiregram dry-run` before turning it on.
+Optional AI bots that answer an account's **incoming private messages** as you. Add an
+OpenAI-compatible provider under Settings → AI providers…, then create a bot from the
+account's **New bot…** row in the sidebar. An account can have several, each answering all
+of its private chats or the ones picked for it, never two bots in one chat. A bot can
+suggest replies for you to approve or answer on its own; its messages are marked `✦ NAME`
+in the chat. It never replies in groups or starts a conversation. Try it with `wiregram dry-run` before turning it on.
 Conversations are sent to the provider you configure.
 
 ## Command line
@@ -77,7 +78,7 @@ wiregram chats mattermost alice                     # chat ID, title, kind, unre
 wiregram stream                                     # incoming messages, every account
 wiregram stream mattermost alice bob                # one account, or one chat
 wiregram send mattermost alice bob "On my way"      # or pipe the message on stdin
-wiregram dry-run mattermost alice bob               # the agent's reply, never sent
+wiregram dry-run mattermost alice bob               # the bot's reply, never sent
 wiregram reset                                      # sign out everywhere, delete all data
 ```
 

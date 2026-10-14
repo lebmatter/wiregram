@@ -8,8 +8,8 @@ for the current screen; [Keybinds](/keybinds) and `wiregram -h` list all of them
 ## Screens
 
 1. **Splash.** The logo shows for about a second.
-2. **Account chooser.** Every account with its status (and its agent, if it has
-   one), then Settings…, Add account and Quit. Under them sits the [unread digest](/features/accounts#unread-digest)
+2. **Account chooser.** Every account with its status (and its bots, if it has
+   any), then Settings…, Add account and Quit. Under them sits the [unread digest](/features/accounts#unread-digest)
    and any [plugin widgets](/features/plugins).
 3. **Chat mode.** The chat list and the open chat. Inside an account the screen is
    the body and a footer with the keys for what has focus; notices show on the right
@@ -25,7 +25,7 @@ Terminals 100 columns wide or wider show the chat list as a sidebar beside the o
 The sidebar is an account tree. Every account is a row with an arrow, a status glyph,
 a tag such as `TG1` (backend and position) and its label. The active account is expanded
 to its chats, Unread, Mentions and Search…, and, except for email, its
-[agent](/features/chat-agents) row. <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
+[bot](/features/chat-agents) rows. <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
 
 Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 
@@ -47,7 +47,7 @@ The login and connecting screens leave the mouse to the terminal.
 
 Questions and pickers open as modals over the screen, with everything behind them faded:
 
-- **Confirmations.** Quitting, deleting a chat, message, agent or provider, removing an
+- **Confirmations.** Quitting, deleting a chat, message, bot or provider, removing an
   account and Reset ask first. <kbd>y</kbd> or <kbd>Enter</kbd> on the action goes
   ahead, <kbd>Esc</kbd> cancels. Deletes and Reset start on Cancel.
 - **Search users, Forward to and Mention** share one picker: type to filter,

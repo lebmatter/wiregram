@@ -92,8 +92,8 @@ These are project constraints, not suggestions:
   shortcut list lives only in `wiregram -h` (`usageText`).
 - The sidebar is an account tree (`internal/tui/list.go`): every
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
-  has a Chat Agent), the active one expanded to its chats, archive, search and,
-  except on email, its agent row (`New agent…`, then `Agent: NAME`). Enter on
+  has a bot), the active one expanded to its chats, archive, search and,
+  except on email, a `── Bots` section: a `NAME @handle` row per bot, then `New bot…`. Enter on
   another account switches to it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
@@ -101,8 +101,8 @@ These are project constraints, not suggestions:
   Themes, Plugins, AI providers, Reset, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
-  (`backend.LogoutBackend`) when online, then deletes its local data and agent
-  (with its `agent_sent` rows): its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
+  (`backend.LogoutBackend`) when online, then deletes its local data and bots
+  (with their `agent_sent` rows): its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
   and cache directories (`config.Wipe`) and starts again as a fresh install.
 - Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
   a grid of cards, one per online account, each fetched once when the account comes
@@ -207,33 +207,41 @@ These are project constraints, not suggestions:
   that each screen loads from the `theme` setting and passes down; status,
   chat-kind, link and nick colours are the same in every theme. Settings'
   Themes… row shows a sample card per theme and Enter applies one.
-- Chat Agents belong to accounts, one each (`agents.account_key`). Providers live in
-  Settings' AI providers… (`internal/tui/providers.go`). An account's agent row creates the
-  agent through the scripted wizard (`internal/tui/agentwiz.go`), then opens the agent pane
-  (`internal/tui/agentpane.go`) in the chat's place: Settings-style rows, including which
-  private chats it answers (all, or those in `agent_chats`). The theme's agent colour
-  (violet, `styles.agent`) and `agentIcon` `✦` mark accounts with an agent, the DMs it
-  answers while on, chats with a suggestion waiting and the messages an agent sent; those are recorded in `agent_sent`
-  and drawn with `✦ NAME` in the nick column (`Message.Agent`). An "ask me first" agent's
-  draft is a card over the composer (`suggestionCard`, `internal/tui/chat.go`): Approve
-  (^Y) sends it as the agent, Edit (^E) moves it into the composer as the user's own,
-  Discard (^X) drops it. On backends with server threads (`backend.ThreadFetcher`) an agent
-  answers in the message's own thread, with the thread as context (`replyTarget`); elsewhere
-  it quotes the message. `wiregram dry-run` drafts replies without sending
-  (`agentRuntime.DryRun`).
+- Chat Agents are called bots in the UI (the code keeps `agent`). An account has any
+  number (`agents.account_key`), each with a display Name and an `@handle` unique on the
+  account (`agent.ValidHandle`), reserved for registering the bot on a network later.
+  Each private chat has at most one bot: a bot takes all of the account's DMs
+  (`all_chats`) or picks some (`agent_chats`), and the two exclude each other. The
+  database enforces it (unique indexes and triggers, schema v5), and `SetAgentChats`
+  saves a bot's choice in one transaction, naming the other bot when it conflicts.
+  Providers live in Settings' AI providers… (`internal/tui/providers.go`). New bot… creates
+  one through the scripted wizard (`internal/tui/agentwiz.go`), then opens the bot pane
+  (`internal/tui/agentpane.go`) in the chat's place: Settings-style rows, whose Chats row
+  opens the chat picker modal (`internal/tui/dmpicker.go`), centred over the pane with it
+  faded behind, where chats other bots answer show `[-]` and the owner's name. The
+  runtime routes each DM to the bot that owns it (`agent.ChatClaims`). The theme's agent
+  colour (violet, `styles.agent`) and `agentIcon` `✦` mark accounts with a bot, the DMs a
+  bot answers while on, chats with a suggestion waiting and the messages a bot sent; those
+  are recorded in `agent_sent` and drawn with `✦ NAME` in the nick column
+  (`Message.Agent`). An "ask me first" bot's draft is a card over the composer
+  (`suggestionCard`, `internal/tui/chat.go`): Approve (^Y) sends it as the bot, Edit (^E)
+  moves it into the composer as the user's own, Discard (^X) drops it. On backends with
+  server threads (`backend.ThreadFetcher`) a bot answers in the message's own thread, with
+  the thread as context (`replyTarget`); elsewhere it quotes the message.
+  `wiregram dry-run` drafts the owning bot's reply without sending (`agentRuntime.DryRun`).
 - Wizards (`internal/tui/wizard.go`) take fixed options or typed values only, never free
-  chat with a model. Adding an account (network, server URL), an AI provider or an agent,
+  chat with a model. Adding an account (network, server URL), an AI provider or a bot,
   and the sign-in prompts are form modals centred over
   the screen they were opened from, faded behind it (`styles.overlay`): answered
   steps as label and value rows, then the current question (`wizardModel.formView`).
-- Every yes/no question (quit, delete chat/message/agent/provider, remove account, Reset) is a
+- Every yes/no question (quit, delete chat/message/bot/provider, remove account, Reset) is a
   `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
   there, never a footer notice. Deletes and Reset start on Cancel.
 - A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
   over its screen, faded behind it: navigation and search keys; any key or click closes it.
-- Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in
+- Bots answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat. Email publishes no DM events,
-  so agents never answer mail.
+  so bots never answer mail.
 
 ## Architecture
 
@@ -254,8 +262,8 @@ internal/
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache tables
-  agent/             SQLite store for providers, per-account agents, their chats,
-                     message history and the record of what agents sent
+  agent/             SQLite store for providers, per-account agents (bots), the DMs
+                     each answers, message history and the record of what they sent
   plugin/            Lua plugin VMs, their API (settings, kv, http, widgets)
                      and the embedded built-in plugins
   account/           account manager (discovery, connect, login state) and the

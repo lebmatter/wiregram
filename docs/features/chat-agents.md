@@ -1,27 +1,29 @@
-# Chat Agents
+# Bots
 
-Chat Agents are optional AI bots that answer **incoming private messages** for an
-account. Each account can have one agent. They work with any OpenAI-compatible API.
+Bots are optional AI helpers that answer **incoming private messages** for an account,
+as you. An account can have several, each answering its own private chats. They work
+with any OpenAI-compatible API.
 
-<img class="wg-shot" src="/img/agent-pane.png" alt="An account's agent settings">
+<img class="wg-shot" src="/img/agent-pane.png" alt="A bot's settings">
 
 ::: warning Your messages go to the provider
-Every conversation an agent answers is sent to the AI provider you configure.
+Every conversation a bot answers is sent to the AI provider you configure.
 :::
 
-## What agents do and don't do
+## What bots do and don't do
 
 - They answer **DMs only**. They never act in groups or channels, and never start a
   conversation.
 - They never answer email.
-- Each account has at most one agent, and an agent belongs to one account.
-- An agent either **asks you first** with a suggested reply, or **replies automatically**.
-- On Mattermost, where threads live on the server, an agent answers where the message
+- A bot belongs to one account. A private chat is answered by **at most one bot**: a bot
+  takes all of the account's private chats, or the ones picked for it.
+- A bot either **asks you first** with a suggested reply, or **replies automatically**.
+- On Mattermost, where threads live on the server, a bot answers where the message
   was written: inside its thread, with that thread as the conversation, or in the main
   chat. On Telegram, Matrix and WhatsApp its reply quotes the message it answers.
 
-Violet marks everything agent-related: the ✦ icon, the suggestion card and the messages
-an agent sent.
+Violet marks everything bot-related: the ✦ icon, the suggestion card and the messages
+a bot sent.
 
 ## AI providers
 
@@ -29,7 +31,7 @@ Providers are kept in **Settings → AI providers…**. The right pane lists eac
 with its default model; <kbd>Enter</kbd> on one opens it (`▸`/`▾`) to show its rows:
 Name, URL, Key from (the environment variable) and Model. <kbd>Enter</kbd> edits a row in
 place, <kbd>Enter</kbd> again saves and <kbd>Esc</kbd> cancels. **Delete provider…** asks
-first, and is refused while an agent uses that provider.
+first, and is refused while a bot uses that provider.
 
 **+ Add provider…** asks for a preset, a name, the URL (custom only), the variable that
 holds the API key and a default model, then Save, Start over or Cancel. Presets:
@@ -52,64 +54,95 @@ export OPENROUTER_API_KEY=...   # from your secret manager, not shell history
 wiregram
 ```
 
-## Creating an agent
+## Creating a bot
 
-Each expanded account in the chat sidebar (except email) ends with an agent row, under
-Unread, Mentions, Archived chats and Search…. It reads **New agent…** until the account
-has one. Without a provider, an alert over the screen asks you to add one in
+Each expanded account in the chat sidebar (except email) ends with a **── Bots** section
+under Unread, Mentions, Archived chats and Search…: one **NAME @handle ✦** row per bot,
+then **New bot…**. Without a provider, an alert over the screen asks you to add one in
 Settings → AI providers first (any key or click closes it); otherwise a
 short scripted wizard opens. Every step is a fixed choice or a typed value;
 <kbd>Esc</kbd> goes back a question.
 
-1. **Name**, e.g. `Support Bot`.
-2. **Provider** and **model** (the provider's default, or another).
-3. **Prompt**: how it should reply. Leave empty for a brief, helpful default.
-4. **Knowledge files** (optional): comma-separated paths it reads, e.g. `~/notes/faq.md`.
+1. **Name**, e.g. `Support Bot`. It is shown in the sidebar and on the messages it sends.
+2. **Handle**, e.g. `@support_bot`, suggested from the name: a lowercase letter, then
+   `a-z`, `0-9` and `_`, 3 to 32 characters, unique on the account. It names the bot if
+   you register it on the network later, and can be changed until then.
+3. **Provider** and **model** (the provider's default, or another).
+4. **Prompt**: how it should reply. Leave empty for a brief, helpful default.
+5. **Knowledge files** (optional): comma-separated paths it reads, e.g. `~/notes/faq.md`.
    Relative paths are inside the Wiregram config folder.
-5. **What it understands**:
+6. **What it understands**:
    - text only (media messages never reach it)
    - text + media descriptions (`[photo]`, `[file]`…)
    - text + vision (incoming photos go to the model)
-6. **How it replies**: ask me first, or automatically.
-7. **History**: keep conversation history for 7, 30 or 90 days.
-8. **Create agent.**
+7. **How it replies**: ask me first, or automatically.
+8. **History**: keep conversation history for 7, 30 or 90 days.
+9. **Create bot.**
 
-A new agent answers all of the account's private chats.
+The account's first bot answers all of its private chats. When other bots already answer
+some, a new bot starts with none and its chat picker opens right away.
 
-## The agent pane
+## The bot pane
 
-Once it exists the row reads **Agent: NAME ✦**. <kbd>Enter</kbd> on it opens the agent's
-settings in place of the chat. <kbd>↑</kbd>/<kbd>↓</kbd> choose a row and
-<kbd>Enter</kbd> changes it:
+<kbd>Enter</kbd> on a bot's row opens the bot's settings in place of the chat.
+<kbd>↑</kbd>/<kbd>↓</kbd> choose a row and <kbd>Enter</kbd> changes it:
 
 | Row | Value |
 |-----|-------|
 | Status | on or paused |
-| Name, Model, Prompt, Knowledge | edited in place |
+| Name, Handle, Model, Prompt, Knowledge | edited in place |
 | Provider | cycles through your providers |
 | Understands | text only, media descriptions or vision |
 | Replies | ask me first, or automatically |
 | History | 7, 30 or 90 days |
-| Chats | all private chats, or selected (N) |
-| Delete agent… | asks first, starting on Cancel |
+| Chats | all private chats, or N selected; opens the chat picker |
+| Delete bot… | asks first, starting on Cancel |
 
-With Chats set to selected, the account's private chats are listed below as `[x] Title`
-rows; <kbd>Enter</kbd> toggles one. If the last reply failed, a line on top says why.
-<kbd>Esc</kbd> goes back, and <kbd>Tab</kbd> moves focus as usual.
+If the last reply failed, a line on top says why. <kbd>Esc</kbd> goes back, and
+<kbd>Tab</kbd> moves focus as usual.
 
-In the sidebar a violet ✦ follows the account's name (dim while the agent is paused),
-and the account chooser shows it beside the agent's name. While the agent is on, each
-private chat it answers gets a ✦ before its title.
+### Picking chats
+
+The chat picker is a modal over the bot's pane:
+
+```
+╭─ Chats Ava answers ─────────────────────────╮
+│ Answers   ○ all private chats  ● selected   │
+│ Filter    ra                                │
+│                                             │
+│ > [x] Rahul                                 │
+│   [ ] Rajesh                                │
+│   [-] Ravi                       ✦ Support  │
+│                                             │
+│ 1 selected                                  │
+╰─────────────────────────────────────────────╯
+```
+
+Typing filters the list, <kbd>↑</kbd>/<kbd>↓</kbd> select, <kbd>Space</kbd> (or a click)
+ticks a chat, <kbd>Tab</kbd> switches between all private chats and the ticked ones,
+<kbd>Enter</kbd> saves and <kbd>Esc</kbd> cancels.
+
+No private chat has two bots:
+
+- Chats another bot answers show `[-]` and its name, and cannot be ticked.
+- **All private chats** is unavailable while another bot answers any.
+- While another bot answers all of them, the picker only shows that; <kbd>Esc</kbd>
+  closes it.
+- A paused bot keeps its chats. Deleting a bot frees them.
+
+In the sidebar a violet ✦ follows the account's name (dim while all its bots are paused),
+and the account chooser shows it beside the bots' names. Each private chat a bot answers
+while on gets a ✦ before its title.
 
 ## Approving replies
 
-With **Ask me first**, a chat whose agent has a reply waiting gets a ✦ before its title in
-the sidebar. In the open chat a violet **✦ Agent suggests** card sits above the composer
+With **Ask me first**, a chat whose bot has a reply waiting gets a ✦ before its title in
+the sidebar. In the open chat a violet **✦ Bot suggests** card sits above the composer
 with the reply:
 
 | Key | Action |
 |-----|--------|
-| <kbd>Ctrl+Y</kbd> | Approve: send it as the agent |
+| <kbd>Ctrl+Y</kbd> | Approve: send it as the bot |
 | <kbd>Ctrl+E</kbd> | Edit: move the text into the composer; you then send it as yourself |
 | <kbd>Ctrl+X</kbd> | Discard |
 
@@ -117,15 +150,15 @@ The keys work while the composer is empty, and the card's buttons can be clicked
 Sending your own reply also drops a waiting suggestion. Suggestions are kept in memory
 only, so quitting loses them.
 
-## Which messages came from the agent
+## Which messages came from a bot
 
-Every message an agent sends is recorded, and the chat shows `✦ NAME` in violet in its
+Every message a bot sends is recorded, and the chat shows `✦ NAME` in violet in its
 nick column instead of `you`, including after a restart.
 
 ## Testing with dry-run
 
-[`wiregram dry-run`](/features/cli#dry-run) prints the reply the account's agent would
-give to a message, without sending or recording anything. It works while the agent is
+[`wiregram dry-run`](/features/cli#dry-run) prints the reply the bot answering the chat
+would give to a message, without sending or recording anything. It works while the bot is
 paused, so you can try the prompt before turning it on.
 
 ```sh
@@ -134,12 +167,12 @@ wiregram dry-run mattermost alice bob
 
 ## Storage
 
-Providers, agents, their chats, conversation history and the record of sent messages are
-kept in `wiregram.db`. The sent-message record outlives the history setting. Removing an
-account deletes its agent and that record.
+Providers, bots, their chats, conversation history and the record of sent messages are
+kept in `wiregram.db`, which also enforces that no private chat has two bots and no two
+bots of an account share a handle. The sent-message record outlives the history setting.
+Removing an account deletes its bots and that record.
 
 ::: info Upgrading
-Agents from older versions could serve several accounts, so they are removed once on the
-first start of this version. Providers are kept; create each account's agent again from
-its **New agent…** row.
+Each account's agent from the previous version becomes its first bot, with its chats
+kept and a handle made from its name.
 :::

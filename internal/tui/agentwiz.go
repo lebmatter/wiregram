@@ -13,7 +13,7 @@ import (
 )
 
 // The provider and agent wizards are form modals: Settings' AI providers adds
-// providers, and an account's New agent… row creates its agent.
+// providers, and an account's New bot… row creates a bot (a Chat Agent).
 
 type providerPreset struct{ value, name, url, env, model string }
 
@@ -48,7 +48,7 @@ func providerSteps() []wizardStep {
 			key:   "preset",
 			label: "Provider",
 			kind:  wizChoice,
-			ask:   say("Which AI provider should agents use?"),
+			ask:   say("Which AI provider should bots use?"),
 			options: func(wizardAnswers) []wizardOption {
 				var opts []wizardOption
 				for _, p := range providerPresets {
@@ -95,7 +95,7 @@ func providerSteps() []wizardStep {
 			key:   "model",
 			label: "Model",
 			kind:  wizText,
-			ask:   say("Which model should agents use by default?"),
+			ask:   say("Which model should bots use by default?"),
 			def:   func(a wizardAnswers) string { return presetFor(a).model },
 		},
 		{
@@ -173,9 +173,9 @@ var (
 	}
 )
 
-// agentSteps create an account's agent; Chats and the rest are changed later
-// in the agent pane.
-func agentSteps(providers []agent.AgentProvider, dir string) []wizardStep {
+// agentSteps create a bot for an account whose other bots hold the handles in
+// taken (handle → name); Chats and the rest are changed later in its pane.
+func agentSteps(providers []agent.AgentProvider, dir string, taken map[string]string) []wizardStep {
 	providerModel := func(a wizardAnswers) string {
 		for _, p := range providers {
 			if strconv.FormatInt(p.ID, 10) == a["provider"] {
@@ -190,7 +190,25 @@ func agentSteps(providers []agent.AgentProvider, dir string) []wizardStep {
 	}
 	return []wizardStep{
 		{key: "name", label: "Name", kind: wizText,
-			ask: say("What is the agent's name?"), placeholder: "Support Bot"},
+			ask: say("What is the bot's name?"), placeholder: "Support Bot"},
+		{
+			key:   "handle",
+			label: "Handle",
+			kind:  wizText,
+			ask: say("Its @handle? It names the bot if you register it on the network " +
+				"later, and can be changed until then."),
+			def: func(a wizardAnswers) string { return agent.SuggestHandle(a["name"]) },
+			validate: func(v string, _ wizardAnswers) error {
+				v = strings.TrimPrefix(strings.ToLower(v), "@")
+				if err := agent.ValidHandle(v); err != nil {
+					return err
+				}
+				if name, ok := taken[v]; ok {
+					return fmt.Errorf("@%s is used by bot %s.", v, name)
+				}
+				return nil
+			},
+		},
 		choiceStep("provider", "Provider", "Which provider should it use?", provOpts...),
 		{key: "model", label: "Model", kind: wizText,
 			ask: say("Which model? Keep the provider's default or type another."),
@@ -216,9 +234,10 @@ func agentSteps(providers []agent.AgentProvider, dir string) []wizardStep {
 		{
 			key:  "confirm",
 			kind: wizChoice,
-			ask: say("It answers every private chat of this account; pick chats later " +
-				"in its settings. It never starts a chat or answers groups."),
-			options: confirmOptions("Create agent"),
+			ask: say("It answers private chats as you: every one when no other bot here " +
+				"answers any, else the ones you pick next. It never starts a chat or " +
+				"answers groups."),
+			options: confirmOptions("Create bot"),
 		},
 	}
 }
@@ -242,7 +261,7 @@ func splitList(s string) []string {
 	return out
 }
 
-// createAgent saves the agent the wizard described for the account.
+// createAgent saves the bot the wizard described for the account.
 func createAgent(db *agent.AgentDB, accountKey string, a wizardAnswers) (agent.AgentRecord, error) {
 	providerID, err := strconv.ParseInt(a["provider"], 10, 64)
 	if err != nil {
@@ -253,11 +272,12 @@ func createAgent(db *agent.AgentDB, accountKey string, a wizardAnswers) (agent.A
 		return agent.AgentRecord{}, fmt.Errorf("pick a retention period: %w", err)
 	}
 	rec := agent.AgentRecord{
-		AccountKey: accountKey, Name: a["name"], Prompt: a["prompt"], Auto: a["mode"] == "auto",
-		Media: a["media"], ProviderID: providerID, Model: a["model"],
-		RetentionDays: retention, Enabled: true, AllChats: true,
+		AccountKey: accountKey, Name: a["name"],
+		Handle: strings.TrimPrefix(strings.ToLower(a["handle"]), "@"), Prompt: a["prompt"],
+		Auto: a["mode"] == "auto", Media: a["media"], ProviderID: providerID, Model: a["model"],
+		RetentionDays: retention, Enabled: true,
 	}
-	if rec.ID, err = db.CreateAgent(rec); err != nil {
+	if rec, err = db.CreateAgent(rec); err != nil {
 		return rec, err
 	}
 	return rec, db.SetAgentKnowledge(rec.ID, splitList(a["knowledge"]))

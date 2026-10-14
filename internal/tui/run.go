@@ -34,7 +34,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 
 	db, err := agent.OpenAgentDB(m.Store.SQL(), m.Dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "wiregram: agents disabled — %s\n", textfmt.CleanError(err))
+		fmt.Fprintf(os.Stderr, "wiregram: bots disabled — %s\n", textfmt.CleanError(err))
 	} else {
 		m.Agents = account.NewAgentRuntime(ctx, db, m)
 		m.Agents.Start()

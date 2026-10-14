@@ -3,7 +3,7 @@
 <img class="wg-logo" src="/logo.svg" alt="Wiregram">
 
 Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Matrix,
-Mattermost and email in one keyboard-driven window, with optional AI Chat Agents that
+Mattermost and email in one keyboard-driven window, with optional AI bots that
 answer your DMs. It is a single static binary, written in Go.
 
 ::: warning Alpha software
@@ -35,7 +35,7 @@ format may change between releases. Please report bugs in
 - [Media](/features/media): inline images in kitty and Ghostty, half-blocks elsewhere
 - [Email](/features/email): IMAP and SMTP, one chat per correspondent
 - [Themes](/features/themes): Zest and Copper
-- [Chat Agents](/features/chat-agents): one AI bot per account that answers your private messages
+- [Bots](/features/chat-agents): AI bots that answer an account's private messages, each its own chats
 - [Plugins](/features/plugins): sandboxed Lua widgets
 - [CLI](/features/cli): JSON Lines commands for scripts and AI agents
 

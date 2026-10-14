@@ -1844,7 +1844,7 @@ func (m chatViewModel) suggestionCard(width int) []string {
 		buttons += strings.Repeat(" ", b.at-textfmt.DisplayWidth(buttons)) + style.Render(b.label)
 	}
 	lines := append(text, buttons)
-	return strings.Split(renderBox(agentIcon+" Agent suggests", lines, width, len(lines)+2,
+	return strings.Split(renderBox(agentIcon+" Bot suggests", lines, width, len(lines)+2,
 		lipgloss.Color(m.st.theme.agent)), "\n")
 }
 
