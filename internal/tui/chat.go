@@ -101,6 +101,8 @@ type chatViewModel struct {
 	threadScroll int
 
 	confirmRevoke bool
+	// confirm asks before a delete; the root draws it over the chat.
+	confirm *confirmModal
 
 	privateMode    bool
 	lastTypingSent time.Time
@@ -935,9 +937,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if !m.caps.DeleteChat || !m.entry.IsDM {
 			return m, nil
 		}
-		m.subMode = chatSubConfirmChatDelete
-		m.confirmRevoke = false
-		m.notice = fmt.Sprintf("Delete chat with %s only for you? y to confirm; any other key cancels.", textfmt.Plain(m.entry.Title))
+		m = m.askDeleteChat(false)
 	case "ctrl+alt+d":
 		if !m.caps.DeleteChat || !m.entry.IsDM {
 			return m, nil
@@ -946,9 +946,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			m.notice = "Saved Messages cannot be deleted for both sides"
 			return m, nil
 		}
-		m.subMode = chatSubConfirmChatDelete
-		m.confirmRevoke = true
-		m.notice = fmt.Sprintf("Delete chat with %s for both sides? y to confirm; any other key cancels.", textfmt.Plain(m.entry.Title))
+		m = m.askDeleteChat(true)
 	case "alt+h", "alt+H":
 		m.privateMode = !m.privateMode
 		if m.privateMode {
@@ -1169,8 +1167,28 @@ func (m chatViewModel) askDelete(revoke bool) chatViewModel {
 	if revoke {
 		scope = "for both sides"
 	}
-	m.notice = fmt.Sprintf("Delete this message %s? y to confirm; any other key cancels.", scope)
+	m.confirm = newConfirmModal(m.st, "Delete message",
+		fmt.Sprintf("Delete this message %s?", scope), "Delete", true)
 	return m
+}
+
+// askDeleteChat asks before deleting this chat, for both sides when revoke
+// is set.
+func (m chatViewModel) askDeleteChat(revoke bool) chatViewModel {
+	m.subMode = chatSubConfirmChatDelete
+	m.confirmRevoke = revoke
+	m.confirm = newConfirmModal(m.st, "Delete chat", deleteChatQuestion(m.entry, revoke),
+		"Delete", true)
+	return m
+}
+
+// deleteChatQuestion asks whether to delete the chat with entry.
+func deleteChatQuestion(entry backend.ChatEntry, revoke bool) string {
+	scope := "only for you"
+	if revoke {
+		scope = "for both sides"
+	}
+	return fmt.Sprintf("Delete chat with %s %s?", textfmt.Plain(entry.Title), scope)
 }
 
 func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
@@ -1270,8 +1288,12 @@ func (m chatViewModel) handleEditKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cm
 }
 
 func (m chatViewModel) handleConfirmChatDeleteKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	m.subMode = chatSubNone
-	if msg.String() == "y" || msg.String() == "Y" {
+	yes, done := m.confirm.key(msg.String())
+	if !done {
+		return m, nil
+	}
+	m.subMode, m.confirm = chatSubNone, nil
+	if yes {
 		revoke := m.confirmRevoke
 		return m, m.doDeleteChat(revoke)
 	}
@@ -1280,8 +1302,12 @@ func (m chatViewModel) handleConfirmChatDeleteKey(msg tea.KeyPressMsg) (chatView
 }
 
 func (m chatViewModel) handleConfirmMsgDeleteKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	m.subMode = chatSubNone
-	if msg.String() == "y" || msg.String() == "Y" {
+	yes, done := m.confirm.key(msg.String())
+	if !done {
+		return m, nil
+	}
+	m.subMode, m.confirm = chatSubNone, nil
+	if yes {
 		sel, ok := m.selectedMsg()
 		if ok {
 			revoke := m.confirmRevoke
@@ -1740,7 +1766,7 @@ func (m chatViewModel) helpKeys() []helpKey {
 		}
 		return msgMenuHelp
 	case chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
-		return chatConfirmHelp
+		return m.confirm.helpKeys()
 	case chatSubCompose:
 		return chatComposeHelp
 	case chatSubReader:
@@ -1806,9 +1832,4 @@ var chatThreadHelp = []helpKey{
 	{"↑↓", "messages"},
 	{"enter", "reply in thread"},
 	{"esc", "close thread"},
-}
-
-var chatConfirmHelp = []helpKey{
-	{"y", "confirm"},
-	{"any", "cancel"},
 }

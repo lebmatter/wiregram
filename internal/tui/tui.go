@@ -425,6 +425,19 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if m.chatOpen && m.chat.locked {
 		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
 	}
+	if c, x, y, ok := m.confirmShown(); ok {
+		if right {
+			return m, nil
+		}
+		// The owner of the confirmation takes the answer as a key.
+		switch yes, done := c.click(mouse.X, mouse.Y, x, y); {
+		case yes:
+			return m.handleKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
+		case done:
+			return m.handleKey(keyPress(tea.KeyEscape))
+		}
+		return m, nil
+	}
 	var cmd tea.Cmd
 	if m.searchOpen {
 		x, y, w, h := m.searchRect()
@@ -453,7 +466,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	if m.overList(mouse.X) {
-		if m.loadErr != nil || m.list.confirm != nil {
+		if m.loadErr != nil {
 			return m, nil
 		}
 		m.focus = focusList
@@ -489,6 +502,9 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	if !ok || mouse.Y >= m.bodyHeight() || (m.chatOpen && m.chat.locked) {
 		return m, nil
 	}
+	if _, _, _, ok := m.confirmShown(); ok {
+		return m.handleKey(k)
+	}
 	var cmd tea.Cmd
 	switch {
 	case m.searchOpen:
@@ -496,7 +512,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	case m.menuShown():
 		m.chat, cmd = m.chat.Update(k)
 	case m.overList(mouse.X):
-		if m.loadErr == nil && m.list.confirm == nil {
+		if m.loadErr == nil {
 			m.list, cmd = m.list.Update(k)
 		}
 	case m.unreadOpen:
@@ -668,7 +684,7 @@ func (m tuiModel) footer() string {
 		}
 	}
 	var keys []helpKey
-	notice := m.list.notice()
+	notice := ""
 	switch {
 	case m.searchOpen:
 		keys = m.search.helpKeys()
@@ -681,7 +697,7 @@ func (m tuiModel) footer() string {
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
 	case m.list.confirm != nil:
-		keys = chatConfirmHelp
+		keys = m.list.confirm.modal.helpKeys()
 	default:
 		keys = append(keys, m.list.helpKeys()...)
 		if m.unreadOpen {
@@ -753,12 +769,37 @@ func (m tuiModel) render() string {
 		x, y, _, _ := m.searchRect()
 		body = m.st.fadeUnder(body, m.search.View(), x, y)
 	}
+	if c, x, y, ok := m.confirmShown(); ok {
+		body = m.st.fadeUnder(body, c.View(), x, y)
+	}
 	if m.welcome != nil {
 		w, h := m.welcome.size()
 		x, y := modalRect(m.width, bodyHeight, w, h)
 		body = m.st.fadeUnder(body, m.welcome.View(), x, y)
 	}
 	return body + "\n" + m.footer()
+}
+
+// confirmShown is the delete confirmation that is up, if any, with its
+// top-left corner: centred over the chat for one asked in the chat, else
+// over the screen.
+func (m tuiModel) confirmShown() (c *confirmModal, x, y int, ok bool) {
+	left, width := 0, m.width
+	switch {
+	case m.list.confirm != nil:
+		c = m.list.confirm.modal
+	case m.chatOpen && m.chat.confirm != nil:
+		c = m.chat.confirm
+		if m.twoPane() {
+			left = sidebarWidth
+		}
+		width = m.chat.width
+	default:
+		return nil, 0, 0, false
+	}
+	w, h := c.size()
+	x, y = modalRect(width, m.bodyHeight(), w, h)
+	return c, left + x, y, true
 }
 
 // menuShown reports whether the open chat's message actions modal is up.

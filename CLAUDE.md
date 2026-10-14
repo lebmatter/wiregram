@@ -201,6 +201,9 @@ These are project constraints, not suggestions:
   server URL) and the sign-in prompts are form modals centred over
   the screen they were opened from, faded behind it (`styles.overlay`): answered
   steps as label and value rows, then the current question (`wizardModel.formView`).
+- Every yes/no question (quit, delete chat/message/agent/provider, remove account, Reset) is a
+  `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
+  there, never a footer notice. Deletes and Reset start on Cancel.
 - A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
   over its screen, faded behind it: navigation and search keys; any key or click closes it.
 - Chat Agents answer incoming DMs only (`BackendEvent.DM`); they never act in

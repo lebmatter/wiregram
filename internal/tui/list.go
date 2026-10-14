@@ -34,10 +34,11 @@ type chatListModel struct {
 	width, height int
 }
 
-// chatListConfirm is a pending y/n question: delete entry.
+// chatListConfirm is a pending question: delete entry.
 type chatListConfirm struct {
 	entry  backend.ChatEntry
 	revoke bool
+	modal  *confirmModal
 }
 
 type chatListChoice struct{ index int }
@@ -175,8 +176,12 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if m.confirm != nil {
 			req := m.confirm
+			yes, done := req.modal.key(msg.String())
+			if !done {
+				return m, nil
+			}
 			m.confirm = nil
-			if msg.String() == "y" || msg.String() == "Y" {
+			if yes {
 				entry := req.entry
 				revoke := req.revoke
 				ctx := m.ctx
@@ -220,7 +225,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			if !entry.IsDM {
 				return m, nil
 			}
-			m.confirm = &chatListConfirm{entry: entry, revoke: false}
+			m.confirm = m.askDelete(entry, false)
 		case "ctrl+alt+d":
 			i, ok := m.chatIndex()
 			if !ok || !m.caps.DeleteChat {
@@ -230,7 +235,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			if !entry.IsDM || entry.IsSelf {
 				return m, nil
 			}
-			m.confirm = &chatListConfirm{entry: entry, revoke: true}
+			m.confirm = m.askDelete(entry, true)
 		case "enter":
 			above, below := m.others()
 			idx := m.selected
@@ -348,16 +353,9 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	return rows
 }
 
-func (m chatListModel) notice() string {
-	if m.confirm == nil {
-		return ""
-	}
-	scope := "only for you"
-	if m.confirm.revoke {
-		scope = "for both sides"
-	}
-	return fmt.Sprintf("Delete chat with %s %s? y to confirm; any other key cancels.",
-		textfmt.Plain(m.confirm.entry.Title), scope)
+func (m chatListModel) askDelete(entry backend.ChatEntry, revoke bool) *chatListConfirm {
+	return &chatListConfirm{entry: entry, revoke: revoke, modal: newConfirmModal(m.st,
+		"Delete chat", deleteChatQuestion(entry, revoke), "Delete", true)}
 }
 
 func (m chatListModel) helpKeys() []helpKey {

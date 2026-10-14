@@ -39,7 +39,7 @@ type accountListModel struct {
 	result   *accountChoice
 	digest   digestModel
 	widgets  widgetsModel
-	quitting *quitModal
+	quitting *confirmModal
 	width    int
 	height   int
 }
@@ -124,14 +124,8 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if m.quitting != nil {
-			x, y, w, h := m.quitRect()
-			if msg.X < x || msg.X >= x+w || msg.Y < y || msg.Y >= y+h {
-				m.quitting = nil
-			} else if q, ok := m.quitting.hit(msg.Y - y); ok {
-				m.quitting = &q
-				return m.Update(keyPress(tea.KeyEnter))
-			}
-			return m, nil
+			x, y, _, _ := m.quitRect()
+			return m.quitAnswered(m.quitting.click(msg.X, msg.Y, x, y))
 		}
 		if i, ok := m.itemAt(msg.Y); ok {
 			m.selected = i
@@ -148,20 +142,11 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if m.quitting != nil {
-			q, quit, done := m.quitting.key(msg)
-			m.quitting = &q
-			switch {
-			case quit:
-				m.result = &accountChoice{quit: true}
-				return m, tea.Quit
-			case done:
-				m.quitting = nil
-			}
-			return m, nil
+			return m.quitAnswered(m.quitting.key(msg.String()))
 		}
 		switch msg.String() {
 		case "q", "ctrl+c":
-			m.quitting = &quitModal{st: m.st}
+			m.quitting = newQuitModal(m.st)
 		case "esc":
 			if m.canGoBack() {
 				m.result = &accountChoice{index: -1}
@@ -181,7 +166,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.selected == len(m.accounts)+3 {
-				m.quitting = &quitModal{st: m.st}
+				m.quitting = newQuitModal(m.st)
 				return m, nil
 			}
 			if m.selected == len(m.accounts)+2 {
@@ -279,7 +264,7 @@ func (m accountListModel) View() tea.View {
 	if m.quitting != nil {
 		x, y, _, _ := m.quitRect()
 		body = m.st.fadeUnder(body, m.quitting.View(), x, y)
-		keys, notice = quitModalHelp, ""
+		keys, notice = m.quitting.helpKeys(), ""
 	}
 	content := body + "\n" + m.st.footer(keys, notice, m.width)
 	v := tea.NewView(content)
@@ -353,6 +338,17 @@ func (m accountListModel) frame() string {
 // sectionRule is a divider that names the section under it.
 func sectionRule(label string, width int) string {
 	return label + strings.Repeat("─", max(0, width-textfmt.DisplayWidth(label)))
+}
+
+func (m accountListModel) quitAnswered(quit, done bool) (tea.Model, tea.Cmd) {
+	switch {
+	case quit:
+		m.result = &accountChoice{quit: true}
+		return m, tea.Quit
+	case done:
+		m.quitting = nil
+	}
+	return m, nil
 }
 
 // quitRect is where the quit modal sits: centred over the screen.

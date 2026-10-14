@@ -70,11 +70,11 @@ type agentModeModel struct {
 	target    int64 // agent or provider being edited or connected
 	thenAgent bool  // start the agent wizard once a provider is saved
 
-	confirm     func() error
-	confirmText string
-	notice      string
-	width       int
-	height      int
+	confirm    *confirmModal
+	confirmRun func() error
+	notice     string
+	width      int
+	height     int
 }
 
 type agentRuntimeChanged struct{}
@@ -207,19 +207,26 @@ func (m agentModeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m agentModeModel) confirmAnswered(yes, done bool) (tea.Model, tea.Cmd) {
+	if !done {
+		return m, nil
+	}
+	run := m.confirmRun
+	m.confirm, m.confirmRun = nil, nil
+	if !yes {
+		return m, nil
+	}
+	if err := run(); err != nil {
+		m.notice = textfmt.CleanError(err)
+	}
+	m.mgr.Agents.Reload()
+	return m.reload(), nil
+}
+
 func (m agentModeModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if m.confirm != nil {
-		run := m.confirm
-		m.confirm, m.confirmText = nil, ""
-		if k == "y" || k == "Y" {
-			if err := run(); err != nil {
-				m.notice = textfmt.CleanError(err)
-			}
-			m.mgr.Agents.Reload()
-			return m.reload(), nil
-		}
-		return m, nil
+		return m.confirmAnswered(m.confirm.key(k))
 	}
 	if m.screen == scrWizard {
 		var cmd tea.Cmd
@@ -284,8 +291,9 @@ func (m agentModeModel) agentsKey(k string) (tea.Model, tea.Cmd) {
 	case "d":
 		if ok {
 			id := a.ID
-			m.confirmText = "Delete agent " + a.Name + " and its history? y/n"
-			m.confirm = func() error { return m.db().DeleteAgent(id) }
+			m.confirm = newConfirmModal(m.st, "Delete agent",
+				"Delete agent "+a.Name+" and its history?", "Delete", true)
+			m.confirmRun = func() error { return m.db().DeleteAgent(id) }
 		}
 	case "p":
 		m.screen = scrProviders
@@ -360,8 +368,9 @@ func (m agentModeModel) providersKey(k string) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-			m.confirmText = "Delete provider " + p.Name + "? y/n"
-			m.confirm = func() error { return m.db().DeleteProvider(p.ID) }
+			m.confirm = newConfirmModal(m.st, "Delete provider",
+				"Delete provider "+p.Name+"?", "Delete", true)
+			m.confirmRun = func() error { return m.db().DeleteProvider(p.ID) }
 		}
 	}
 	return m, nil
@@ -804,8 +813,11 @@ func (m agentModeModel) paneAt(x int) agentScreen {
 // handleWheel moves the selection of the list under the pointer.
 func (m agentModeModel) handleWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	k, ok := wheelKey(msg)
-	if !ok || m.confirm != nil || msg.Y >= m.bodyHeight() {
+	if !ok || msg.Y >= m.bodyHeight() {
 		return m, nil
+	}
+	if m.confirm != nil {
+		return m.handleKey(k)
 	}
 	switch m.paneAt(msg.X) {
 	case scrWizard:
@@ -830,7 +842,8 @@ func (m agentModeModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.confirm != nil {
-		return m.handleKey(keyPress(tea.KeyEscape)) // anything but y declines
+		x, y := m.confirmPos()
+		return m.confirmAnswered(m.confirm.click(mouse.X, mouse.Y, x, y))
 	}
 	row := mouse.Y - 1
 	if m.screen != scrWizard && (row < 0 || row >= h) {
@@ -875,11 +888,7 @@ func (m agentModeModel) View() tea.View {
 }
 
 func (m agentModeModel) footer() string {
-	notice := m.notice
-	if m.confirm != nil {
-		notice = m.confirmText
-	}
-	return m.st.footer(m.helpKeys(), notice, m.width)
+	return m.st.footer(m.helpKeys(), m.notice, m.width)
 }
 
 func (m agentModeModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
@@ -905,7 +914,17 @@ func (m agentModeModel) render() string {
 	default:
 		body = m.rightPane(m.width, bodyHeight)
 	}
+	if m.confirm != nil {
+		x, y := m.confirmPos()
+		body = m.st.fadeUnder(body, m.confirm.View(), x, y)
+	}
 	return body + "\n" + footer
+}
+
+// confirmPos is the top-left corner of the confirmation, centred on the screen.
+func (m agentModeModel) confirmPos() (x, y int) {
+	w, h := m.confirm.size()
+	return modalRect(m.width, m.bodyHeight(), w, h)
 }
 
 func (m agentModeModel) rightPane(width, height int) string {
@@ -1063,6 +1082,9 @@ func (m agentModeModel) providerLines(width, height int) []string {
 }
 
 func (m agentModeModel) helpKeys() []helpKey {
+	if m.confirm != nil {
+		return m.confirm.helpKeys()
+	}
 	var keys []helpKey
 	switch m.screen {
 	case scrWizard:

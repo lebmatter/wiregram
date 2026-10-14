@@ -81,15 +81,15 @@ type settingsModel struct {
 	left  int // left row: an account, then the actions
 	sel   int // right row: an item of the selected account, or a theme
 
-	result      settingsResult
-	confirm     func() tea.Cmd
-	confirmText string
-	busy        bool // a removal is running
-	edit        textinput.Model
-	editing     bool // a plugin's text setting is being typed
-	notice      string
-	width       int
-	height      int
+	result     settingsResult
+	confirm    *confirmModal
+	confirmRun func() tea.Cmd
+	busy       bool // a removal is running
+	edit       textinput.Model
+	editing    bool // a plugin's text setting is being typed
+	notice     string
+	width      int
+	height     int
 }
 
 func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, fromAccounts bool) settingsModel {
@@ -215,14 +215,7 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.confirm != nil {
-		run := m.confirm
-		m.confirm, m.confirmText = nil, ""
-		// Reset takes only y, so a second Enter cannot wipe everything.
-		if k == "y" || k == "Y" || k == "enter" && !m.onReset() {
-			m.busy, m.notice = true, "Signing out…"
-			return m, run()
-		}
-		return m, nil
+		return m.confirmAnswered(m.confirm.key(k))
 	}
 	m.notice = ""
 	switch k {
@@ -273,9 +266,10 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 		case actionAgents:
 			m.result.agents = true
 		case actionReset:
-			m.confirmText = "Delete all accounts and data and start fresh? This cannot be undone. " +
-				"y resets, any other key cancels"
-			m.confirm = func() tea.Cmd { return m.resetAll }
+			m.confirm = newConfirmModal(m.st, "Reset",
+				"Delete all accounts and data and start fresh? This cannot be undone.",
+				"Reset", true)
+			m.confirmRun = func() tea.Cmd { return m.resetAll }
 			return m, nil
 		}
 		return m, tea.Quit
@@ -369,13 +363,27 @@ func (m settingsModel) apply(item settingsItem) (tea.Model, tea.Cmd) {
 			m.notice = "Keeping " + retentionLabel(next) + " of mail in the local cache"
 		}
 	case itemRemove:
-		m.confirmText = fmt.Sprintf("Remove %s %s? It signs out and deletes its local data. "+
-			"enter remove, any other key cancels", short, textfmt.Plain(a.Label()))
-		m.confirm = func() tea.Cmd {
+		m.confirm = newConfirmModal(m.st, "Remove account",
+			fmt.Sprintf("Remove %s %s? It signs out and deletes its local data.",
+				short, textfmt.Plain(a.Label())), "Remove", false)
+		m.confirmRun = func() tea.Cmd {
 			return func() tea.Msg { return settingsRemoved{a: a, err: m.mgr.Remove(m.ctx, a)} }
 		}
 	}
 	return m, nil
+}
+
+func (m settingsModel) confirmAnswered(yes, done bool) (tea.Model, tea.Cmd) {
+	if !done {
+		return m, nil
+	}
+	run := m.confirmRun
+	m.confirm, m.confirmRun = nil, nil
+	if !yes {
+		return m, nil
+	}
+	m.busy, m.notice = true, "Signing out…"
+	return m, run()
 }
 
 // resetAll signs out of and removes every account; the caller then deletes
@@ -413,11 +421,15 @@ func (m settingsModel) paneAt(x int) settingsPane {
 func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	h := m.bodyHeight() - 2
 	row := mouse.Y - 1 // under the box's top edge
-	if mouse.Button != tea.MouseLeft || m.busy || row < 0 || row >= h {
+	if mouse.Button != tea.MouseLeft || m.busy {
 		return m, nil
 	}
 	if m.confirm != nil {
-		return m.handleKey("esc") // anything but Enter or y declines
+		x, y := m.confirmPos()
+		return m.confirmAnswered(m.confirm.click(mouse.X, mouse.Y, x, y))
+	}
+	if row < 0 || row >= h {
+		return m, nil
 	}
 	m.editing = false
 	if m.paneAt(mouse.X) == paneAccounts {
@@ -459,8 +471,6 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 func (m settingsModel) footer() string {
 	notice := m.notice
 	switch {
-	case m.confirm != nil:
-		notice = m.confirmText
 	case notice == "" && m.selected() != nil:
 		notice = m.selected().Snapshot().Notice
 	}
@@ -470,10 +480,21 @@ func (m settingsModel) footer() string {
 func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }
 
 func (m settingsModel) View() tea.View {
-	v := tea.NewView(m.frame() + "\n" + m.footer())
+	body := m.frame()
+	if m.confirm != nil {
+		x, y := m.confirmPos()
+		body = m.st.fadeUnder(body, m.confirm.View(), x, y)
+	}
+	v := tea.NewView(body + "\n" + m.footer())
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+// confirmPos is the top-left corner of the confirmation, centred on the screen.
+func (m settingsModel) confirmPos() (x, y int) {
+	w, h := m.confirm.size()
+	return modalRect(m.width, m.bodyHeight(), w, h)
 }
 
 // frame is the screen above the footer, also the backdrop of Add account.
@@ -683,11 +704,8 @@ func (m settingsModel) helpKeys() []helpKey {
 	if !m.canGoBack() {
 		back = helpKey{"q", "quit"}
 	}
-	if m.confirm != nil && m.onReset() {
-		return []helpKey{{"y", "reset"}, {"esc", "cancel"}}
-	}
 	if m.confirm != nil {
-		return []helpKey{{"enter", "remove"}, {"esc", "cancel"}}
+		return m.confirm.helpKeys()
 	}
 	if m.focus == paneAccounts {
 		return []helpKey{{"↑↓", "select"}, {"enter", "open"}, back}

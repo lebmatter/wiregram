@@ -56,6 +56,10 @@ attachment (the image or the [tag] row) downloads it and opens it with
 xdg-open (open on macOS). Hold Shift
 while dragging to select text with the terminal.
 
+Quitting, deleting a chat, message, agent or provider, removing an account
+and Reset ask first in a modal: y or Enter on the action goes ahead, Esc
+cancels. Deletes and Reset start on Cancel.
+
 Keyboard shortcuts:
 
   Anywhere
@@ -111,7 +115,7 @@ Keyboard shortcuts:
                       arrows; Enter applies it to every screen
     Reset…            Sign out of every account and delete all local data
                       (settings, plugins, agents, cached mail and media),
-                      then start over as a fresh installation (y confirms)
+                      then start over as a fresh installation
     Esc, Left/h       Back to the accounts, then to where Settings was opened
     q                 Quit
 
