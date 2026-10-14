@@ -116,6 +116,9 @@ type chatViewModel struct {
 	// both current.
 	agentSent  map[string]string
 	suggestion string
+	// bot is set while the chat runs on a registered bot's own connection:
+	// its outgoing messages are the bot's, shown as ✦ NAME.
+	bot *inboxBot
 
 	locked       bool
 	autoLock     bool
@@ -448,12 +451,16 @@ func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 // markAgents names the agent on the messages it sent.
 func (m chatViewModel) markAgents() chatViewModel {
-	if len(m.agentSent) == 0 {
+	if len(m.agentSent) == 0 && m.bot == nil {
 		return m
 	}
 	for i := range m.messages {
-		if m.messages[i].Outgoing {
-			m.messages[i].Agent = m.agentSent[m.messages[i].ID]
+		if !m.messages[i].Outgoing {
+			continue
+		}
+		m.messages[i].Agent = m.agentSent[m.messages[i].ID]
+		if m.messages[i].Agent == "" && m.bot != nil {
+			m.messages[i].Agent = m.bot.name
 		}
 	}
 	return m
@@ -1753,6 +1760,9 @@ func (m chatViewModel) View() string {
 
 func (m chatViewModel) chatBox(width, height int, focused bool) string {
 	title := textfmt.Plain(m.entry.Title)
+	if m.bot != nil {
+		title = agentIcon + " @" + m.bot.handle + " · " + title
+	}
 	if m.typing {
 		title += " · typing…"
 	}

@@ -52,7 +52,8 @@ Bots answer an account's incoming private messages as you, through an
 OpenAI-compatible provider added in Settings > AI providers. Every account
 but email can have several: under its Search… sits a Bots section with a
 NAME @handle row for each, which opens the bot's settings in place of the
-chat, then New bot….
+chat (a bot registered on Mattermost also gets an Inbox row: its own private
+chats, where what you send goes out as the bot), then New bot….
 A bot answers all of the account's private chats or the ones picked for it;
 no chat has two bots. The @handle is unique on the account and names the bot
 if it is registered on the network later. A violet ✦ marks accounts with a

@@ -1606,8 +1606,10 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 			mb.unreads[post.ChannelID]++
 			mb.mu.Unlock()
 		}
-		// A "D" channel named after the user twice is the self DM.
-		dm := wrapper.ChannelType == "D" && post.Props["from_bot"] != "true" &&
+		// A "D" channel named after the user twice is the self DM. Posts from
+		// other bots are left out; a bot's own, on its own connection, are not.
+		dm := wrapper.ChannelType == "D" &&
+			(post.UserID == mb.UserID || post.Props["from_bot"] != "true") &&
 			wrapper.ChannelName != mb.UserID+"__"+mb.UserID
 		msg := mb.postToMessage(context.Background(), post)
 		mb.events.Publish(backend.Event{

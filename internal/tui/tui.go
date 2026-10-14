@@ -62,14 +62,18 @@ type tuiModel struct {
 	// click closes it.
 	alert *confirmModal
 	// backToMentions sends Esc from the open chat back to Mentions, the
-	// view it was opened from, rather than Unread.
+	// view it was opened from, rather than Unread; backToInbox to the bot's
+	// inbox, for a chat opened there.
 	backToMentions bool
+	backToInbox    *inboxBot
 	focus          tuiFocus
 	result         *tuiResult
 	kitty          *kittyImages // nil without kitty graphics
 	loadErr        error
 	width          int
 	height         int
+	// botEvents is the open bot chat's subscription to the bot's connection.
+	botEvents *backend.Subscription
 }
 
 type tuiDialogsLoaded struct {
@@ -106,6 +110,20 @@ func listenEvents(sub *backend.Subscription) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-sub.C
 		return busEvent{ev, ok}
+	}
+}
+
+// botBusEvent is one event from the open bot chat's subscription, sub.
+type botBusEvent struct {
+	ev  backend.Event
+	ok  bool
+	sub *backend.Subscription
+}
+
+func listenBotEvents(sub *backend.Subscription) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-sub.C
+		return botBusEvent{ev, ok, sub}
 	}
 }
 
@@ -206,6 +224,10 @@ func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) closeChat() tuiModel {
+	if m.botEvents != nil {
+		m.botEvents.Close()
+		m.botEvents = nil
+	}
 	m.searchOpen = false
 	m.unreadOpen = false
 	m.agentOpen = false
@@ -228,6 +250,9 @@ func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
 // openCard opens the chat of a card in the Unread or Mentions view; a
 // mention opens with its newest message selected.
 func (m tuiModel) openCard(c unreadCard) (tuiModel, tea.Cmd) {
+	if bot := m.unread.bot; bot != nil {
+		return m.openBotChat(*bot, m.unread.b, c.entry)
+	}
 	mentions := m.unread.mentions
 	var target *backend.Message
 	if mentions && len(c.msgs) > 0 {
@@ -254,12 +279,50 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 	m.histories[entry.ID] = h
 	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h, m.kitty)
 	m.chat.target = target
-	m.backToMentions = false
+	m.backToMentions, m.backToInbox = false, nil
 	m.chatOpen = true
 	m = m.withAgentSent()
 	m.focus = focusChat
 	m = m.sized()
 	return m, tea.Batch(m.chat.Init(), reload)
+}
+
+// openInbox shows the registered bot's private chats, over its connection.
+func (m tuiModel) openInbox(bot inboxBot) (tuiModel, tea.Cmd) {
+	b := m.mgr.Agents.BotBackend(bot.id)
+	if b == nil {
+		m.notice = "@" + bot.handle + " is not connected: turn the bot on, with its account online"
+		return m, nil
+	}
+	m = m.closeChat()
+	var cmd tea.Cmd
+	m.unread, cmd = newInbox(m.ctx, m.st, b, bot,
+		m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active)))
+	m.unreadOpen = true
+	m.focus = focusChat
+	return m.sized(), cmd
+}
+
+// openBotChat opens one of the bot's private chats on b, its connection, with
+// its own subscription there; whatever is sent in it is sent as the bot.
+func (m tuiModel) openBotChat(bot inboxBot, b backend.Backend, entry backend.ChatEntry) (
+	tuiModel, tea.Cmd) {
+	m = m.closeChat()
+	h := m.histories[entry.ID]
+	if h == nil {
+		h = make([]string, 0)
+	}
+	m.histories[entry.ID] = h
+	m.chat = newChatViewModel(m.ctx, m.st, b, entry, &h, m.kitty)
+	m.chat.bot = &bot
+	m.chat.input.Placeholder = "Message " + textfmt.Plain(entry.Title) + " as @" + bot.handle + "…"
+	m.backToMentions, m.backToInbox = false, &bot
+	m.botEvents = b.Events().Subscribe(backend.Filter{})
+	m.chatOpen = true
+	m = m.withAgentSent()
+	m.focus = focusChat
+	m = m.sized()
+	return m, tea.Batch(m.chat.Init(), listenBotEvents(m.botEvents))
 }
 
 // Update handles msg, then fetches any image it brought into view and sends
@@ -283,7 +346,13 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, chipsTick()
 
 	case agentRuntimeChanged:
-		return m.withAgentSent(), listenAgents(m.agentsCtx, m.mgr)
+		var reload tea.Cmd
+		if m.unreadOpen && m.unread.bot != nil {
+			// A reply may have started or stopped waiting in the open inbox.
+			m.unread.waiting = m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active))
+			m.unread, reload = m.unread.load()
+		}
+		return m.withAgentSent(), tea.Batch(reload, listenAgents(m.agentsCtx, m.mgr))
 
 	case chatSuggestion:
 		return m.suggestionAct(msg.act)
@@ -348,6 +417,22 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		return m, tea.Batch(cmd, listenEvents(m.events))
 
+	case botBusEvent:
+		if !msg.ok || msg.sub != m.botEvents {
+			return m, nil // the bot chat closed since
+		}
+		var cmd tea.Cmd
+		if m.chatOpen && m.chat.wants(msg.ev) {
+			m.chat, cmd = m.chat.Update(chatEvent{msg.ev})
+			if msg.ev.Message != nil && msg.ev.Message.Outgoing {
+				m = m.withAgentSent()
+			}
+		}
+		return m, tea.Batch(cmd, listenBotEvents(m.botEvents))
+
+	case chatListInbox:
+		return m.openInbox(msg.bot)
+
 	case chatHistoryLoaded:
 		if !m.chatOpen {
 			return m, nil
@@ -364,6 +449,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		// Esc from a chat lands on Unread; a second Esc reaches the list.
 		// The list's counts predate reading this chat, so leave it out.
 		read := m.chat.entry.ID
+		if bot := m.backToInbox; bot != nil {
+			return m.openInbox(*bot)
+		}
 		m = m.closeChat()
 		var entries []backend.ChatEntry
 		for _, e := range m.entries {
@@ -655,7 +743,7 @@ func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
 		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListAccounts, chatListSettings, chatListSwitch,
-		chatListDeleteDone, chatListAgent:
+		chatListDeleteDone, chatListAgent, chatListInbox:
 		return true
 	}
 	return false

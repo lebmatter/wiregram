@@ -587,7 +587,7 @@ func (m agentPaneModel) view(focused bool) string {
 		status = "Answers its private chats as you, and messages to @" + bot.Username +
 			" as the bot; never groups or channels."
 		if n := m.mgr.Agents.InboxWaiting(m.rec.ID); n > 0 {
-			status = fmt.Sprintf("%d %s to @%s waiting for approval.", n,
+			status = fmt.Sprintf("%d %s to @%s waiting for approval in its Inbox.", n,
 				plural(n, "reply", "replies"), bot.Username)
 		}
 	}

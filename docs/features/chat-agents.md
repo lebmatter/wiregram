@@ -154,8 +154,22 @@ bot accounts.
   token and disables the bot on the server; you can register it again later.
 - Deleting a registered bot, or removing its account, disables it on the server first.
 
-With **Ask me first**, replies to messages sent to the bot wait for approval; the bot pane
-counts them. They can't be approved from wiregram yet: the bot's own inbox comes next.
+### The bot inbox
+
+A registered bot gets an **Inbox** row under its row in the Bots section, with the number
+of replies waiting for approval. <kbd>Enter</kbd> on it opens the bot's own private chats
+as cards over its connection, those with a reply waiting first, marked
+**✦ reply waiting**. <kbd>Enter</kbd> or a click on a card opens the chat, titled
+`✦ @handle · NAME`:
+
+- The **✦ Bot suggests** card works as in your own chats: <kbd>Ctrl+Y</kbd> sends the reply
+  as the bot, <kbd>Ctrl+E</kbd> moves it into the composer, <kbd>Ctrl+X</kbd> discards it.
+- Whatever you send in the composer is sent **as the bot**, including an edited
+  suggestion; the placeholder says so. The bot's messages show as `✦ NAME`.
+- <kbd>Esc</kbd> goes back to the inbox, then to the list.
+
+The inbox needs the bot on and its account online, since it reads over the bot's
+connection.
 
 The token is kept in `wiregram.db` and never shown. Telegram registration is planned
 through Telegram's managed bots.

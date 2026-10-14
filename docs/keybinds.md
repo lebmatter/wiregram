@@ -26,7 +26,7 @@ an empty composer (or right-click it) to open its actions.
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat or account |
-| <kbd>Enter</kbd> | Open chat, switch to the selected account, or open a bot or create one (**New bot…**) in the Bots section |
+| <kbd>Enter</kbd> | Open chat, switch to the selected account, or open a bot, its Inbox, or create one (**New bot…**) in the Bots section |
 | <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
 | <kbd>u</kbd> | Unread: cards for every chat with unread messages |
 | <kbd>m</kbd> | Mentions: cards for the groups and channels mentioning you (not email) |

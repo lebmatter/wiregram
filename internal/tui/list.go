@@ -51,6 +51,7 @@ type chatListUnread struct{}
 type chatListMentions struct{}
 type chatListArchiveToggle struct{}
 type chatListAgent struct{ id int64 } // 0 creates a bot
+type chatListInbox struct{ bot inboxBot }
 type chatListDeleteDone struct{ err error }
 
 func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
@@ -103,6 +104,14 @@ func (m chatListModel) actions() []listAction {
 				entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
 				mark:  m.st.agentMark(rec.Enabled), msg: chatListAgent{id: rec.ID}, bot: true,
 			})
+			if _, ok := m.mgr.Agents.Registration(rec.ID); ok {
+				acts = append(acts, listAction{
+					entry: backend.ChatEntry{Title: "  Inbox",
+						Unread: m.mgr.Agents.InboxWaiting(rec.ID)},
+					msg: chatListInbox{inboxBot{id: rec.ID, name: rec.Name, handle: rec.Handle}},
+					bot: true,
+				})
+			}
 		}
 		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "New bot…"},
 			msg: chatListAgent{}, bot: true})

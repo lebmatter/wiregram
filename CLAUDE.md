@@ -238,8 +238,10 @@ These are project constraints, not suggestions:
   in with `ConnectBot` (`internal/account/bots.go`) and answers DMs sent to the bot as the
   bot (`ConvKey.Bot`); every DM to the bot is its own, outside the claims rule. Renames go
   to the server first; deleting the bot or removing its account disables it there first.
-  Messages from other bots are never answered. Approving inbox replies needs the bot inbox,
-  not built yet.
+  Messages from other bots are never answered. A registered bot's Inbox row
+  (`internal/tui/inbox.go`) opens its private chats as Unread-style cards over the bot's
+  connection (`BotBackend`); a chat opened there runs on that connection with its own
+  subscription (`botEvents`), so the composer and approved suggestions send as the bot.
 - Wizards (`internal/tui/wizard.go`) take fixed options or typed values only, never free
   chat with a model. Adding an account (network, server URL), an AI provider or a bot,
   and the sign-in prompts are form modals centred over

@@ -125,6 +125,17 @@ func (rt *agentRuntime) backendFor(acct *Account, key ConvKey) backend.Backend {
 	return nil
 }
 
+// BotBackend is the registered bot's live connection, for its inbox; nil
+// while it is not signed in.
+func (rt *agentRuntime) BotBackend(agentID int64) backend.Backend {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if c := rt.bots[agentID]; c != nil {
+		return c.b
+	}
+	return nil
+}
+
 // registrar is the account's backend when it is online and can manage bots.
 func registrar(a *Account) (backend.BotRegistrar, error) {
 	s := a.Snapshot()
