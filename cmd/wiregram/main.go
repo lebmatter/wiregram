@@ -105,7 +105,6 @@ Keyboard shortcuts:
     Enter             Open the account, or the selected row (Settings…,
                       Add account, Quit)
     r                 Reconnect the selected account
-    Esc               Back to the open account (when it is online)
     q, Ctrl+C         Quit (asks first)
 
   Chat list

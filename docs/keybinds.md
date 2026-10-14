@@ -19,7 +19,6 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select account or menu row |
 | <kbd>Enter</kbd> | Open the account, or the selected row (Settings…, Add account, Quit) |
 | <kbd>r</kbd> | Reconnect the selected account |
-| <kbd>Esc</kbd> | Back to the open account (when it is online) |
 | <kbd>q</kbd>, <kbd>Ctrl+C</kbd> | Quit (asks first) |
 
 ## Chat list

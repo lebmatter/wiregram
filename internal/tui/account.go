@@ -146,11 +146,6 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = newQuitModal(m.st)
-		case "esc":
-			if m.canGoBack() {
-				m.result = &accountChoice{index: -1}
-				return m, tea.Quit
-			}
 		case "k", "up":
 			if m.selected > 0 {
 				m.selected--
@@ -353,17 +348,8 @@ func (m accountListModel) quitRect() (x, y, w, h int) {
 	return max(0, (m.width-w)/2), max(0, (m.bodyHeight()+1-h)/2), w, h
 }
 
-// canGoBack reports whether Esc can return to the account it came from.
-func (m accountListModel) canGoBack() bool {
-	return m.active != nil && m.active.Snapshot().Status == "online"
-}
-
 func (m accountListModel) helpKeys() []helpKey {
-	keys := []helpKey{{"↑↓", "select"}, {"enter", "switch"}, {"r", "reconnect"}}
-	if m.canGoBack() {
-		keys = append(keys, helpKey{"esc", "back"})
-	}
-	return append(keys, helpKey{"q", "quit"})
+	return []helpKey{{"↑↓", "select"}, {"enter", "switch"}, {"r", "reconnect"}, {"q", "quit"}}
 }
 
 func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *account.Account) (*account.Account, error) {
@@ -392,9 +378,6 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 	}
 	if final.result.add {
 		return tuiPickAndAdd(ctx, mgr, final.frame())
-	}
-	if final.result.index < 0 {
-		return active, nil
 	}
 	return mgr.Accounts[final.result.index], nil
 }
