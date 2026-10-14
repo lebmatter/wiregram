@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -238,18 +239,20 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 		return fmt.Errorf("read password: %w", err)
 	}
 
-	resp, err := mb.api(ctx, "POST", "/users/login", map[string]string{
-		"login_id": strings.TrimSpace(email),
-		"password": strings.TrimSpace(password),
-	})
+	email, password = strings.TrimSpace(email), strings.TrimSpace(password)
+	resp, err := mb.login(ctx, email, password, "")
+	var apiErr *mmAPIError
+	if errors.As(err, &apiErr) && apiErr.ID == mfaRequiredID {
+		code, perr := prompt("Authenticator code: ", false)
+		if perr != nil {
+			return fmt.Errorf("read authenticator code: %w", perr)
+		}
+		resp, err = mb.login(ctx, email, password, strings.TrimSpace(code))
+	}
 	if err != nil {
-		return fmt.Errorf("login: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("login failed: %s", string(data))
-	}
 	mb.Token = resp.Header.Get("Token")
 	var me mmUser
 	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
@@ -261,6 +264,40 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	mb.userCache[me.ID] = me
 	mb.mu.Unlock()
 	return nil
+}
+
+// mfaRequiredID is the error Mattermost returns from /users/login when the
+// account has MFA on and the request carried no valid code.
+const mfaRequiredID = "mfa.validate_token.authenticate.app_error"
+
+type mmAPIError struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+}
+
+func (e *mmAPIError) Error() string { return "login failed: " + e.Message }
+
+// login posts the credentials, with the MFA code when given, and returns the
+// successful response for the caller to read and close.
+func (mb *MmBackend) login(ctx context.Context, loginID, password, code string) (*http.Response, error) {
+	body := map[string]string{"login_id": loginID, "password": password}
+	if code != "" {
+		body["token"] = code
+	}
+	resp, err := mb.api(ctx, "POST", "/users/login", body)
+	if err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, nil
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	var apiErr mmAPIError
+	if json.Unmarshal(data, &apiErr) == nil && apiErr.Message != "" {
+		return nil, &apiErr
+	}
+	return nil, fmt.Errorf("login failed: %s", strings.TrimSpace(string(data)))
 }
 
 func (mb *MmBackend) Identity() backend.AccountIdentity {
