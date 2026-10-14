@@ -263,12 +263,12 @@ func (m wizardModel) helpKeys() []helpKey {
 	if m.cur >= len(m.steps) {
 		return nil
 	}
-	keys := []helpKey{{"⏎", "answer"}}
+	keys := []helpKey{{"enter", "answer"}}
 	switch m.steps[m.cur].kind {
 	case wizChoice:
-		keys = []helpKey{{"↑↓", "choose"}, {"⏎", "pick"}}
+		keys = []helpKey{{"↑↓", "choose"}, {"enter", "pick"}}
 	case wizMulti:
-		keys = []helpKey{{"↑↓", "choose"}, {"space", "toggle"}, {"⏎", "done"}}
+		keys = []helpKey{{"↑↓", "choose"}, {"space", "toggle"}, {"enter", "done"}}
 	}
 	if len(m.done) > 0 {
 		return append(keys, helpKey{"esc", "back"}, helpKey{"ctrl+c", "cancel"})

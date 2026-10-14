@@ -799,7 +799,7 @@ func (m tuiModel) emptyPane(width, height int) string {
 	hint := lipgloss.JoinVertical(lipgloss.Center,
 		m.st.logo(width-4),
 		"",
-		m.st.subtle.Render("Pick a chat and press ⏎"),
+		m.st.subtle.Render("Pick a chat and press enter"),
 		m.st.dim.Render(textfmt.Plain(m.b.AccountLabel())),
 	)
 	return renderBox("", centerLines(width-4, height-2, hint), width, height, m.st.dimColor)

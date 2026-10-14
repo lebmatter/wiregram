@@ -370,7 +370,7 @@ func (m settingsModel) apply(item settingsItem) (tea.Model, tea.Cmd) {
 		}
 	case itemRemove:
 		m.confirmText = fmt.Sprintf("Remove %s %s? It signs out and deletes its local data. "+
-			"⏎ remove, any other key cancels", short, textfmt.Plain(a.Label()))
+			"enter remove, any other key cancels", short, textfmt.Plain(a.Label()))
 		m.confirm = func() tea.Cmd {
 			return func() tea.Msg { return settingsRemoved{a: a, err: m.mgr.Remove(m.ctx, a)} }
 		}
@@ -668,7 +668,7 @@ func themeCard(t theme, current, selected bool) []string {
 		st.listRow("General", st.badge.Render(" 3 "), true, true, inner),
 		st.listRow("Alice", "", false, true, inner),
 		st.dim.Render("[12:04] ") + st.subtle.Render("you") + " hi!",
-		st.helpBar([]helpKey{{"⏎", "open"}, {"esc", "back"}}, inner),
+		st.helpBar([]helpKey{{"enter", "open"}, {"esc", "back"}}, inner),
 	}
 	title := t.name
 	if current {
@@ -687,18 +687,18 @@ func (m settingsModel) helpKeys() []helpKey {
 		return []helpKey{{"y", "reset"}, {"esc", "cancel"}}
 	}
 	if m.confirm != nil {
-		return []helpKey{{"⏎", "remove"}, {"esc", "cancel"}}
+		return []helpKey{{"enter", "remove"}, {"esc", "cancel"}}
 	}
 	if m.focus == paneAccounts {
-		return []helpKey{{"↑↓", "select"}, {"⏎", "open"}, back}
+		return []helpKey{{"↑↓", "select"}, {"enter", "open"}, back}
 	}
 	if m.onThemes() {
-		return []helpKey{{"←→", "select"}, {"⏎", "apply"}, {"esc", "accounts"}}
+		return []helpKey{{"←→", "select"}, {"enter", "apply"}, {"esc", "accounts"}}
 	}
 	if m.editing {
-		return []helpKey{{"⏎", "save"}, {"esc", "cancel"}}
+		return []helpKey{{"enter", "save"}, {"esc", "cancel"}}
 	}
-	return []helpKey{{"↑↓", "select"}, {"⏎", "change"}, {"esc", "accounts"}}
+	return []helpKey{{"↑↓", "select"}, {"enter", "change"}, {"esc", "accounts"}}
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil

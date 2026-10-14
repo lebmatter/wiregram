@@ -22,7 +22,7 @@ const welcomeModalWidth = 44
 func newWelcomeModal(st *styles, b backend.Backend, twoPane bool) welcomeModal {
 	keys := []helpKey{
 		{"↑↓ k j", "select"},
-		{"⏎", "open"},
+		{"enter", "open"},
 		{"esc", "back"},
 	}
 	if twoPane {
@@ -59,4 +59,4 @@ func (m welcomeModal) View() string {
 	return renderBox("Account connected", body, w, h, m.st.accentColor)
 }
 
-var welcomeModalHelp = []helpKey{{"⏎", "start"}}
+var welcomeModalHelp = []helpKey{{"enter", "start"}}

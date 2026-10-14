@@ -367,7 +367,7 @@ func (m accountListModel) canGoBack() bool {
 }
 
 func (m accountListModel) helpKeys() []helpKey {
-	keys := []helpKey{{"↑↓", "select"}, {"⏎", "switch"}, {"r", "reconnect"}}
+	keys := []helpKey{{"↑↓", "select"}, {"enter", "switch"}, {"r", "reconnect"}}
 	if m.canGoBack() {
 		keys = append(keys, helpKey{"esc", "back"})
 	}
@@ -837,7 +837,7 @@ func (m loginModel) View() tea.View {
 	}
 	box, _ := formBox("Sign in — "+m.label, lines, w, bodyHeight, m.st)
 	content := m.st.overlay(m.backdrop, box, m.width, bodyHeight) + "\n" +
-		m.st.footer([]helpKey{{"⏎", "answer"}, {"esc", "cancel"}}, "", m.width)
+		m.st.footer([]helpKey{{"enter", "answer"}, {"esc", "cancel"}}, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v

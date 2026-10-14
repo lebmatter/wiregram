@@ -1535,7 +1535,7 @@ func (m chatViewModel) footerLine() (string, bool) {
 		return "", false
 	}
 	line := m.st.accent.Render("click") + m.st.subtle.Render(" the attachment to open "+filename) +
-		m.st.subtle.Render(" · ") + m.st.accent.Render("⏎") + m.st.subtle.Render(" actions")
+		m.st.subtle.Render(" · ") + m.st.accent.Render("enter") + m.st.subtle.Render(" actions")
 	return line, true
 }
 
@@ -1749,7 +1749,7 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if m.caps.MultilineCompose {
 		return m.mailHelp()
 	}
-	keys := []helpKey{{"↑↓", "messages"}, {"⏎", "send · actions"}}
+	keys := []helpKey{{"↑↓", "messages"}, {"enter", "send · actions"}}
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})
 	}
@@ -1768,7 +1768,7 @@ func (m chatViewModel) helpKeys() []helpKey {
 
 // mailHelp is the chat help of an email account.
 func (m chatViewModel) mailHelp() []helpKey {
-	keys := []helpKey{{"↑↓", "mails"}, {"⏎", "actions"}, {"type", "write"}}
+	keys := []helpKey{{"↑↓", "mails"}, {"enter", "actions"}, {"type", "write"}}
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})
 	}
@@ -1793,18 +1793,18 @@ func isContextCanceled(err error) bool {
 
 var chatSearchHelp = []helpKey{
 	{"↑↓", "results"},
-	{"⏎", "jump"},
+	{"enter", "jump"},
 	{"Esc", "cancel"},
 }
 
 var chatEditHelp = []helpKey{
-	{"⏎", "save"},
+	{"enter", "save"},
 	{"Esc", "cancel"},
 }
 
 var chatThreadHelp = []helpKey{
 	{"↑↓", "messages"},
-	{"⏎", "reply in thread"},
+	{"enter", "reply in thread"},
 	{"esc", "close thread"},
 }
 

@@ -59,7 +59,7 @@ func (m quitModal) hit(y int) (quitModal, bool) {
 
 var quitModalHelp = []helpKey{
 	{"↑↓", "select"},
-	{"⏎", "choose"},
+	{"enter", "choose"},
 	{"y", "quit"},
 	{"esc", "cancel"},
 }

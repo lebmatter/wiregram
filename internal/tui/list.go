@@ -361,7 +361,7 @@ func (m chatListModel) notice() string {
 }
 
 func (m chatListModel) helpKeys() []helpKey {
-	keys := []helpKey{{"↑↓", "select"}, {"⏎", "open"}, {"/", "search"}, {"u", "unread"}}
+	keys := []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"/", "search"}, {"u", "unread"}}
 	if m.mentions {
 		keys = append(keys, helpKey{"m", "mentions"})
 	}

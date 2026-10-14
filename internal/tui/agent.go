@@ -1068,10 +1068,10 @@ func (m agentModeModel) helpKeys() []helpKey {
 	case scrWizard:
 		return m.wiz.helpKeys()
 	case scrAgents:
-		keys = []helpKey{{"↑↓", "select"}, {"⏎", "chats"}, {"n", "new"}, {"e", "edit"},
+		keys = []helpKey{{"↑↓", "select"}, {"enter", "chats"}, {"n", "new"}, {"e", "edit"},
 			{"c", "accounts"}, {"space", "pause"}, {"d", "delete"}, {"p", "providers"}, {"esc", "back"}}
 	case scrConvs:
-		keys = []helpKey{{"↑↓", "select"}, {"⏎", "open"}, {"esc", "agents"}}
+		keys = []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"esc", "agents"}}
 	case scrConv:
 		keys = []helpKey{{"y", "send suggestion"}, {"n", "discard"}, {"esc", "back"}}
 	case scrProviders:

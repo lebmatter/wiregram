@@ -263,7 +263,7 @@ func (m unreadModel) helpKeys() []helpKey { return unreadHelp }
 
 var unreadHelp = []helpKey{
 	{"↑↓", "select"},
-	{"⏎/click", "open chat"},
+	{"enter/click", "open chat"},
 	{"r", "reload"},
 	{"esc", "back"},
 }

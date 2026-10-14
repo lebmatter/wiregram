@@ -277,13 +277,13 @@ func (m chatViewModel) uploadHelp() []helpKey {
 	switch m.upload.step {
 	case uploadTyping:
 		if len(m.upload.matches) > 0 {
-			return []helpKey{{"↑↓", "choose"}, {"tab/⏎", "accept"}, {"esc", "back to browser"}}
+			return []helpKey{{"↑↓", "choose"}, {"tab/enter", "accept"}, {"esc", "back to browser"}}
 		}
-		return []helpKey{{"tab", "complete"}, {"⏎", "continue"}, {"esc", "back to browser"}}
+		return []helpKey{{"tab", "complete"}, {"enter", "continue"}, {"esc", "back to browser"}}
 	case uploadCaption:
-		return []helpKey{{"⏎", "send"}, {"esc", "pick another file"}}
+		return []helpKey{{"enter", "send"}, {"esc", "pick another file"}}
 	}
-	return []helpKey{{"↑↓", "browse"}, {"→", "open folder"}, {"←", "up"}, {"⏎", "select"},
+	return []helpKey{{"↑↓", "browse"}, {"→", "open folder"}, {"←", "up"}, {"enter", "select"},
 		{"/", "type a path"}, {"esc", "cancel"}}
 }
 

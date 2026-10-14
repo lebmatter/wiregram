@@ -99,7 +99,7 @@ func (m chatViewModel) draftBox(width int, border color.Color) []string {
 		lines = strings.Split(m.draft.View(), "\n")
 		lines = append(lines, m.st.subtle.Render("draft · type to continue · ^S sends"))
 	default:
-		lines = []string{m.st.subtle.Render("Type to write a mail · ⏎ acts on the selected one")}
+		lines = []string{m.st.subtle.Render("Type to write a mail · enter acts on the selected one")}
 	}
 	lines = append(m.replyBar(), lines...)
 	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
@@ -178,13 +178,13 @@ func (m chatViewModel) readerBody(width, height int) []string {
 
 var chatComposeHelp = []helpKey{
 	{"^S", "send"},
-	{"⏎", "new line"},
+	{"enter", "new line"},
 	{"esc", "keep draft"},
 }
 
 var chatReaderHelp = []helpKey{
 	{"↑↓", "scroll"},
 	{"PgUp/PgDn", "page"},
-	{"⏎", "actions"},
+	{"enter", "actions"},
 	{"esc", "close"},
 }

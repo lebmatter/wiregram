@@ -287,6 +287,6 @@ var msgMenuHelp = []helpKey{
 	{"↑↓", "actions"},
 	{"type", "search reactions"},
 	{"←→", "reactions"},
-	{"⏎", "choose"},
+	{"enter", "choose"},
 	{"esc", "close"},
 }

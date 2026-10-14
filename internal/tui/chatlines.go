@@ -358,7 +358,7 @@ func (s *styles) paragraphLines(msg backend.Message, body, prefix string, quoted
 	if msg.Subject != "" && len(text) > mailPreviewLines {
 		more := len(text) - mailPreviewLines + 1
 		text = append(text[:mailPreviewLines-1], pad+s.subtle.Render(
-			fmt.Sprintf("… %d more %s (⏎ to read)", more, plural(more, "line", "lines"))))
+			fmt.Sprintf("… %d more %s (enter to read)", more, plural(more, "line", "lines"))))
 	}
 	if msg.ReplyToID != "" {
 		quote := textfmt.ClipLine(prefix+s.quote(quoted), lineWidth)

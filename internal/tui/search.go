@@ -426,7 +426,7 @@ var userSearchHelp = []helpKey{
 	{"type", "filter"},
 	{"↑↓", "select"},
 	{"pgup/pgdn", "page"},
-	{"⏎", "open chat"},
+	{"enter", "open chat"},
 	{"esc", "clear / back"},
 }
 
@@ -434,13 +434,13 @@ var forwardSearchHelp = []helpKey{
 	{"type", "filter"},
 	{"↑↓", "select"},
 	{"pgup/pgdn", "page"},
-	{"⏎", "forward"},
+	{"enter", "forward"},
 	{"esc", "clear / cancel"},
 }
 
 var mentionSearchHelp = []helpKey{
 	{"type", "filter"},
 	{"↑↓", "select"},
-	{"⏎", "mention"},
+	{"enter", "mention"},
 	{"esc", "type @ instead"},
 }
