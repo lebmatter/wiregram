@@ -13,7 +13,7 @@ as ↑/↓ would, without moving focus. A click on a row selects it and acts as 
 a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`;
 a left click elsewhere on a message selects it and a right click on a message opens its
 actions modal. The login and connecting
-screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|reset`
+screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|dry-run|reset`
 (`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend
 and handle (`Account.Handle`); WhatsApp is refused there since a second connection would
 replace the app's. `skills/wiregram/SKILL.md` teaches agents to use them. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
@@ -89,18 +89,19 @@ These are project constraints, not suggestions:
   `bubbles/help` footer with the notice on the right. Help hides keys the
   backend's `capabilities` rule out. The footer is never expanded; the full
   shortcut list lives only in `wiregram -h` (`usageText`).
-- The chat mode sidebar is an account tree (`internal/tui/list.go`): every
-  account is a row (`▸`/`▾`, status glyph, `TG1` tag, label), the active one
-  expanded to its chats, archive and search. Enter on another account
-  switches to it. The agents mode sidebar lists the agents.
+- The sidebar is an account tree (`internal/tui/list.go`): every
+  account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
+  has a Chat Agent), the active one expanded to its chats, archive, search and,
+  except on email, its agent row (`New agent…`, then `Agent: NAME`). Enter on
+  another account switches to it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Themes, Plugins, Chat Agents, Reset, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Plugins, AI providers, Reset, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and agent
-  binding: its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
+  (with its `agent_sent` rows): its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
   and cache directories (`config.Wipe`) and starts again as a fresh install.
 - Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
   a grid of cards, one per online account, each fetched once when the account comes
@@ -205,12 +206,23 @@ These are project constraints, not suggestions:
   that each screen loads from the `theme` setting and passes down; status,
   chat-kind, link and nick colours are the same in every theme. Settings'
   Themes… row shows a sample card per theme and Enter applies one.
-- Agent mode (Alt+A, `internal/tui/agent.go`) swaps the theme's accent for its
-  agent colour (violet, `styles.forAgents`) and tags accounts as
-  `[TG1]`: backend plus position in the account list. Chat Agents are created through the
-  scripted bubble wizard (`internal/tui/wizard.go`): fixed options or typed
-  values only, never free chat with a model. Adding an account (network,
-  server URL) and the sign-in prompts are form modals centred over
+- Chat Agents belong to accounts, one each (`agents.account_key`). Providers live in
+  Settings' AI providers… (`internal/tui/providers.go`). An account's agent row creates the
+  agent through the scripted wizard (`internal/tui/agentwiz.go`), then opens the agent pane
+  (`internal/tui/agentpane.go`) in the chat's place: Settings-style rows, including which
+  private chats it answers (all, or those in `agent_chats`). The theme's agent colour
+  (violet, `styles.agent`) and `agentIcon` `✦` mark accounts with an agent, chats with a
+  suggestion waiting and the messages an agent sent; those are recorded in `agent_sent`
+  and drawn with `✦ NAME` in the nick column (`Message.Agent`). An "ask me first" agent's
+  draft is a card over the composer (`suggestionCard`, `internal/tui/chat.go`): Approve
+  (^Y) sends it as the agent, Edit (^E) moves it into the composer as the user's own,
+  Discard (^X) drops it. On backends with server threads (`backend.ThreadFetcher`) an agent
+  answers in the message's own thread, with the thread as context (`replyTarget`); elsewhere
+  it quotes the message. `wiregram dry-run` drafts replies without sending
+  (`agentRuntime.DryRun`).
+- Wizards (`internal/tui/wizard.go`) take fixed options or typed values only, never free
+  chat with a model. Adding an account (network, server URL), an AI provider or an agent,
+  and the sign-in prompts are form modals centred over
   the screen they were opened from, faded behind it (`styles.overlay`): answered
   steps as label and value rows, then the current question (`wizardModel.formView`).
 - Every yes/no question (quit, delete chat/message/agent/provider, remove account, Reset) is a
@@ -241,11 +253,12 @@ internal/
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache tables
-  agent/             SQLite store for agents, providers and message history
+  agent/             SQLite store for providers, per-account agents, their chats,
+                     message history and the record of what agents sent
   plugin/            Lua plugin VMs, their API (settings, kv, http, widgets)
                      and the embedded built-in plugins
   account/           account manager (discovery, connect, login state) and the
-                     account-owned agent runtime
+                     account-owned agent runtime (and its dry runs)
   tui/               BubbleTea screens and the account/mode loop (run.go)
 docs/                VitePress docs site (make docs, make deploy-docs)
 skills/wiregram/     SKILL.md for AI agents using the CLI commands

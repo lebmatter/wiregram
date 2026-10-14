@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"wiregram/internal/account"
+	"wiregram/internal/agent"
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
 	"wiregram/internal/store"
@@ -29,6 +31,7 @@ var commands = map[string]func(ctx context.Context, args []string) error{
 	"chats":    cmdChats,
 	"stream":   cmdStream,
 	"send":     cmdSend,
+	"dry-run":  cmdDryRun,
 }
 
 // connectTimeout bounds how long a command waits for an account to come online.
@@ -612,5 +615,82 @@ func cmdReset(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "wiregram has been reset")
+	return nil
+}
+
+// cmdDryRun prints the reply the account's Chat Agent would send to each
+// given message, or to the newest incoming one, without sending anything.
+func cmdDryRun(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("dry-run", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	var ids []string
+	flags.Func("message", "", func(v string) error { ids = append(ids, v); return nil })
+	if err := flags.Parse(args); err != nil || flags.NArg() != 3 {
+		return fmt.Errorf("usage: wiregram dry-run [-message ID]... BACKEND ACCOUNT RECIPIENT")
+	}
+	s, err := openSession()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	a, err := findAccount(s.mgr, flags.Arg(0), flags.Arg(1))
+	if err != nil {
+		return err
+	}
+	db, err := agent.OpenAgentDB(s.db.SQL(), s.dir)
+	if err != nil {
+		return err
+	}
+	rt := account.NewAgentRuntime(ctx, db, s.mgr)
+	defer rt.Stop()
+	b, err := connect(ctx, s.mgr, a)
+	if err != nil {
+		return err
+	}
+	entries, _, err := b.Dialogs(ctx, false)
+	if err != nil {
+		return fmt.Errorf("load chats: %w", err)
+	}
+	ch, err := findChat(ctx, b, entries, flags.Arg(2))
+	if err != nil {
+		return err
+	}
+	history, err := b.History(ctx, ch)
+	if err != nil {
+		return fmt.Errorf("load messages: %w", err)
+	}
+	if len(ids) == 0 {
+		for i := len(history) - 1; i >= 0 && len(ids) == 0; i-- {
+			if !history[i].Outgoing {
+				ids = append(ids, history[i].ID)
+			}
+		}
+		if len(ids) == 0 {
+			return fmt.Errorf("no incoming message to answer in %s", flags.Arg(2))
+		}
+	}
+	out := json.NewEncoder(os.Stdout)
+	_, title := chatKind(ch)
+	for _, id := range ids {
+		i := slices.IndexFunc(history, func(m backend.Message) bool { return m.ID == id })
+		if i < 0 {
+			return fmt.Errorf("message %s is not among the chat's recent messages", id)
+		}
+		rec, reply, err := rt.DryRun(a, b, ch, history[:i+1], history[i])
+		if err != nil {
+			return err
+		}
+		line := struct {
+			Agent     string `json:"agent"`
+			Chat      string `json:"chat"`
+			ChatTitle string `json:"chat_title"`
+			ReplyTo   string `json:"reply_to"`
+			Message   string `json:"message"`
+			Reply     string `json:"reply"`
+		}{rec.Name, ch.ID.Id, title, id, backend.GenericMessageText(history[i]), reply}
+		if err := out.Encode(line); err != nil {
+			return fmt.Errorf("write reply: %w", err)
+		}
+	}
 	return nil
 }

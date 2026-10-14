@@ -23,7 +23,6 @@ import (
 type accountChoice struct {
 	index    int
 	add      bool
-	agents   bool
 	settings bool
 	quit     bool
 }
@@ -77,7 +76,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 	}
 }
 
-func (m accountListModel) maxIndex() int { return len(m.accounts) + 3 }
+func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
 
 func (m accountListModel) Init() tea.Cmd {
 	_, widgets := m.widgets.start(m.width - 4)
@@ -132,7 +131,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.Update(keyPress(tea.KeyEnter))
 		}
 		_, shift, digest, _ := m.layout()
-		top := 2 + shift + len(m.accounts) + 5 + digestGap // the cards' first screen row
+		top := 2 + shift + len(m.accounts) + 4 + digestGap // the cards' first screen row
 		if a, ok := m.digest.cardAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < digest {
 			if i := slices.Index(m.accounts, a); i >= 0 {
 				m.selected = i
@@ -165,20 +164,16 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mgr.Start(m.ctx, m.accounts[m.selected], nil)
 			}
 		case "enter":
-			if m.selected == len(m.accounts)+3 {
+			if m.selected == len(m.accounts)+2 {
 				m.quitting = newQuitModal(m.st)
 				return m, nil
 			}
-			if m.selected == len(m.accounts)+2 {
+			if m.selected == len(m.accounts)+1 {
 				m.result = &accountChoice{add: true}
 				return m, tea.Quit
 			}
-			if m.selected == len(m.accounts)+1 {
-				m.result = &accountChoice{settings: true}
-				return m, tea.Quit
-			}
 			if m.selected == len(m.accounts) {
-				m.result = &accountChoice{agents: true}
+				m.result = &accountChoice{settings: true}
 				return m, tea.Quit
 			}
 			a := m.accounts[m.selected]
@@ -203,7 +198,7 @@ const digestGap = 2
 // keep the selection in view; digest and widgets are the heights left for
 // their cards under the rows. The widgets give way to the digest.
 func (m accountListModel) layout() (logo []string, shift, digest, widgets int) {
-	rows := len(m.accounts) + 5 // the accounts, a separator and four actions
+	rows := len(m.accounts) + 4 // the accounts, a separator and three actions
 	limit := m.bodyHeight() - 2
 	cards := m.digest.height(m.width - 4)
 	wants := m.widgets.height(m.width - 4)
@@ -295,8 +290,9 @@ func (m accountListModel) frame() string {
 		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, m.st.accountGlyph(s), label,
 			m.st.dim.Render(backendTag(a.BackendType)), m.st.subtle.Render(status))
 		if m.mgr.Agents != nil {
-			if name := m.mgr.Agents.AgentName(a); name != "" {
-				row += "  " + m.st.agent.Render("agent: "+textfmt.Plain(name))
+			if rec, ok := m.mgr.Agents.AgentFor(a); ok {
+				row += "  " + m.st.agentMark(rec.Enabled) + " " +
+					m.st.subtle.Render(textfmt.Plain(rec.Name))
 			}
 		}
 		if i == m.selected {
@@ -305,7 +301,7 @@ func (m accountListModel) frame() string {
 		rows = append(rows, row)
 	}
 	rows = append(rows, m.st.dim.Render(strings.Repeat("─", inner)))
-	for i, label := range []string{"Chat Agents…", "Settings…", "Add account…", "Quit"} {
+	for i, label := range []string{"Settings…", "Add account…", "Quit"} {
 		index := len(m.accounts) + i
 		if index == m.selected {
 			rows = append(rows, m.st.selectedRow.Render(m.st.accent.Render("> ")+label))
@@ -383,9 +379,6 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 	}
 	if final.result.quit {
 		return nil, nil
-	}
-	if final.result.agents {
-		return nil, agentsRequested{}
 	}
 	if final.result.settings {
 		to, err := tuiSettings(ctx, mgr, active, true)
@@ -557,13 +550,8 @@ func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			return m, nil
 		}
-		box, top := m.form()
-		x, y := modalRect(m.width, m.bodyHeight(), lipgloss.Width(box), lipgloss.Height(box))
-		if msg.X < x || msg.X >= x+lipgloss.Width(box) {
-			return m, nil
-		}
 		var cmd tea.Cmd
-		m.wiz, cmd = m.wiz.formClick(msg.Y-y-1+top, lipgloss.Width(box)-4) // under the top edge
+		m.wiz, cmd = m.wiz.modalClick(msg.X, msg.Y, 0, m.width, m.bodyHeight())
 		return m, cmd
 	}
 	var cmd tea.Cmd
@@ -572,13 +560,6 @@ func (m addAccountModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m addAccountModel) bodyHeight() int { return max(4, m.height-1) }
-
-// form is the wizard's modal and how many of its lines scrolled off the top.
-func (m addAccountModel) form() (string, int) {
-	w := min(formModalWidth, m.width-2)
-	lines, _ := m.wiz.formView(w - 4)
-	return formBox(m.wiz.title, lines, w, m.bodyHeight(), m.st)
-}
 
 // formBox draws a form modal tall enough for lines, keeping the last ones
 // when it doesn't fit, and returns how many lines were cut from the top.
@@ -589,7 +570,7 @@ func formBox(title string, lines []string, width, bodyHeight int, st *styles) (s
 }
 
 func (m addAccountModel) View() tea.View {
-	box, _ := m.form()
+	box, _ := m.wiz.modal(m.width, m.bodyHeight())
 	content := m.st.overlay(m.backdrop, box, m.width, m.bodyHeight()) + "\n" +
 		m.st.footer(m.wiz.helpKeys(), "", m.width)
 	v := tea.NewView(content)

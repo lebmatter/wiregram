@@ -24,7 +24,6 @@ const (
 type tuiResult struct {
 	accounts bool
 	settings bool
-	agents   bool
 	switchTo *account.Account
 }
 
@@ -48,8 +47,20 @@ type tuiModel struct {
 	searchOpen    bool
 	unread        unreadModel
 	unreadOpen    bool
+	// agentPane is the account's Chat Agent settings, open in the chat's place.
+	agentPane agentPaneModel
+	agentOpen bool
+	// wiz creates the account's agent, drawn as a form over the screen.
+	wiz *wizardModel
+	// agentsCtx ends with this screen, so its wait on the agent runtime
+	// cannot outlive it and swallow the next screen's signal.
+	agentsCtx context.Context
+	notice    string
 	// welcome is up the first time an account opens after being added.
 	welcome *welcomeModal
+	// alert tells the user something, centred over the screen; any key or
+	// click closes it.
+	alert *confirmModal
 	// backToMentions sends Esc from the open chat back to Mentions, the
 	// view it was opened from, rather than Unread.
 	backToMentions bool
@@ -68,6 +79,20 @@ type tuiDialogsLoaded struct {
 }
 
 type tuiRetryDialogs struct{}
+type agentRuntimeChanged struct{}
+type agentApproveDone struct{ err error }
+
+func listenAgents(ctx context.Context, mgr *account.AccountManager) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-mgr.Agents.Changed():
+			return agentRuntimeChanged{}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
 type tuiChipsTick struct{}
 
 // busEvent is one event from the account's subscription; ok is false once
@@ -108,6 +133,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		histories:     histories,
 		entries:       entries,
 		archiveUnread: archiveUnread,
+		agentsCtx:     ctx,
 		width:         w,
 		height:        h,
 	}
@@ -121,13 +147,18 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 // Init opens the Unread view, so entering an account starts there.
 func (m tuiModel) Init() tea.Cmd {
 	openUnread := func() tea.Msg { return chatListUnread{} }
-	return tea.Batch(listenEvents(m.events), chipsTick(), pruneMediaCache, openUnread)
+	cmds := []tea.Cmd{listenEvents(m.events), chipsTick(), pruneMediaCache, openUnread}
+	if m.mgr != nil && m.mgr.Agents != nil {
+		cmds = append(cmds, listenAgents(m.agentsCtx, m.mgr))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
 
-// paneOpen reports whether the right-hand pane holds a chat or the unread view.
-func (m tuiModel) paneOpen() bool { return m.chatOpen || m.unreadOpen }
+// paneOpen reports whether the right-hand pane holds a chat, the unread view
+// or the agent pane.
+func (m tuiModel) paneOpen() bool { return m.chatOpen || m.unreadOpen || m.agentOpen }
 
 // forwarding reports whether the forward picker is up over the chat it came from.
 func (m tuiModel) forwarding() bool { return m.searchOpen && m.search.forward != nil }
@@ -153,10 +184,15 @@ func (m tuiModel) sized() tuiModel {
 		_, areaWidth := m.searchArea()
 		m.search = m.search.resized(areaWidth, bodyHeight)
 	}
-	if m.unreadOpen && m.twoPane() {
-		m.unread = m.unread.resized(m.width-sidebarWidth, bodyHeight)
-	} else if m.unreadOpen {
-		m.unread = m.unread.resized(m.width, bodyHeight)
+	paneWidth := m.width
+	if m.twoPane() {
+		paneWidth -= sidebarWidth
+	}
+	if m.unreadOpen {
+		m.unread = m.unread.resized(paneWidth, bodyHeight)
+	}
+	if m.agentOpen {
+		m.agentPane = m.agentPane.resized(paneWidth, bodyHeight)
 	}
 	m.chat.embedded = m.twoPane()
 	m.chat.focused = m.focus == focusChat
@@ -172,6 +208,7 @@ func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
 func (m tuiModel) closeChat() tuiModel {
 	m.searchOpen = false
 	m.unreadOpen = false
+	m.agentOpen = false
 	if !m.chatOpen {
 		m.focus = focusList
 		return m
@@ -217,6 +254,7 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 	m.histories[entry.ID] = h
 	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h, m.kitty)
 	m.chat.target = target
+	m = m.withAgentSent()
 	m.backToMentions = false
 	m.chatOpen = true
 	m.focus = focusChat
@@ -228,7 +266,7 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 // the terminal the kitty images the chat now draws.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
-	next = next.sized()
+	next = next.withSuggestion().sized()
 	if next.chatOpen && imagesMoved(msg) {
 		cmd = tea.Batch(cmd, next.chat.loadVisibleImages(), next.chat.placeImages())
 	}
@@ -244,15 +282,41 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case tuiChipsTick:
 		return m, chipsTick()
 
+	case agentRuntimeChanged:
+		return m.withAgentSent(), listenAgents(m.agentsCtx, m.mgr)
+
+	case chatSuggestion:
+		return m.suggestionAct(msg.act)
+
+	case agentApproveDone:
+		if m.chatOpen {
+			m.chat.notice = "Agent's reply sent"
+			if msg.err != nil {
+				m.chat.notice = textfmt.CleanError(msg.err)
+			}
+		}
+		return m, nil
+
+	case agentPaneClosed:
+		m = m.closeChat()
+		return m, nil
+
+	case wizardFinished:
+		return m.agentCreated(msg.answers)
+
+	case wizardCancelled:
+		m.wiz = nil
+		return m, nil
+
 	case tea.MouseClickMsg:
-		if m.welcome != nil {
-			m.welcome = nil
+		if m.welcome != nil || m.alert != nil {
+			m.welcome, m.alert = nil, nil
 			return m, nil
 		}
 		return m.handleClick(msg.Mouse())
 
 	case tea.MouseWheelMsg:
-		if m.welcome != nil {
+		if m.welcome != nil || m.alert != nil {
 			return m, nil
 		}
 		return m.handleWheel(msg)
@@ -266,6 +330,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		var cmd tea.Cmd
 		if m.chatOpen && m.chat.wants(msg.ev) {
 			m.chat, cmd = m.chat.Update(chatEvent{msg.ev})
+			if msg.ev.Message != nil && msg.ev.Message.Outgoing {
+				m = m.withAgentSent() // the agent may have sent it
+			}
 		}
 		m.list = m.list.refreshUnread()
 		if msg.ev.Kind == backend.EventUnread && msg.ev.Chat == (backend.ChatID{}) {
@@ -364,10 +431,11 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		if m.welcome != nil {
-			m.welcome = nil
+		if m.welcome != nil || m.alert != nil {
+			m.welcome, m.alert = nil, nil
 			return m, nil
 		}
+		m.notice = ""
 		return m.handleKey(msg)
 
 	case tea.PasteMsg:
@@ -376,12 +444,21 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		if m.chatOpen && m.chat.locked {
 			return m, nil
 		}
+		if m.wiz != nil {
+			wiz, cmd := m.wiz.Update(msg)
+			m.wiz = &wiz
+			return m, cmd
+		}
 		if m.searchOpen {
 			m.search, cmd = m.search.Update(msg)
 			return m, cmd
 		}
 		if !m.paneOpen() || m.focus != focusChat {
 			return m, nil
+		}
+		if m.agentOpen {
+			m.agentPane, cmd = m.agentPane.Update(msg)
+			return m, cmd
 		}
 		if m.chatOpen {
 			m.chat, cmd = m.chat.resetLock().updateInput(msg)
@@ -436,6 +513,14 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if m.chatOpen && m.chat.locked {
 		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
 	}
+	if m.wiz != nil {
+		if right {
+			return m, nil
+		}
+		wiz, cmd := m.wiz.modalClick(mouse.X, mouse.Y, 0, m.width, m.bodyHeight())
+		m.wiz = &wiz
+		return m, cmd
+	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		if right {
 			return m, nil
@@ -473,7 +558,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.menuClick(mouse.X-x, mouse.Y-y, inside)
 		return m, cmd
 	}
-	if right && (m.overList(mouse.X) || m.unreadOpen) {
+	if right && (m.overList(mouse.X) || m.unreadOpen || m.agentOpen) {
 		return m, nil
 	}
 	if m.overList(mouse.X) {
@@ -499,6 +584,11 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
 			return m.openCard(m.unread.cards[i])
 		}
+	case m.agentOpen:
+		if i, ok := m.agentPane.rowAt(mouse.Y); ok && !m.agentPane.editing {
+			m.agentPane.sel = i
+			m.agentPane, cmd = m.agentPane.Update(keyPress(tea.KeyEnter))
+		}
 	default:
 		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y, right})
 	}
@@ -513,7 +603,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	if !ok || mouse.Y >= m.bodyHeight() || (m.chatOpen && m.chat.locked) {
 		return m, nil
 	}
-	if _, _, _, ok := m.confirmShown(); ok {
+	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil {
 		return m.handleKey(k)
 	}
 	var cmd tea.Cmd
@@ -528,6 +618,10 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		}
 	case m.unreadOpen:
 		m.unread, cmd = m.unread.Update(k)
+	case m.agentOpen:
+		if !m.agentPane.editing {
+			m.agentPane, cmd = m.agentPane.Update(k)
+		}
 	case m.chatOpen && m.chat.overThread(m.chatX(mouse.X)):
 		lines := 3
 		if k.Code == tea.KeyDown {
@@ -548,7 +642,7 @@ func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
 		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListAccounts, chatListSettings, chatListSwitch,
-		chatListDeleteDone:
+		chatListDeleteDone, chatListAgent:
 		return true
 	}
 	return false
@@ -558,6 +652,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.chatOpen && m.chat.locked {
 		m.chat, cmd = m.chat.Update(msg)
+		return m, cmd
+	}
+	if m.wiz != nil {
+		wiz, cmd := m.wiz.Update(msg)
+		m.wiz = &wiz
 		return m, cmd
 	}
 	if m.searchOpen {
@@ -570,15 +669,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	paneFocused := m.paneOpen() && m.focus == focusChat
 	chatFocused := m.chatOpen && m.focus == focusChat
-	idle := !paneFocused || (chatFocused && m.chat.subMode == chatSubNone && m.chat.input.Value() == "")
+	editing := m.agentOpen && (m.agentPane.editing || m.agentPane.confirm != nil)
 
 	k := msg.String()
-	if k == "alt+a" && idle && m.mgr != nil && m.mgr.Agents != nil {
-		m = m.closeChat()
-		return m.done(tuiResult{agents: true})
-	}
 	switch {
-	case k == "tab" && m.twoPane() && m.paneOpen() && (!chatFocused || m.chat.subMode == chatSubNone):
+	case k == "tab" && m.twoPane() && m.paneOpen() && !editing &&
+		(!chatFocused || m.chat.subMode == chatSubNone):
 		if paneFocused {
 			m.focus = focusList
 		} else {
@@ -591,6 +687,10 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	if paneFocused && m.unreadOpen {
 		m.unread, cmd = m.unread.Update(msg)
+		return m, cmd
+	}
+	if paneFocused && m.agentOpen {
+		m.agentPane, cmd = m.agentPane.Update(msg)
 		return m, cmd
 	}
 	if chatFocused {
@@ -678,6 +778,8 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m.done(tuiResult{switchTo: msg.to})
 
+	case chatListAgent:
+		return m.agentRow()
 	}
 
 	var cmd tea.Cmd
@@ -689,14 +791,19 @@ func (m tuiModel) footer() string {
 	if m.welcome != nil {
 		return m.st.footer(welcomeModalHelp, "", m.width)
 	}
+	if m.alert != nil {
+		return m.st.footer(m.alert.helpKeys(), "", m.width)
+	}
 	if m.chatOpen && !m.searchOpen && (m.focus == focusChat || m.chat.opening != nil) {
 		if line, ok := m.chat.footerLine(); ok {
 			return truncate(line, m.width)
 		}
 	}
 	var keys []helpKey
-	notice := ""
+	notice := m.notice
 	switch {
+	case m.wiz != nil:
+		keys = m.wiz.helpKeys()
 	case m.searchOpen:
 		keys = m.search.helpKeys()
 	case m.unreadOpen && m.focus == focusChat:
@@ -704,6 +811,12 @@ func (m tuiModel) footer() string {
 		if m.twoPane() {
 			keys = append(keys, helpKey{"tab", "chats"})
 		}
+	case m.agentOpen && m.focus == focusChat:
+		keys = m.agentPane.helpKeys()
+		if m.twoPane() && m.agentPane.confirm == nil && !m.agentPane.editing {
+			keys = append(keys, helpKey{"tab", "chats"})
+		}
+		notice = m.agentPane.notice
 	case m.chatOpen && m.focus == focusChat:
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
@@ -715,6 +828,9 @@ func (m tuiModel) footer() string {
 			name := strings.ToLower(m.unread.name())
 			keys = append(keys, helpKey{"tab", name}, helpKey{"esc", "close " + name})
 		}
+		if m.agentOpen {
+			keys = append(keys, helpKey{"tab", "agent"}, helpKey{"esc", "close agent"})
+		}
 		if m.chatOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
 			if notice == "" {
@@ -723,9 +839,6 @@ func (m tuiModel) footer() string {
 		}
 		if !m.paneOpen() {
 			keys = append(keys, helpKey{"esc", "home"})
-		}
-		if m.mgr != nil && m.mgr.Agents != nil {
-			keys = append(keys, helpKey{"M-a", "agents"})
 		}
 	}
 	return m.st.footer(keys, notice, m.width)
@@ -760,12 +873,16 @@ func (m tuiModel) render() string {
 		switch {
 		case m.unreadOpen:
 			right = m.unread.view(!listFocused)
+		case m.agentOpen:
+			right = m.agentPane.view(!listFocused)
 		case m.chatOpen:
 			right = m.chat.View()
 		}
 		body = joinColumns(list, right)
 	case m.unreadOpen:
 		body = m.unread.view(true)
+	case m.agentOpen:
+		body = m.agentPane.view(true)
 	case m.chatOpen:
 		body = m.chat.View()
 	default:
@@ -782,6 +899,15 @@ func (m tuiModel) render() string {
 	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		body = m.st.fadeUnder(body, c.View(), x, y)
+	}
+	if m.wiz != nil {
+		box, _ := m.wiz.modal(m.width, bodyHeight)
+		body = m.st.overlay(body, box, m.width, bodyHeight)
+	}
+	if m.alert != nil {
+		w, h := m.alert.size()
+		x, y := modalRect(m.width, bodyHeight, w, h)
+		body = m.st.fadeUnder(body, m.alert.View(), x, y)
 	}
 	if m.welcome != nil {
 		w, h := m.welcome.size()
@@ -805,6 +931,12 @@ func (m tuiModel) confirmShown() (c *confirmModal, x, y int, ok bool) {
 			left = sidebarWidth
 		}
 		width = m.chat.width
+	case m.agentOpen && m.agentPane.confirm != nil:
+		c = m.agentPane.confirm
+		if m.twoPane() {
+			left = sidebarWidth
+		}
+		width = m.agentPane.width
 	default:
 		return nil, 0, 0, false
 	}
@@ -862,9 +994,12 @@ func (m tuiModel) emptyPane(width, height int) string {
 func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int, welcome bool) error {
 	events := b.Events().Subscribe(backend.Filter{})
 	defer events.Close()
+	agentsCtx, stopAgents := context.WithCancel(ctx)
+	defer stopAgents()
 	active.ClearUnseen()
 	defer active.ClearUnseen()
 	m := newTuiModel(ctx, mgr, active, b, events, histories, entries, archiveUnread)
+	m.agentsCtx = agentsCtx
 	if welcome {
 		w := newWelcomeModal(m.st, b, m.twoPane())
 		m.welcome = &w
@@ -883,8 +1018,114 @@ func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *acc
 		return accountsRequested{}
 	case final.result.settings:
 		return settingsRequested{}
-	case final.result.agents:
-		return agentsRequested{}
 	}
 	return nil
+}
+
+// withSuggestion shows the open chat's waiting agent reply, if any.
+func (m tuiModel) withSuggestion() tuiModel {
+	if !m.chatOpen || m.mgr == nil || m.mgr.Agents == nil {
+		return m
+	}
+	_, sug, _ := m.mgr.Agents.PendingFor(m.mgr.AccountKey(m.active), m.chat.entry.ID)
+	m.chat.suggestion = sug.Text
+	return m
+}
+
+// withAgentSent rereads which of the open chat's messages an agent sent.
+func (m tuiModel) withAgentSent() tuiModel {
+	if !m.chatOpen || m.mgr == nil || m.mgr.Agents == nil {
+		return m
+	}
+	sent, err := m.mgr.Agents.Db.SentBy(m.mgr.AccountKey(m.active), m.chat.entry.ID.Id)
+	if err != nil {
+		return m
+	}
+	m.chat.agentSent = sent
+	m.chat = m.chat.markAgents()
+	return m
+}
+
+// suggestionAct approves, edits or discards the open chat's agent reply.
+// Edit moves the text into the composer, where it is sent as the user's own.
+func (m tuiModel) suggestionAct(act string) (tuiModel, tea.Cmd) {
+	if !m.chatOpen || m.mgr == nil || m.mgr.Agents == nil {
+		return m, nil
+	}
+	rt := m.mgr.Agents
+	key, sug, ok := rt.PendingFor(m.mgr.AccountKey(m.active), m.chat.entry.ID)
+	if !ok {
+		return m, nil
+	}
+	switch act {
+	case "approve":
+		m.chat.notice = "Sending the agent's reply…"
+		return m, func() tea.Msg { return agentApproveDone{rt.Approve(key)} }
+	case "edit":
+		rt.Discard(key)
+		m.chat.input.SetValue(sug.Text)
+		m.chat.input.CursorEnd()
+		m.focus = focusChat
+	case "discard":
+		rt.Discard(key)
+	}
+	return m, nil
+}
+
+// agentRow opens the account's agent pane, or creates the agent first.
+func (m tuiModel) agentRow() (tuiModel, tea.Cmd) {
+	if !agentsAllowed(m.mgr, m.active) {
+		return m, nil
+	}
+	if _, ok := m.mgr.Agents.AgentFor(m.active); ok {
+		return m.openAgentPane()
+	}
+	providers, err := m.mgr.Agents.Db.ListProviders()
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, nil
+	}
+	if len(providers) == 0 {
+		m.alert = newAlertModal(m.st, "No AI provider",
+			"Add an AI provider in Settings > AI providers first, then create the agent here.")
+		return m, nil
+	}
+	wiz := newWizard(m.st, "New agent for "+accountLabel(m.active),
+		agentSteps(providers, m.mgr.Dir), nil)
+	m.wiz = &wiz
+	return m, wiz.Init()
+}
+
+func (m tuiModel) openAgentPane() (tuiModel, tea.Cmd) {
+	pane, err := newAgentPane(m.st, m.mgr, m.active, m.entries)
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, nil
+	}
+	m = m.closeChat()
+	m.agentPane, m.agentOpen, m.focus = pane, true, focusChat
+	return m.sized(), nil
+}
+
+// agentCreated saves the agent the wizard described and opens its pane.
+func (m tuiModel) agentCreated(a wizardAnswers) (tuiModel, tea.Cmd) {
+	switch a["confirm"] {
+	case "restart":
+		wiz := m.wiz.restart()
+		m.wiz = &wiz
+		return m, wiz.Init()
+	case "cancel":
+		m.wiz = nil
+		return m, nil
+	}
+	m.wiz = nil
+	rec, err := createAgent(m.mgr.Agents.Db, m.mgr.AccountKey(m.active), a)
+	m.mgr.Agents.Reload()
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, nil
+	}
+	m, cmd := m.openAgentPane()
+	m.agentPane.notice = "Agent " + textfmt.Plain(rec.Name) + " created"
+	return m, cmd
 }

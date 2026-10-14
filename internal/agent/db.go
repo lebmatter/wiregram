@@ -9,7 +9,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 3
+const currentDBVersion = 4
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -23,10 +23,12 @@ type AgentProvider struct {
 	Model     string
 }
 
-// AgentRecord is a Chat Agent. It answers incoming DMs on the accounts bound
-// to it; Model overrides the provider's default when set.
+// AgentRecord is a Chat Agent. It belongs to one account and answers its
+// incoming DMs, all of them or only the chats in agent_chats; Model overrides
+// the provider's default when set.
 type AgentRecord struct {
 	ID            int64
+	AccountKey    string
 	Name          string
 	Prompt        string
 	Auto          bool   // send replies directly instead of suggesting them
@@ -35,6 +37,13 @@ type AgentRecord struct {
 	Model         string
 	RetentionDays int
 	Enabled       bool
+	AllChats      bool // answer every DM rather than only the chosen chats
+}
+
+// AgentChat is a DM an agent with AllChats off answers.
+type AgentChat struct {
+	ID    string
+	Title string
 }
 
 // What an agent receives of media messages.
@@ -114,6 +123,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV3)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV4)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -134,6 +147,32 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV4 makes each agent part of one account. Agents could serve several
+// accounts before, so they start afresh; their history goes with them.
+const schemaV4 = `
+DELETE FROM agents;
+DROP TABLE agent_accounts;
+ALTER TABLE agents ADD COLUMN account_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE agents ADD COLUMN all_chats INTEGER NOT NULL DEFAULT 1;
+CREATE UNIQUE INDEX idx_agents_account ON agents(account_key);
+
+CREATE TABLE agent_chats (
+	agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	chat_id  TEXT NOT NULL,
+	title    TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (agent_id, chat_id)
+);
+
+CREATE TABLE agent_sent (
+	account_key TEXT NOT NULL,
+	chat_id     TEXT NOT NULL,
+	message_id  TEXT NOT NULL,
+	agent_name  TEXT NOT NULL,
+	sent_at     TEXT NOT NULL DEFAULT (datetime('now')),
+	PRIMARY KEY (account_key, chat_id, message_id)
+);
+`
 
 // schemaV3 replaces the vision flag with a media mode; the old column stays,
 // unused, because SQLite cannot drop it cheaply.
@@ -281,7 +320,8 @@ func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 
 func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	rows, err := d.db.Query(
-		`SELECT id, name, prompt, autoreply, media, provider_id, model, retention_days, enabled
+		`SELECT id, account_key, name, prompt, autoreply, media, provider_id, model,
+		 retention_days, enabled, all_chats
 		 FROM agents ORDER BY name`,
 	)
 	if err != nil {
@@ -291,8 +331,8 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	var out []AgentRecord
 	for rows.Next() {
 		var a AgentRecord
-		if err := rows.Scan(&a.ID, &a.Name, &a.Prompt, &a.Auto, &a.Media, &a.ProviderID,
-			&a.Model, &a.RetentionDays, &a.Enabled); err != nil {
+		if err := rows.Scan(&a.ID, &a.AccountKey, &a.Name, &a.Prompt, &a.Auto, &a.Media,
+			&a.ProviderID, &a.Model, &a.RetentionDays, &a.Enabled, &a.AllChats); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		out = append(out, a)
@@ -302,9 +342,11 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 
 func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
 	res, err := d.db.Exec(
-		`INSERT INTO agents (name, prompt, autoreply, media, provider_id, model, retention_days, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays, a.Enabled,
+		`INSERT INTO agents (account_key, name, prompt, autoreply, media, provider_id, model,
+		 retention_days, enabled, all_chats)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.AccountKey, a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model,
+		a.RetentionDays, a.Enabled, a.AllChats,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create agent: %w", err)
@@ -315,8 +357,9 @@ func (d *AgentDB) CreateAgent(a AgentRecord) (int64, error) {
 func (d *AgentDB) UpdateAgent(a AgentRecord) error {
 	_, err := d.db.Exec(
 		`UPDATE agents SET name = ?, prompt = ?, autoreply = ?, media = ?, provider_id = ?,
-		 model = ?, retention_days = ?, enabled = ? WHERE id = ?`,
-		a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays, a.Enabled, a.ID,
+		 model = ?, retention_days = ?, enabled = ?, all_chats = ? WHERE id = ?`,
+		a.Name, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays, a.Enabled,
+		a.AllChats, a.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update agent: %w", err)
@@ -369,55 +412,85 @@ func (d *AgentDB) SetAgentKnowledge(agentID int64, paths []string) error {
 	return tx.Commit()
 }
 
-// Account bindings. Each account answers to at most one agent.
-
-// AccountAgents maps every bound account key to its agent.
-func (d *AgentDB) AccountAgents() (map[string]int64, error) {
-	rows, err := d.db.Query(`SELECT account_key, agent_id FROM agent_accounts`)
+// AgentChats lists the DMs the agent answers when AllChats is off.
+func (d *AgentDB) AgentChats(agentID int64) ([]AgentChat, error) {
+	rows, err := d.db.Query(
+		`SELECT chat_id, title FROM agent_chats WHERE agent_id = ? ORDER BY title`, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("list agent accounts: %w", err)
+		return nil, fmt.Errorf("list agent chats: %w", err)
 	}
 	defer rows.Close()
-	out := make(map[string]int64)
+	var out []AgentChat
 	for rows.Next() {
-		var key string
-		var id int64
-		if err := rows.Scan(&key, &id); err != nil {
-			return nil, fmt.Errorf("scan agent account: %w", err)
+		var c AgentChat
+		if err := rows.Scan(&c.ID, &c.Title); err != nil {
+			return nil, fmt.Errorf("scan agent chat: %w", err)
 		}
-		out[key] = id
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
-// UnbindAccount drops the account's binding; its agent stays.
-func (d *AgentDB) UnbindAccount(key string) error {
-	if _, err := d.db.Exec(`DELETE FROM agent_accounts WHERE account_key = ?`, key); err != nil {
-		return fmt.Errorf("unbind account: %w", err)
+func (d *AgentDB) SetAgentChats(agentID int64, chats []AgentChat) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin agent chats tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM agent_chats WHERE agent_id = ?`, agentID); err != nil {
+		return fmt.Errorf("clear agent chats: %w", err)
+	}
+	for _, c := range chats {
+		if _, err := tx.Exec(`INSERT INTO agent_chats (agent_id, chat_id, title) VALUES (?, ?, ?)`,
+			agentID, c.ID, c.Title); err != nil {
+			return fmt.Errorf("insert agent chat: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteAccount drops the account's agent and the record of what it sent.
+func (d *AgentDB) DeleteAccount(key string) error {
+	if _, err := d.db.Exec(`DELETE FROM agents WHERE account_key = ?`, key); err != nil {
+		return fmt.Errorf("delete account agent: %w", err)
+	}
+	if _, err := d.db.Exec(`DELETE FROM agent_sent WHERE account_key = ?`, key); err != nil {
+		return fmt.Errorf("delete agent sent messages: %w", err)
 	}
 	return nil
 }
 
-// SetAgentAccounts replaces the agent's bindings. A key bound to another agent
-// fails the whole change.
-func (d *AgentDB) SetAgentAccounts(agentID int64, keys []string) error {
-	tx, err := d.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin accounts tx: %w", err)
-	}
-	defer tx.Rollback()
+// Sent messages. Kept beyond retention so a chat always shows who wrote them.
 
-	if _, err := tx.Exec(`DELETE FROM agent_accounts WHERE agent_id = ?`, agentID); err != nil {
-		return fmt.Errorf("clear agent accounts: %w", err)
+func (d *AgentDB) RecordSent(accountKey, chatID, messageID, agentName string) error {
+	_, err := d.db.Exec(
+		`INSERT OR REPLACE INTO agent_sent (account_key, chat_id, message_id, agent_name)
+		 VALUES (?, ?, ?, ?)`, accountKey, chatID, messageID, agentName)
+	if err != nil {
+		return fmt.Errorf("record agent message: %w", err)
 	}
-	for _, key := range keys {
-		if _, err := tx.Exec(
-			`INSERT INTO agent_accounts (account_key, agent_id) VALUES (?, ?)`, key, agentID,
-		); err != nil {
-			return fmt.Errorf("account is already connected to another agent: %w", err)
+	return nil
+}
+
+// SentBy maps the IDs of the chat's agent-sent messages to the agent's name.
+func (d *AgentDB) SentBy(accountKey, chatID string) (map[string]string, error) {
+	rows, err := d.db.Query(
+		`SELECT message_id, agent_name FROM agent_sent WHERE account_key = ? AND chat_id = ?`,
+		accountKey, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent messages: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("scan agent message: %w", err)
 		}
+		out[id] = name
 	}
-	return tx.Commit()
+	return out, rows.Err()
 }
 
 // Message log.
@@ -480,46 +553,4 @@ func (d *AgentDB) PurgeOldMessages(agentID int64, retentionDays int) (int64, err
 		return 0, fmt.Errorf("purge old messages: %w", err)
 	}
 	return res.RowsAffected()
-}
-
-// Thread listing for agent UI.
-
-type AgentThread struct {
-	BackendType  string
-	AccountID    string
-	ChatID       string
-	ChatTitle    string
-	LastAt       time.Time
-	MessageCount int
-}
-
-func (d *AgentDB) AgentThreads(agentID int64) ([]AgentThread, error) {
-	rows, err := d.db.Query(
-		`SELECT backend_type, account_id, chat_id,
-		 	COALESCE((SELECT t.chat_title FROM agent_messages t
-		 		WHERE t.agent_id = m.agent_id AND t.account_id = m.account_id
-		 		AND t.chat_id = m.chat_id AND t.chat_title != ''
-		 		ORDER BY t.timestamp DESC LIMIT 1), ''),
-		 	MAX(timestamp) as last_at, COUNT(*) as cnt
-		 FROM agent_messages m
-		 WHERE agent_id = ?
-		 GROUP BY backend_type, account_id, chat_id
-		 ORDER BY last_at DESC`,
-		agentID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list agent threads: %w", err)
-	}
-	defer rows.Close()
-	var out []AgentThread
-	for rows.Next() {
-		var t AgentThread
-		var ts string
-		if err := rows.Scan(&t.BackendType, &t.AccountID, &t.ChatID, &t.ChatTitle, &ts, &t.MessageCount); err != nil {
-			return nil, fmt.Errorf("scan agent thread: %w", err)
-		}
-		t.LastAt, _ = time.Parse(time.RFC3339, ts)
-		out = append(out, t)
-	}
-	return out, rows.Err()
 }

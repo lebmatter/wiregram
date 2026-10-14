@@ -108,6 +108,12 @@ type chatViewModel struct {
 	privateMode    bool
 	lastTypingSent time.Time
 
+	// agentSent names the agent that sent each agent message, by ID, and
+	// suggestion is the agent's reply waiting for approval. The root keeps
+	// both current.
+	agentSent  map[string]string
+	suggestion string
+
 	locked       bool
 	autoLock     bool
 	lockDeadline time.Time
@@ -207,6 +213,9 @@ type chatUploadResult struct {
 	err  error
 }
 type chatToUnread struct{}
+
+// chatSuggestion acts on the agent's waiting reply: approve, edit or discard.
+type chatSuggestion struct{ act string }
 type chatDeleteChatResult struct{ err error }
 type chatDeleteMsgResult struct{ err error }
 type chatPinResult struct {
@@ -424,7 +433,21 @@ func (m chatViewModel) clearSelectedChanged() chatViewModel {
 }
 
 func (m chatViewModel) Update(msg tea.Msg) (chatViewModel, tea.Cmd) {
-	return m.update(msg)
+	m, cmd := m.update(msg)
+	return m.markAgents(), cmd
+}
+
+// markAgents names the agent on the messages it sent.
+func (m chatViewModel) markAgents() chatViewModel {
+	if len(m.agentSent) == 0 {
+		return m
+	}
+	for i := range m.messages {
+		if m.messages[i].Outgoing {
+			m.messages[i].Agent = m.agentSent[m.messages[i].ID]
+		}
+	}
+	return m
 }
 
 // imagesMoved reports whether msg may have brought images into view; the
@@ -857,6 +880,13 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	}
 
 	m.notice = ""
+
+	if m.suggestion != "" && m.subMode == chatSubNone && m.input.Value() == "" {
+		act := map[string]string{"ctrl+y": "approve", "ctrl+e": "edit", "ctrl+x": "discard"}[msg.String()]
+		if act != "" {
+			return m, func() tea.Msg { return chatSuggestion{act} }
+		}
+	}
 
 	switch m.subMode {
 	case chatSubMenu:
@@ -1436,6 +1466,9 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	case chatSubReader, chatSubMenu, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return m, nil
 	}
+	if act, ok := m.suggestionAt(msg.x, msg.y); ok && !msg.right {
+		return m, func() tea.Msg { return chatSuggestion{act} }
+	}
 	var follow tea.Cmd
 	sel, media, ok := m.threadMessageAt(msg.x, msg.y)
 	if !ok {
@@ -1718,7 +1751,61 @@ func (m chatViewModel) composer(width int, focused bool) []string {
 	if m.caps.MultilineCompose {
 		return m.draftBox(width, border)
 	}
-	return m.st.composerBox("", m.replyBar(), "› ", m.input, width, border)
+	box := m.st.composerBox("", m.replyBar(), "› ", m.input, width, border)
+	if m.suggestion != "" && m.subMode == chatSubNone {
+		box = append(m.suggestionCard(width), box...)
+	}
+	return box
+}
+
+// suggestionMaxLines caps the agent's reply in its card; Edit shows it all.
+const suggestionMaxLines = 6
+
+// suggestionButtons are the card's buttons and their offsets in its last row.
+var suggestionButtons = []struct {
+	label, act string
+	at         int
+}{{"[Approve ^Y]", "approve", 0}, {"[Edit ^E]", "edit", 14}, {"[Discard ^X]", "discard", 25}}
+
+// suggestionCard is the agent's waiting reply over the composer, with its
+// Approve, Edit and Discard buttons.
+func (m chatViewModel) suggestionCard(width int) []string {
+	text := strings.Split(lipgloss.NewStyle().Width(max(1, width-4)).Render(m.suggestion), "\n")
+	if len(text) > suggestionMaxLines {
+		text = append(text[:suggestionMaxLines-1], m.st.dim.Render("…"))
+	}
+	buttons := ""
+	for i, b := range suggestionButtons {
+		style := m.st.subtle
+		if i == 0 {
+			style = m.st.agent.Bold(true)
+		}
+		buttons += strings.Repeat(" ", b.at-textfmt.DisplayWidth(buttons)) + style.Render(b.label)
+	}
+	lines := append(text, buttons)
+	return strings.Split(renderBox(agentIcon+" Agent suggests", lines, width, len(lines)+2,
+		lipgloss.Color(m.st.theme.agent)), "\n")
+}
+
+// suggestionAt is the card button at column x and row y of the chat pane.
+func (m chatViewModel) suggestionAt(x, y int) (string, bool) {
+	if m.suggestion == "" || m.subMode != chatSubNone || m.caps.MultilineCompose {
+		return "", false
+	}
+	inner, bodyHeight := m.width-4, m.height-2
+	composer := m.composer(inner, m.focused)
+	card := m.suggestionCard(inner)
+	// Under the chat box's top edge; the buttons are the card's last inner row.
+	if y != 1+bodyHeight-len(composer)+len(card)-2 {
+		return "", false
+	}
+	col := x - 4 // the chat box's and the card's edges and padding
+	for _, b := range suggestionButtons {
+		if col >= b.at && col < b.at+textfmt.DisplayWidth(b.label) {
+			return b.act, true
+		}
+	}
+	return "", false
 }
 
 func (m chatViewModel) replyBar() []string {
@@ -1782,6 +1869,9 @@ func (m chatViewModel) helpKeys() []helpKey {
 		return m.mailHelp()
 	}
 	keys := []helpKey{{"↑↓", "messages"}, {"enter", "send · actions"}}
+	if m.suggestion != "" {
+		keys = []helpKey{{"^Y", "approve"}, {"^E", "edit"}, {"^X", "discard"}, keys[0]}
+	}
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})
 	}

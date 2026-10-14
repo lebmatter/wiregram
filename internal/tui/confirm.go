@@ -16,6 +16,7 @@ type confirmModal struct {
 	question string
 	action   string // the label of the row that goes ahead
 	row      int    // 0 is the action, 1 is Cancel
+	alert    bool   // only an OK row: it tells rather than asks
 }
 
 const (
@@ -31,6 +32,11 @@ func newConfirmModal(st *styles, title, question, action string, safe bool) *con
 		m.row = 1
 	}
 	return m
+}
+
+// newAlertModal tells the user something; any key or click closes it.
+func newAlertModal(st *styles, title, text string) *confirmModal {
+	return &confirmModal{st: st, title: title, question: text, action: "OK", alert: true}
 }
 
 func newQuitModal(st *styles) *confirmModal {
@@ -67,7 +73,14 @@ func (m *confirmModal) size() (int, int) {
 	for _, l := range lines {
 		w = max(w, textfmt.DisplayWidth(l))
 	}
-	return max(confirmModalMinWidth, w+4), len(lines) + 5 // borders, a blank and two rows
+	return max(confirmModalMinWidth, w+4), len(lines) + 4 + len(m.rows()) // borders, a blank
+}
+
+func (m *confirmModal) rows() []string {
+	if m.alert {
+		return []string{m.action}
+	}
+	return []string{m.action, "Cancel"}
 }
 
 func (m *confirmModal) View() string {
@@ -77,7 +90,7 @@ func (m *confirmModal) View() string {
 		body = append(body, m.st.subtle.Render(l))
 	}
 	body = append(body, "")
-	for i, label := range []string{m.action, "Cancel"} {
+	for i, label := range m.rows() {
 		if i == m.row {
 			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(label))
 		} else {
@@ -111,6 +124,9 @@ func (m *confirmModal) click(x, y, rx, ry int) (yes, done bool) {
 }
 
 func (m *confirmModal) helpKeys() []helpKey {
+	if m.alert {
+		return []helpKey{{"any key", "close"}}
+	}
 	return []helpKey{
 		{"↑↓", "select"},
 		{"enter", "choose"},

@@ -17,13 +17,13 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Themes…", "Plugins…", "Chat Agents…", "Reset…", "Quit"}
+var settingsActions = []string{"+ Add account…", "Themes…", "Plugins…", "AI providers…", "Reset…", "Quit"}
 
 const (
 	actionAdd = iota
 	actionThemes
 	actionPlugins
-	actionAgents
+	actionProviders
 	actionReset
 	actionQuit
 )
@@ -53,7 +53,6 @@ type settingsResult struct {
 	account *account.Account // switch to it
 	back    bool             // return to the active account
 	add     bool
-	agents  bool
 	reset   bool // every account was removed; delete all local data
 }
 
@@ -86,10 +85,13 @@ type settingsModel struct {
 	confirmRun func() tea.Cmd
 	busy       bool // a removal is running
 	edit       textinput.Model
-	editing    bool // a plugin's text setting is being typed
-	notice     string
-	width      int
-	height     int
+	editing    bool // a plugin's or provider's text setting is being typed
+	// openProvider is the provider whose fields are listed, 0 for none.
+	openProvider int64
+	wiz          *wizardModel // adding a provider
+	notice       string
+	width        int
+	height       int
 }
 
 func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, fromAccounts bool) settingsModel {
@@ -123,6 +125,9 @@ func (m settingsModel) onThemes() bool { return m.left == len(m.accounts)+action
 // onPlugins reports whether the Plugins row is chosen, whose pane lists plugins.
 func (m settingsModel) onPlugins() bool { return m.left == len(m.accounts)+actionPlugins }
 
+// onProviders reports whether the AI providers row is chosen.
+func (m settingsModel) onProviders() bool { return m.left == len(m.accounts)+actionProviders }
+
 // onReset reports whether the Reset row is chosen.
 func (m settingsModel) onReset() bool { return m.left == len(m.accounts)+actionReset }
 
@@ -133,6 +138,9 @@ func (m settingsModel) rightRows() int {
 	}
 	if m.onPlugins() {
 		return len(m.pluginRows())
+	}
+	if m.onProviders() {
+		return len(m.providerRows())
 	}
 	return len(m.items())
 }
@@ -157,7 +165,7 @@ func (m *settingsModel) reload() {
 	m.accounts = m.mgr.List()
 	m.left = clampIndex(m.left, m.leftRows())
 	m.sel = clampIndex(m.sel, m.rightRows())
-	if m.selected() == nil && !m.onThemes() && !m.onPlugins() {
+	if m.selected() == nil && !m.onThemes() && !m.onPlugins() && !m.onProviders() {
 		m.focus = paneAccounts
 	}
 }
@@ -183,15 +191,32 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.result.add = true
 			return m, tea.Quit
 		}
+	case settingsNotice:
+		m.notice = string(msg)
+		m.reload()
 	case settingsReset:
 		m.result.reset = true
 		return m, tea.Quit
+	case wizardFinished:
+		return m.providerAdded(msg.answers)
+	case wizardCancelled:
+		m.wiz = nil
 	case tea.KeyPressMsg:
+		if m.wiz != nil {
+			wiz, cmd := m.wiz.Update(msg)
+			m.wiz = &wiz
+			return m, cmd
+		}
 		if m.editing {
 			return m.editKey(msg)
 		}
 		return m.handleKey(msg.String())
 	case tea.PasteMsg:
+		if m.wiz != nil {
+			wiz, cmd := m.wiz.Update(msg)
+			m.wiz = &wiz
+			return m, cmd
+		}
 		if m.editing {
 			var cmd tea.Cmd
 			m.edit, cmd = m.edit.Update(msg)
@@ -251,7 +276,7 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 			m.focus = paneItems
 			return m, nil
 		}
-		if m.onPlugins() {
+		if m.onPlugins() || m.onProviders() {
 			if m.rightRows() > 0 {
 				m.focus = paneItems
 			}
@@ -263,8 +288,6 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 		switch m.left - len(m.accounts) {
 		case actionAdd:
 			m.result.add = true
-		case actionAgents:
-			m.result.agents = true
 		case actionReset:
 			m.confirm = newConfirmModal(m.st, "Reset",
 				"Delete all accounts and data and start fresh? This cannot be undone.",
@@ -283,6 +306,9 @@ func (m settingsModel) itemsKey(k string) (tea.Model, tea.Cmd) {
 	}
 	if m.onPlugins() {
 		return m.pluginsKey(k)
+	}
+	if m.onProviders() {
+		return m.providersKey(k)
 	}
 	items := m.items()
 	switch k {
@@ -382,6 +408,9 @@ func (m settingsModel) confirmAnswered(yes, done bool) (tea.Model, tea.Cmd) {
 	if !yes {
 		return m, nil
 	}
+	if m.onProviders() {
+		return m, run() // a provider delete, which is quick
+	}
 	m.busy, m.notice = true, "Signing out…"
 	return m, run()
 }
@@ -427,6 +456,11 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.confirm != nil {
 		x, y := m.confirmPos()
 		return m.confirmAnswered(m.confirm.click(mouse.X, mouse.Y, x, y))
+	}
+	if m.wiz != nil {
+		wiz, cmd := m.wiz.modalClick(mouse.X, mouse.Y, 0, m.width, m.bodyHeight())
+		m.wiz = &wiz
+		return m, cmd
 	}
 	if row < 0 || row >= h {
 		return m, nil
@@ -485,6 +519,10 @@ func (m settingsModel) View() tea.View {
 		x, y := m.confirmPos()
 		body = m.st.fadeUnder(body, m.confirm.View(), x, y)
 	}
+	if m.wiz != nil {
+		box, _ := m.wiz.modal(m.width, m.bodyHeight())
+		body = m.st.overlay(body, box, m.width, m.bodyHeight())
+	}
 	v := tea.NewView(body + "\n" + m.footer())
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -507,6 +545,8 @@ func (m settingsModel) frame() string {
 		title = "Themes"
 	} else if m.onPlugins() {
 		title = "Plugins"
+	} else if m.onProviders() {
+		title = "AI providers"
 	}
 	var body string
 	switch {
@@ -562,7 +602,7 @@ func (m settingsModel) itemLines(width, height int) []string {
 	if a == nil {
 		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
 			"The colours of the whole app.", "Lua scripts that add widgets to the account list.",
-			"Bots that answer your direct messages.",
+			"Where Chat Agents get their replies: any OpenAI-compatible API.",
 			"Delete every account and all local data, as on a fresh install.", "Leave wiregram."}
 		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
 		if m.onThemes() {
@@ -570,6 +610,9 @@ func (m settingsModel) itemLines(width, height int) []string {
 		}
 		if m.onPlugins() {
 			lines = append(append(lines, ""), m.pluginLines(width, height-itemsTop)...)
+		}
+		if m.onProviders() {
+			lines = append(append(lines, ""), m.providerLines(width, height-itemsTop)...)
 		}
 		if m.onReset() {
 			for _, w := range []string{"", "Warning: this cannot be undone.",
@@ -707,6 +750,9 @@ func (m settingsModel) helpKeys() []helpKey {
 	if m.confirm != nil {
 		return m.confirm.helpKeys()
 	}
+	if m.wiz != nil {
+		return m.wiz.helpKeys()
+	}
 	if m.focus == paneAccounts {
 		return []helpKey{{"↑↓", "select"}, {"enter", "open"}, back}
 	}
@@ -720,7 +766,7 @@ func (m settingsModel) helpKeys() []helpKey {
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil
-// to quit, agentsRequested for Chat Agents, ResetRequested after Reset, or
+// to quit, ResetRequested after Reset, or
 // accountsRequested when Esc leaves a Settings opened from the account chooser.
 func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *account.Account,
 	fromAccounts bool) (*account.Account, error) {
@@ -736,8 +782,6 @@ func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *accou
 		switch {
 		case r.reset:
 			return nil, ResetRequested{}
-		case r.agents:
-			return nil, agentsRequested{}
 		case r.add:
 			a, err := tuiPickAndAdd(ctx, mgr, final.frame())
 			if errors.Is(err, context.Canceled) && ctx.Err() == nil && len(mgr.List()) > 0 {

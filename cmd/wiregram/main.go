@@ -48,6 +48,13 @@ digest, such as the built-in Weather (on by default) and Hacker News.
 Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 
+Chat Agents answer an account's incoming private messages through an
+OpenAI-compatible provider, added in Settings > AI providers. Each account
+but email can have one: the row under its Search… reads New agent…, then
+Agent: NAME, which opens the agent's settings in place of the chat. A violet
+✦ marks accounts with an agent, chats with a reply waiting for approval, and
+the messages an agent sent. Messages go to the provider.
+
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
@@ -72,6 +79,10 @@ Commands (for scripts and AI agents; output is one JSON object per line):
       Until Ctrl+C. Connection changes are reported on stderr.
   wiregram send [-reply ID] BACKEND ACCOUNT RECIPIENT [MESSAGE...]
       Send MESSAGE, or stdin when none is given, and print the sent message.
+  wiregram dry-run [-message ID]... BACKEND ACCOUNT RECIPIENT
+      Print the reply the account's Chat Agent would give to each message
+      ID, or to the newest incoming message, without sending it. Works
+      while the agent is paused.
   wiregram reset [-y]
       Sign out of every account and delete all local data, as Settings >
       Reset does. Asks first unless -y is given.
@@ -87,20 +98,20 @@ Commands (for scripts and AI agents; output is one JSON object per line):
 Keyboard shortcuts:
 
   Anywhere
-    Alt+A             Chat Agents (from the chat list, or a chat with an empty input)
     Tab               Move between chat list and chat (wide terminals)
 
   Accounts
     Up/k, Down/j      Select account or menu row
-    Enter             Open the account, or the selected row (Chat Agents,
-                      Settings…, Add account, Quit)
+    Enter             Open the account, or the selected row (Settings…,
+                      Add account, Quit)
     r                 Reconnect the selected account
     Esc               Back to the open account (when it is online)
     q, Ctrl+C         Quit (asks first)
 
   Chat list
     Up/k, Down/j      Select chat or account
-    Enter             Open chat, or switch to the selected account
+    Enter             Open chat, switch to the selected account, or open
+                      the agent row: New agent… or the agent's settings
     /                 Search users (a modal over the screen); on Mattermost
                       also channels, joining a public one when picked
     u                 Unread: cards for every chat with unread messages
@@ -139,6 +150,9 @@ Keyboard shortcuts:
     Space             Change the selected setting
     Themes…           Pick a theme (Zest, Copper) from sample cards with the
                       arrows; Enter applies it to every screen
+    AI providers…     Enter opens a provider's name, URL, key variable and
+                      model, each edited in place, or deletes it (not while
+                      an agent uses it); Add provider… asks step by step
     Reset…            Sign out of every account and delete all local data
                       (settings, plugins, agents, cached mail and media),
                       then start over as a fresh installation
@@ -157,6 +171,9 @@ Keyboard shortcuts:
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
+    Ctrl+Y            Approve the agent's suggested reply (empty input)
+    Ctrl+E            Edit it: the text moves into the input, sent as yours
+    Ctrl+X            Discard it
     Esc               Cancel the reply, else back to Unread (or Mentions)
     Ctrl+C            Close chat
     Any key           Unlock after the inactivity lock
@@ -197,23 +214,19 @@ Keyboard shortcuts:
     Enter             Do it (deletes ask first)
     Esc               Close (a click outside it closes it too)
 
-  Chat Agents (violet)
-    Up/k, Down/j      Select
-    Enter             Show conversations / open one
-    n                 New agent (connects a provider first if needed)
-    e                 Edit agent
-    c                 Connect accounts (each answers to one agent)
-    Space             Pause or resume agent
-    d                 Delete agent
-    p                 AI providers (n new, e edit, d delete)
-    y / n             Send / discard a suggested reply
-    Esc               Back
+  Agent (the account's agent row)
+    Up/k, Down/j      Select a setting: status, name, provider, model,
+                      prompt, knowledge files, media, replies (ask me first
+                      or automatically), history, chats (all private chats
+                      or selected ones, ticked below), delete
+    Enter, Space      Change it; text opens for typing (Enter saves, Esc
+                      cancels)
+    Esc, Left/h       Back
 
-  Chat Agent wizard
+  New agent and Add provider (form modals)
     Enter             Answer or pick
     Up/k, Down/j      Choose
-    Space             Toggle an account
-    Esc               Previous question
+    Esc               Previous question, else cancel
     Ctrl+C            Cancel
 
   Media viewer

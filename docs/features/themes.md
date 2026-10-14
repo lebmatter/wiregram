@@ -17,4 +17,5 @@ the same in every theme:
 - links (underlined)
 - nick colours, one per sender
 
-Agents mode swaps the accent for violet so you always know where you are.
+Violet is kept for [Chat Agents](/features/chat-agents): the ✦ icon, the suggestion card
+and messages an agent sent.

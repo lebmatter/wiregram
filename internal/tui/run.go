@@ -23,10 +23,6 @@ type settingsRequested struct{}
 
 func (settingsRequested) Error() string { return "open settings" }
 
-type agentsRequested struct{}
-
-func (agentsRequested) Error() string { return "open agents" }
-
 // ResetRequested is returned by RunAccounts after Settings' Reset removed
 // every account; the caller deletes all local data and starts again.
 type ResetRequested struct{}
@@ -71,12 +67,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			var err error
 			active, err = tuiChooseAccount(ctx, m, nil)
 			if err != nil {
-				if _, ok := err.(agentsRequested); ok && m.Agents != nil {
-					if active, err = tuiAgentMode(ctx, m); err != nil {
-						return err
-					}
-					continue
-				}
 				return err
 			}
 			if active == nil {
@@ -119,17 +109,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
-				// Agent mode returns to this account unless it picked another.
-				to, err := tuiAgentMode(ctx, m)
-				if err != nil {
-					return err
-				}
-				if to != nil {
-					active = to
-				}
-				continue
-			}
 			var sw accountSwitch
 			if errors.As(err, &sw) {
 				active = sw.to
@@ -138,12 +117,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			if _, ok := err.(settingsRequested); ok {
 				to, err := tuiSettings(ctx, m, active, false)
 				if err != nil {
-					if _, ok := err.(agentsRequested); ok && m.Agents != nil {
-						if active, err = tuiAgentMode(ctx, m); err != nil {
-							return err
-						}
-						continue
-					}
 					return err
 				}
 				if to == nil {
@@ -159,12 +132,6 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		var err error
 		active, err = tuiChooseAccount(ctx, m, active)
 		if err != nil {
-			if _, ok := err.(agentsRequested); ok && m.Agents != nil {
-				if active, err = tuiAgentMode(ctx, m); err != nil {
-					return err
-				}
-				continue
-			}
 			return err
 		}
 		if active == nil {

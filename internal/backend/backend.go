@@ -65,7 +65,10 @@ type Message struct {
 	Source string
 	// Mentioned marks a message that mentions the user or the whole chat.
 	Mentioned bool
-	Raw       any
+	// Agent names the Chat Agent that sent an outgoing message; the TUI
+	// fills it in from wiregram.db.
+	Agent string
+	Raw   any
 }
 
 // MaxInlineImage is the largest image file, in bytes, drawn inline.

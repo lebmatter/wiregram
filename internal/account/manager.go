@@ -440,7 +440,7 @@ func (m *AccountManager) AddWhatsApp() (*Account, error) {
 }
 
 // Remove signs the account out on its server when it is online, then deletes
-// its local data and its agent binding. The local data goes even when the
+// its local data and its agent. The local data goes even when the
 // server logout fails; that failure is returned.
 func (m *AccountManager) Remove(ctx context.Context, a *Account) error {
 	var logoutErr error
@@ -453,7 +453,7 @@ func (m *AccountManager) Remove(ctx context.Context, a *Account) error {
 	key := m.AccountKey(a)
 	m.Discard(a)
 	if m.Agents != nil {
-		if err := m.Agents.Db.UnbindAccount(key); err != nil {
+		if err := m.Agents.Db.DeleteAccount(key); err != nil {
 			return err
 		}
 		m.Agents.Reload()

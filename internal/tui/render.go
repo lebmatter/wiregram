@@ -264,8 +264,8 @@ func accountLabel(a *account.Account) string {
 	return label
 }
 
-// accountShort is the account's tag in agent mode, such as TG1: its backend
-// and its position in the account list.
+// accountShort is the account's tag, such as TG1: its backend and its
+// position in the account list.
 func accountShort(mgr *account.AccountManager, key string) string {
 	for i, a := range mgr.Accounts {
 		if mgr.AccountKey(a) == key {
@@ -325,6 +325,10 @@ func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry, unr
 	}
 	if kind, _ := kindOf(entry); kind == kindChannel {
 		return stamp
+	}
+	if msg.Outgoing && msg.Agent != "" {
+		return stamp + " " + s.agent.Render("<"+textfmt.FormatNick(agentIcon+" "+
+			textfmt.Plain(msg.Agent))+">")
 	}
 	nick, _ := strings.CutPrefix(backend.GenericMessagePrefix(msg, entry),
 		msg.Timestamp.Format("[15:04]"))
@@ -583,10 +587,15 @@ func truncate(text string, width int) string {
 	return textfmt.ClipLine(text, width-1) + "…"
 }
 
-func (s *styles) chatListLine(entry backend.ChatEntry, selected, focused bool, width int) string {
+// chatListLine is a chat row: the title, then mark (such as an agent's
+// pending suggestion) and the unread pill at the right edge.
+func (s *styles) chatListLine(entry backend.ChatEntry, mark string, selected, focused bool, width int) string {
 	pill := ""
 	if entry.Unread > 0 {
 		pill = " " + s.badge.Render(fmt.Sprintf(" %d ", entry.Unread))
+	}
+	if mark != "" {
+		pill = " " + mark + pill
 	}
 	marker := "  "
 	if selected {
@@ -600,6 +609,46 @@ func (s *styles) chatListLine(entry backend.ChatEntry, selected, focused bool, w
 		row = styleTitle.Render(row)
 	}
 	return row + pill
+}
+
+// agentIcon marks Chat Agents: an account that has one, a chat with a
+// suggestion waiting, and the messages an agent sent.
+const agentIcon = "✦"
+
+// agentMark is the agent icon, dim while the agent is paused.
+func (s *styles) agentMark(enabled bool) string {
+	if !enabled {
+		return s.dim.Render(agentIcon)
+	}
+	return s.agent.Render(agentIcon)
+}
+
+func clampIndex(i, n int) int { return max(0, min(i, n-1)) }
+
+// window returns the first visible item so that sel stays on screen.
+func window(sel, rows int) int {
+	if rows < 1 || sel < rows {
+		return 0
+	}
+	return sel - rows + 1
+}
+
+func (s *styles) listRow(text, right string, selected, focused bool, width int) string {
+	marker := "  "
+	if selected {
+		marker = s.accent.Render(">") + " "
+	}
+	room := max(1, width-2-textfmt.DisplayWidth(right)-1)
+	row := marker + truncate(text, room)
+	gap := max(1, width-textfmt.DisplayWidth(row)-textfmt.DisplayWidth(right))
+	row += strings.Repeat(" ", gap) + right
+	switch {
+	case selected && focused:
+		return s.selectedRow.Render(row)
+	case selected:
+		return styleTitle.Render(row)
+	}
+	return row
 }
 
 const wiregramLogo = `╦ ╦╦╦═╗╔═╗╔═╗╦═╗╔═╗╔╦╗

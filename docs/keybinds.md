@@ -10,7 +10,6 @@ an empty composer (or right-click it) to open its actions.
 
 | Key | Action |
 |-----|--------|
-| <kbd>Alt+A</kbd> | Chat Agents (from the chat list, or a chat with an empty input) |
 | <kbd>Tab</kbd> | Move between chat list and chat (wide terminals) |
 
 ## Accounts
@@ -18,7 +17,7 @@ an empty composer (or right-click it) to open its actions.
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select account or menu row |
-| <kbd>Enter</kbd> | Open the account, or the selected row (Chat Agents, Settings…, Add account, Quit) |
+| <kbd>Enter</kbd> | Open the account, or the selected row (Settings…, Add account, Quit) |
 | <kbd>r</kbd> | Reconnect the selected account |
 | <kbd>Esc</kbd> | Back to the open account (when it is online) |
 | <kbd>q</kbd>, <kbd>Ctrl+C</kbd> | Quit (asks first) |
@@ -28,7 +27,7 @@ an empty composer (or right-click it) to open its actions.
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat or account |
-| <kbd>Enter</kbd> | Open chat, or switch to the selected account |
+| <kbd>Enter</kbd> | Open chat, switch to the selected account, or open the agent row |
 | <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
 | <kbd>u</kbd> | Unread: cards for every chat with unread messages |
 | <kbd>m</kbd> | Mentions: cards for the groups and channels mentioning you (not email) |
@@ -69,6 +68,10 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Space</kbd> | Change the selected setting |
 | <kbd>Esc</kbd>, <kbd>←</kbd>/<kbd>h</kbd> | Back to the accounts, then to where Settings was opened |
 | <kbd>q</kbd> | Quit |
+
+In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows in place
+(<kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels), or runs **+ Add provider…** or
+**Delete provider…**.
 
 ## Chat
 
@@ -137,30 +140,29 @@ The thread pane opens by itself on a threaded message in wide terminals.
 | <kbd>Enter</kbd> | Do it (deletes ask first) |
 | <kbd>Esc</kbd> | Close (a click outside it closes it too) |
 
-## Chat Agents
+## Agent pane
+
+The agent row (**New agent…** or **Agent: NAME ✦**) at the end of an account's rows.
 
 | Key | Action |
 |-----|--------|
-| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select |
-| <kbd>Enter</kbd> | Show conversations / open one |
-| <kbd>n</kbd> | New agent (connects a provider first if needed) |
-| <kbd>e</kbd> | Edit agent |
-| <kbd>c</kbd> | Connect accounts (each answers to one agent) |
-| <kbd>Space</kbd> | Pause or resume agent |
-| <kbd>d</kbd> | Delete agent |
-| <kbd>p</kbd> | AI providers (<kbd>n</kbd> new, <kbd>e</kbd> edit, <kbd>d</kbd> delete) |
-| <kbd>y</kbd> / <kbd>n</kbd> | Send / discard a suggested reply |
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select a row |
+| <kbd>Enter</kbd> | Change it (edits in place: <kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels) |
 | <kbd>Esc</kbd> | Back |
 
-## Chat Agent wizard
+The New agent… and Add provider… wizards: <kbd>Enter</kbd> answers or picks,
+<kbd>↑</kbd>/<kbd>↓</kbd> choose, <kbd>Esc</kbd> goes back a question.
+
+## Agent suggestion
+
+When an agent asks first, its reply waits in a card above the composer. These keys work
+while the composer is empty; the card's buttons can be clicked too.
 
 | Key | Action |
 |-----|--------|
-| <kbd>Enter</kbd> | Answer or pick |
-| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Choose |
-| <kbd>Space</kbd> | Toggle an account |
-| <kbd>Esc</kbd> | Previous question |
-| <kbd>Ctrl+C</kbd> | Cancel |
+| <kbd>Ctrl+Y</kbd> | Approve: send it as the agent |
+| <kbd>Ctrl+E</kbd> | Edit: move it into the composer, to send as yourself |
+| <kbd>Ctrl+X</kbd> | Discard |
 
 ## Media viewer
 

@@ -8,16 +8,14 @@ for the current screen; [Keybinds](/keybinds) and `wiregram -h` list all of them
 ## Screens
 
 1. **Splash.** The logo shows for about a second.
-2. **Account chooser.** Every account with its status, then Chat Agents, Settings…,
-   Add account and Quit. Under them sits the [unread digest](/features/accounts#unread-digest)
+2. **Account chooser.** Every account with its status (and its agent, if it has
+   one), then Settings…, Add account and Quit. Under them sits the [unread digest](/features/accounts#unread-digest)
    and any [plugin widgets](/features/plugins).
 3. **Chat mode.** The chat list and the open chat. Inside an account the screen is
    the body and a footer with the keys for what has focus; notices show on the right
    of the footer.
 4. **Settings.** Opened from the chooser's `Settings…` row or the sidebar's last row.
    See [Configuration](/configuration#settings).
-5. **Agents mode.** <kbd>Alt+A</kbd> switches to [Chat Agents](/features/chat-agents),
-   drawn in violet.
 
 ## Layout
 
@@ -26,8 +24,8 @@ Terminals 100 columns wide or wider show the chat list as a sidebar beside the o
 
 The sidebar is an account tree. Every account is a row with an arrow, a status glyph,
 a tag such as `TG1` (backend and position) and its label. The active account is expanded
-to its chats, Unread, Mentions and Search…. <kbd>Enter</kbd> on another account
-switches to it. The last row opens Settings.
+to its chats, Unread, Mentions and Search…, and, except for email, its
+[agent](/features/chat-agents) row. <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
 
 Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 

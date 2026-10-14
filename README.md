@@ -51,10 +51,12 @@ make
 
 ## Chat Agents
 
-Optional AI bots, set up in agents mode (Alt+A), that answer **incoming private messages**
-on the accounts you connect to them. They work with any OpenAI-compatible provider, can
-draft replies for you to approve or answer on their own, and never reply in groups or start
-a conversation. Conversations are sent to the provider you configure.
+Optional AI bots, one per account, that answer **incoming private messages**. Add an
+OpenAI-compatible provider under Settings → AI providers…, then create the agent from the
+account's **New agent…** row in the sidebar. An agent can suggest replies for you to
+approve or answer on its own; its messages are marked `✦ NAME` in the chat. It never replies
+in groups or starts a conversation. Try it with `wiregram dry-run` before turning it on.
+Conversations are sent to the provider you configure.
 
 ## Command line
 
@@ -67,6 +69,7 @@ wiregram chats mattermost alice                     # chat ID, title, kind, unre
 wiregram stream                                     # incoming messages, every account
 wiregram stream mattermost alice bob                # one account, or one chat
 wiregram send mattermost alice bob "On my way"      # or pipe the message on stdin
+wiregram dry-run mattermost alice bob               # the agent's reply, never sent
 wiregram reset                                      # sign out everywhere, delete all data
 ```
 

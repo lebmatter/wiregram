@@ -88,13 +88,17 @@ func (m settingsModel) applyPlugin(r pluginRow) (tea.Model, tea.Cmd) {
 	return m, m.edit.Focus()
 }
 
-// editKey types into a text setting; Enter saves it and Esc leaves it as it was.
+// editKey types into a plugin's or provider's text setting; Enter saves it and
+// Esc leaves it as it was.
 func (m settingsModel) editKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.editing = false
 	case "enter":
 		m.editing = false
+		if m.onProviders() {
+			return m.saveProviderField(strings.TrimSpace(textfmt.Plain(m.edit.Value())))
+		}
 		rows := m.pluginRows()
 		if m.sel >= len(rows) || rows[m.sel].setting < 0 {
 			return m, nil

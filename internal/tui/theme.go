@@ -20,7 +20,7 @@ type theme struct {
 	// mentionBg tints messages that mention the user.
 	mentionBg string
 	badgeFg   string
-	agent     string // replaces accent in agent mode
+	agent     string // marks Chat Agents: their icon, suggestions and messages
 }
 
 // themes is fixed; the first is the default. A new theme is one more entry.
@@ -70,11 +70,7 @@ type styles struct {
 }
 
 func newStyles(t theme) *styles {
-	return newAccentStyles(t, t.accent)
-}
-
-func newAccentStyles(t theme, accent string) *styles {
-	a, selBg := lipgloss.Color(accent), lipgloss.Color(t.selBg)
+	a, selBg := lipgloss.Color(t.accent), lipgloss.Color(t.selBg)
 	return &styles{
 		theme:       t,
 		accentColor: a,
@@ -92,7 +88,3 @@ func newAccentStyles(t theme, accent string) *styles {
 			BackgroundColor(lipgloss.Color(t.mentionBg)).String(),
 	}
 }
-
-// forAgents is the same theme with the agent colour as its accent, for agent
-// mode and its wizards.
-func (s *styles) forAgents() *styles { return newAccentStyles(s.theme, s.theme.agent) }

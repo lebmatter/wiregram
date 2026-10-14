@@ -59,9 +59,10 @@ internal/
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache
-  agent/             Chat Agents: agents, providers and message history
+  agent/             SQLite store for providers, per-account agents, their chats,
+                     history and sent-message record
   plugin/            Lua plugin VMs, their API and the built-in plugins
-  account/           account manager and the agent runtime
+  account/           account manager and the agent runtime, including dry runs
   tui/               BubbleTea screens and the account/mode loop
 docs/                this site
 skills/wiregram/     SKILL.md for AI agents using the CLI

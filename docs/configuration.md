@@ -10,7 +10,7 @@ Under `os.UserConfigDir()/wiregram/`, typically `~/.config/wiregram/` on Linux a
 
 | Path | Contents |
 |------|----------|
-| `wiregram.db` | Settings, accounts and their sessions, Chat Agents, the email cache and plugin data |
+| `wiregram.db` | Settings, accounts and their sessions, AI providers and Chat Agents, the email cache and plugin data |
 | `plugins/` | Your own [Lua plugins](/features/plugins) |
 | `accounts/whatsapp-*/` | WhatsApp's own session database, one directory per WhatsApp account |
 
@@ -33,7 +33,8 @@ Accounts are listed on the left, followed by:
 - **+ Add account…**: pick a network and sign in.
 - **Themes…**: pick a [theme](/features/themes).
 - **Plugins…**: switch [plugins](/features/plugins) on and off and edit their settings.
-- **Chat Agents…**: open [agents mode](/features/chat-agents).
+- **AI providers…**: add, edit and delete the providers
+  [Chat Agents](/features/chat-agents#ai-providers) use.
 - **Reset…**: sign out of every account and delete all local data, then start over as
   a fresh installation.
 - **Quit**
@@ -52,7 +53,8 @@ Select an account to see its settings on the right. Each is a row; <kbd>Enter</k
 ## Removing data
 
 **Remove account** logs out on the server when the account is online, then deletes its
-rows in `wiregram.db`, its Chat Agent binding and, for WhatsApp, its directory.
+rows in `wiregram.db`, its Chat Agent and the agent's sent-message record and, for
+WhatsApp, its directory.
 
 **Reset** does that for every account, then deletes the config and cache directories.
 It is also available as [`wiregram reset`](/features/cli#reset).

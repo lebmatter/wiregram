@@ -10,6 +10,7 @@ wiregram chats mattermost alice                     # chat ID, title, kind, unre
 wiregram stream                                     # incoming messages, every account
 wiregram stream mattermost alice bob                # one account, or one chat
 wiregram send mattermost alice bob "On my way"      # or pipe the message on stdin
+wiregram dry-run mattermost alice bob               # the agent's reply, never sent
 wiregram reset                                      # sign out everywhere, delete all data
 ```
 
@@ -86,6 +87,31 @@ wiregram send -reply p9x2… mattermost alice town-square "Thanks!"
 ```
 
 Pass text from elsewhere on stdin, so the shell never interprets it.
+
+## dry-run
+
+```sh
+wiregram dry-run [-message ID]... BACKEND ACCOUNT RECIPIENT
+```
+
+Prints the reply the account's [Chat Agent](/features/chat-agents) would give, without
+sending or recording anything. It answers the message `-message` names (repeat it for
+several), or the newest incoming message when none is given, with up to 20 earlier
+messages as history and the agent's prompt, knowledge and media mode. It works while the
+agent is paused, so you can test it before turning it on. `-message` goes before the
+positional arguments.
+
+```sh
+wiregram dry-run mattermost alice bob
+wiregram dry-run -message p9x2… -message q7d1… mattermost alice bob
+```
+```json
+{"agent":"Support Bot","chat":"8f3k…","chat_title":"bob","reply_to":"p9x2…",
+ "message":"are you coming?","reply":"Yes, in ten minutes."}
+```
+
+It refuses group chats, chats outside the agent's selected chats, your own messages, and
+media messages when the agent understands text only.
 
 ## reset
 

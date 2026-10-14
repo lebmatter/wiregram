@@ -15,8 +15,8 @@ import (
 // chatListModel is the sidebar tree: every account as a header, with the
 // active account expanded to its chats and the others collapsed above and
 // below it. Selection indexes run over the selectable rows in display order:
-// accounts above, chats, the action rows (Unread, Mentions, archive and
-// search), accounts below, then "Settings…".
+// accounts above, chats, the action rows (Unread, Mentions, archive, search
+// and the account's agent), accounts below, then "Settings…".
 type chatListModel struct {
 	st            *styles
 	ctx           context.Context
@@ -50,6 +50,7 @@ type chatListSearch struct{}
 type chatListUnread struct{}
 type chatListMentions struct{}
 type chatListArchiveToggle struct{}
+type chatListAgent struct{}
 type chatListDeleteDone struct{ err error }
 
 func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
@@ -75,6 +76,7 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 // listAction is a row under the chats and what Enter on it sends.
 type listAction struct {
 	entry backend.ChatEntry
+	mark  string
 	msg   tea.Msg
 }
 
@@ -83,16 +85,32 @@ func (m chatListModel) actions() []listAction {
 	for _, e := range m.entries {
 		unread.Unread += e.Unread
 	}
-	acts := []listAction{{unread, chatListUnread{}}}
+	acts := []listAction{{entry: unread, msg: chatListUnread{}}}
 	if m.mentions {
-		acts = append(acts, listAction{backend.ChatEntry{Title: "Mentions"}, chatListMentions{}})
+		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Mentions"},
+			msg: chatListMentions{}})
 	}
 	archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}
 	if m.archived {
 		archive = backend.ChatEntry{Title: "Back to chats"}
 	}
-	return append(acts, listAction{archive, chatListArchiveToggle{}},
-		listAction{backend.ChatEntry{Title: "Search…"}, chatListSearch{}})
+	acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}},
+		listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
+	if agentsAllowed(m.mgr, m.active) {
+		act := listAction{entry: backend.ChatEntry{Title: "New agent…"}, msg: chatListAgent{}}
+		if rec, ok := m.mgr.Agents.AgentFor(m.active); ok {
+			act.entry.Title = "Agent: " + rec.Name
+			act.mark = m.st.agentMark(rec.Enabled)
+		}
+		acts = append(acts, act)
+	}
+	return acts
+}
+
+// agentsAllowed reports whether the account can have a Chat Agent: agents
+// answer DMs, and email publishes none.
+func agentsAllowed(mgr *account.AccountManager, a *account.Account) bool {
+	return mgr != nil && mgr.Agents != nil && a != nil && a.BackendType != "email"
 }
 
 // others splits the accounts other than the active one into those listed
@@ -293,17 +311,23 @@ func (m chatListModel) accountRow(a *account.Account, expanded, selected, focuse
 	if !expanded && state.Unseen > 0 {
 		text += fmt.Sprintf(" (%d)", state.Unseen)
 	}
-	row := truncate(text, width)
-	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(row)))
+	mark := ""
+	if m.mgr.Agents != nil {
+		if rec, ok := m.mgr.Agents.AgentFor(a); ok {
+			mark = " " + m.st.agentMark(rec.Enabled)
+		}
+	}
+	row := truncate(text, width-textfmt.DisplayWidth(mark))
+	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(mark)-textfmt.DisplayWidth(row)))
 	switch {
 	case selected && focused:
-		return m.st.selectedRow.Render(row)
+		return m.st.selectedRow.Render(row) + mark
 	case selected:
-		return styleTitle.Render(row)
+		return styleTitle.Render(row) + mark
 	case expanded:
-		return styleTitle.Foreground(m.st.accentColor).Render(row)
+		return styleTitle.Foreground(m.st.accentColor).Render(row) + mark
 	}
-	return m.st.subtle.Render(row)
+	return m.st.subtle.Render(row) + mark
 }
 
 // body renders the tree rows for a width×height area.
@@ -318,8 +342,17 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	if m.active != nil {
 		rows = append(rows, m.accountRow(m.active, true, false, focused, width))
 	}
+	var pending map[backend.ChatID]bool
+	if m.mgr != nil && m.mgr.Agents != nil && m.active != nil {
+		pending = m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active))
+	}
 	for _, entry := range m.entries {
-		rows = append(rows, "    "+m.st.chatListLine(entry, index == m.selected, focused, max(1, width-4)))
+		mark := ""
+		if pending[entry.ID] {
+			mark = m.st.agent.Render(agentIcon)
+		}
+		rows = append(rows, "    "+m.st.chatListLine(entry, mark, index == m.selected, focused,
+			max(1, width-4)))
 		index++
 	}
 	if len(m.entries) == 0 {
@@ -328,7 +361,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
 
 	for _, a := range m.actions() {
-		line := m.st.chatListLine(a.entry, index == m.selected, focused, max(1, width-4))
+		line := m.st.chatListLine(a.entry, a.mark, index == m.selected, focused, max(1, width-4))
 		if index != m.selected {
 			line = m.st.subtle.Render(line)
 		}
@@ -339,7 +372,8 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
 		index++
 	}
-	manage := m.st.chatListLine(backend.ChatEntry{Title: "Settings…"}, index == m.selected, focused, width)
+	manage := m.st.chatListLine(backend.ChatEntry{Title: "Settings…"}, "", index == m.selected,
+		focused, width)
 	if index != m.selected {
 		manage = m.st.dim.Render(manage)
 	}
