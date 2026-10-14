@@ -16,13 +16,21 @@ Visit [wiregram.chat](https://wiregram.chat) for more info.
 
 - Download the [latest release](https://github.com/lebmatter/wiregram/releases/latest) for
   your platform, or see [wiregram.chat](https://wiregram.chat/#download).
-- `chmod +x wiregram-*` and run it in an interactive terminal.
+- `chmod +x wiregram-*` and run it in an interactive terminal (Windows needs no chmod).
 - Run `wiregram -h` for the shortcuts, or read the [docs](docs).
 
 ```sh
 curl -fLo wiregram https://github.com/lebmatter/wiregram/releases/latest/download/wiregram-linux-amd64
 chmod +x wiregram
 ./wiregram
+```
+
+On Windows, download `wiregram-windows-amd64.exe` (or `-arm64.exe`) and run it in
+[Windows Terminal](https://aka.ms/terminal):
+
+```powershell
+Invoke-WebRequest https://github.com/lebmatter/wiregram/releases/latest/download/wiregram-windows-amd64.exe -OutFile wiregram.exe
+.\wiregram.exe
 ```
 
 ### From source
@@ -46,8 +54,8 @@ make
   WhatsApp may ban numbers that use unofficial clients.
 - **Media** opens in `mpv` with `o`. Run Wiregram inside Kitty to see images inline.
   Or click a media message to download it to a private temp folder and open it in
-  your default app (`xdg-open`, or `open` on macOS). Hold Shift while dragging to
-  select text.
+  your default app (`xdg-open`, `open` on macOS, the default app on Windows). Hold
+  Shift while dragging to select text.
 
 ## Chat Agents
 

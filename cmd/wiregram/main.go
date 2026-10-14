@@ -60,7 +60,7 @@ Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
 message selects it; right-clicking it opens its actions. Clicking its
 attachment (the image or the [tag] row) downloads it and opens it with
-xdg-open (open on macOS). Hold Shift
+xdg-open (open on macOS, the default app on Windows). Hold Shift
 while dragging to select text with the terminal.
 
 Quitting, deleting a chat, message, agent or provider, removing an account

@@ -1652,7 +1652,7 @@ func screenRows[T any](rows []T, height int, blank T) []T {
 
 // openExternalCmd downloads the attachment into the media cache unless an
 // earlier click or inline image already did, then hands it to xdg-open (open
-// on macOS).
+// on macOS, rundll32 on Windows).
 func (m chatViewModel) openExternalCmd(sel backend.Message, dir, filename string) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
@@ -1661,15 +1661,18 @@ func (m chatViewModel) openExternalCmd(sel backend.Message, dir, filename string
 		if err != nil {
 			return mediaOpened{err: err}
 		}
-		opener := "xdg-open"
-		if runtime.GOOS == "darwin" {
+		opener, args := "xdg-open", []string{path}
+		switch runtime.GOOS {
+		case "darwin":
 			opener = "open"
+		case "windows":
+			opener, args = "rundll32", []string{"url.dll,FileProtocolHandler", path}
 		}
 		if _, err := exec.LookPath(opener); err != nil {
 			return mediaOpened{err: fmt.Errorf("install %s to open media", opener)}
 		}
 		// Not tied to ctx: the viewer should outlive a chat switch.
-		cmd := exec.Command(opener, path)
+		cmd := exec.Command(opener, args...)
 		if err := cmd.Start(); err != nil {
 			return mediaOpened{err: fmt.Errorf("run %s: %w", opener, err)}
 		}

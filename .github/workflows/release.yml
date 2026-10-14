@@ -22,10 +22,13 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 \
+            windows/amd64 windows/arm64; do
+            ext=""
+            [ "${target%/*}" = windows ] && ext=.exe
             GOOS=${target%/*} GOARCH=${target#*/} go build -buildvcs=false -trimpath \
               -ldflags "-s -w" \
-              -o "dist/wiregram-${target%/*}-${target#*/}" ./cmd/wiregram
+              -o "dist/wiregram-${target%/*}-${target#*/}${ext}" ./cmd/wiregram
           done
 
       # Fixed names, so latest/download links work like the binaries'.

@@ -206,11 +206,14 @@ func googleSignIn(ctx context.Context, prompt config.PromptFunc, email string) (
 }
 
 func openBrowser(link string) {
-	opener := "xdg-open"
-	if runtime.GOOS == "darwin" {
+	opener, args := "xdg-open", []string{link}
+	switch runtime.GOOS {
+	case "darwin":
 		opener = "open"
+	case "windows":
+		opener, args = "rundll32", []string{"url.dll,FileProtocolHandler", link}
 	}
-	cmd := exec.Command(opener, link)
+	cmd := exec.Command(opener, args...)
 	if cmd.Start() == nil {
 		go cmd.Wait()
 	}
