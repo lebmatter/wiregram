@@ -9,7 +9,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 5
+const currentDBVersion = 6
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -138,6 +138,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV5Rules)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV6)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -158,6 +162,19 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV6 records the agents registered as bots on their network, with the
+// token each signs in with.
+const schemaV6 = `
+CREATE TABLE agent_registrations (
+	agent_id    INTEGER PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+	bot_user_id TEXT NOT NULL,
+	username    TEXT NOT NULL,
+	token_id    TEXT NOT NULL,
+	token       TEXT NOT NULL,
+	created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`
 
 // schemaV5 lets an account have several agents, each DM answered by at most
 // one of them, and gives every agent a handle.
@@ -661,6 +678,45 @@ func (d *AgentDB) SetAgentChats(agentID int64, all bool, chats []AgentChat) erro
 		}
 	}
 	return tx.Commit()
+}
+
+// Registrations maps each agent registered as a bot to its bot account.
+func (d *AgentDB) Registrations() (map[int64]backend.BotAccount, error) {
+	rows, err := d.db.Query(
+		`SELECT agent_id, bot_user_id, username, token_id, token FROM agent_registrations`)
+	if err != nil {
+		return nil, fmt.Errorf("list bot registrations: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]backend.BotAccount)
+	for rows.Next() {
+		var id int64
+		var b backend.BotAccount
+		if err := rows.Scan(&id, &b.UserID, &b.Username, &b.TokenID, &b.Token); err != nil {
+			return nil, fmt.Errorf("scan bot registration: %w", err)
+		}
+		out[id] = b
+	}
+	return out, rows.Err()
+}
+
+// SetRegistration records the agent's bot account, replacing any before.
+func (d *AgentDB) SetRegistration(agentID int64, b backend.BotAccount) error {
+	_, err := d.db.Exec(`INSERT OR REPLACE INTO agent_registrations
+		(agent_id, bot_user_id, username, token_id, token) VALUES (?, ?, ?, ?, ?)`,
+		agentID, b.UserID, b.Username, b.TokenID, b.Token)
+	if err != nil {
+		return fmt.Errorf("save bot registration: %w", err)
+	}
+	return nil
+}
+
+func (d *AgentDB) DeleteRegistration(agentID int64) error {
+	if _, err := d.db.Exec(`DELETE FROM agent_registrations WHERE agent_id = ?`,
+		agentID); err != nil {
+		return fmt.Errorf("delete bot registration: %w", err)
+	}
+	return nil
 }
 
 // DeleteAccount drops the account's agent and the record of what it sent.

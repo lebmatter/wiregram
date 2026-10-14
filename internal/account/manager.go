@@ -439,15 +439,23 @@ func (m *AccountManager) AddWhatsApp() (*Account, error) {
 	return a, nil
 }
 
-// Remove signs the account out on its server when it is online, then deletes
-// its local data and its agent. The local data goes even when the
+// Remove disables the account's registered bots and signs it out on its
+// server when it is online, then deletes its local data and its bots. The local data goes even when the
 // server logout fails; that failure is returned.
 func (m *AccountManager) Remove(ctx context.Context, a *Account) error {
 	var logoutErr error
 	s := a.Snapshot()
+	if m.Agents != nil && s.Status == "online" {
+		// Before the logout, while the account may still manage its bots.
+		bctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		logoutErr = m.Agents.UnregisterAccount(bctx, a)
+		cancel()
+	}
 	if lb, ok := s.Backend.(backend.LogoutBackend); ok && s.Status == "online" {
 		lctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		logoutErr = lb.Logout(lctx)
+		if err := lb.Logout(lctx); err != nil {
+			logoutErr = err
+		}
 		cancel()
 	}
 	key := m.AccountKey(a)
@@ -459,7 +467,7 @@ func (m *AccountManager) Remove(ctx context.Context, a *Account) error {
 		m.Agents.Reload()
 	}
 	if logoutErr != nil {
-		return fmt.Errorf("removed locally, but server logout failed: %w", logoutErr)
+		return fmt.Errorf("removed locally, but the server cleanup failed: %w", logoutErr)
 	}
 	return nil
 }

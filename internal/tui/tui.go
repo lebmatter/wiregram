@@ -301,6 +301,14 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m = m.closeChat()
 		return m, nil
 
+	case agentBotDone:
+		if !m.agentOpen {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.agentPane, cmd = m.agentPane.Update(msg)
+		return m, cmd
+
 	case wizardFinished:
 		return m.agentCreated(msg.answers)
 

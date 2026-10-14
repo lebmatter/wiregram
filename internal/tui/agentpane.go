@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
@@ -32,6 +34,9 @@ const (
 	fieldReplies
 	fieldRetention
 	fieldChats
+	fieldBotAccount // registering on the network, where the backend can
+	fieldRotate     // these two only while registered
+	fieldUnregister
 	fieldDelete
 )
 
@@ -52,6 +57,8 @@ type agentPaneModel struct {
 	edit      textinput.Model
 	editing   bool
 	confirm   *confirmModal
+	confirmOf agentField // the row the confirm modal goes ahead with
+	busy      bool       // a request to the server is running
 	picker    *dmPicker
 	notice    string
 	width     int
@@ -59,6 +66,18 @@ type agentPaneModel struct {
 }
 
 type agentPaneClosed struct{}
+
+// agentBotDone ends a request to the server about the bot: done is the
+// notice on success, and rec, when set, is the record to save after it.
+type agentBotDone struct {
+	err  error
+	done string
+	rec  *agent.AgentRecord
+	gone bool // the bot was deleted; close the pane
+}
+
+// botTimeout bounds a request to the server about a bot.
+const botTimeout = 30 * time.Second
 
 // agentPaneHeader is how many lines sit above the rows: the status line and a gap.
 const agentPaneHeader = 2
@@ -94,11 +113,50 @@ func (m agentPaneModel) resized(width, height int) agentPaneModel {
 }
 
 func (m agentPaneModel) rows() []agentRow {
+	_, registered := m.mgr.Agents.Registration(m.rec.ID)
 	var rows []agentRow
 	for f := fieldStatus; f <= fieldDelete; f++ {
+		switch {
+		case f == fieldBotAccount && !registered && !m.mgr.Agents.CanRegister(m.acct),
+			(f == fieldRotate || f == fieldUnregister) && !registered:
+			continue
+		}
 		rows = append(rows, agentRow{field: f})
 	}
 	return rows
+}
+
+// botOp runs a request to the server about the bot in the background.
+func (m agentPaneModel) botOp(notice string, op func(ctx context.Context) agentBotDone) (
+	agentPaneModel, tea.Cmd) {
+	m.busy, m.notice = true, notice
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), botTimeout)
+		defer cancel()
+		return op(ctx)
+	}
+}
+
+// botDone shows how a request to the server ended.
+func (m agentPaneModel) botDone(msg agentBotDone) (agentPaneModel, tea.Cmd) {
+	m.busy = false
+	if msg.err != nil {
+		m.notice = textfmt.CleanError(msg.err)
+		return m, nil
+	}
+	if msg.gone {
+		return m, func() tea.Msg { return agentPaneClosed{} }
+	}
+	if msg.rec != nil {
+		m.rec = *msg.rec
+		m = m.save()
+		if strings.HasPrefix(m.notice, "Saved") {
+			m.notice = msg.done
+		}
+		return m, nil
+	}
+	m.notice = msg.done
+	return m, nil
 }
 
 func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
@@ -114,6 +172,8 @@ func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		return m.key(msg)
+	case agentBotDone:
+		return m.botDone(msg)
 	}
 	return m, nil
 }
@@ -136,10 +196,18 @@ func (m agentPaneModel) key(msg tea.KeyPressMsg) (agentPaneModel, tea.Cmd) {
 			return m, nil
 		}
 		m.confirm = nil
-		if yes {
-			return m.deleteAgent()
+		if !yes {
+			return m, nil
 		}
-		return m, nil
+		switch m.confirmOf {
+		case fieldBotAccount:
+			return m.register()
+		case fieldRotate:
+			return m.rotate()
+		case fieldUnregister:
+			return m.unregister()
+		}
+		return m.deleteAgent()
 	}
 	if m.editing {
 		switch k {
@@ -147,13 +215,16 @@ func (m agentPaneModel) key(msg tea.KeyPressMsg) (agentPaneModel, tea.Cmd) {
 			m.editing = false
 		case "enter":
 			m.editing = false
-			return m.saveText(strings.TrimSpace(textfmt.Plain(m.edit.Value()))), nil
+			return m.saveText(strings.TrimSpace(textfmt.Plain(m.edit.Value())))
 		default:
 			var cmd tea.Cmd
 			m.edit, cmd = m.edit.Update(msg)
 			return m, cmd
 		}
 		return m, nil
+	}
+	if m.busy {
+		return m, nil // wait for the server
 	}
 	m.notice = ""
 	rows := m.rows()
@@ -202,10 +273,26 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		m.rec.RetentionDays = days
 	case fieldChats:
 		return m.openPicker(), nil
+	case fieldBotAccount:
+		if _, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
+			return m, nil
+		}
+		m.confirm = newConfirmModal(m.st, "Register bot", "Create @"+m.rec.Handle+
+			" on "+accountLabel(m.acct)+"? People can then message it, and "+
+			textfmt.Plain(m.rec.Name)+" answers them as the bot.", "Register", false)
+	case fieldRotate:
+		m.confirm = newConfirmModal(m.st, "Rotate token",
+			"Give @"+m.rec.Handle+" a new token and revoke the old one?", "Rotate", false)
+	case fieldUnregister:
+		m.confirm = newConfirmModal(m.st, "Unregister bot", "Disable @"+m.rec.Handle+
+			" on the server? It stops answering its messages; you can register it again.",
+			"Unregister", true)
 	case fieldDelete:
-		m.confirm = newConfirmModal(m.st, "Delete bot",
-			"Delete bot "+textfmt.Plain(m.rec.Name)+" and its history?", "Delete", true)
-		return m, nil
+		question := "Delete bot " + textfmt.Plain(m.rec.Name) + " and its history?"
+		if _, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
+			question += " @" + m.rec.Handle + " is disabled on the server too."
+		}
+		m.confirm = newConfirmModal(m.st, "Delete bot", question, "Delete", true)
 	default:
 		in := textinput.New()
 		in.Prompt = ""
@@ -214,6 +301,10 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		in.CursorEnd()
 		m.edit, m.editing = in, true
 		return m, m.edit.Focus()
+	}
+	if r.field >= fieldBotAccount && r.field <= fieldDelete {
+		m.confirmOf = r.field
+		return m, nil
 	}
 	return m.save(), nil
 }
@@ -252,46 +343,92 @@ func (m agentPaneModel) text(f agentField) string {
 	return ""
 }
 
-func (m agentPaneModel) saveText(v string) agentPaneModel {
+func (m agentPaneModel) saveText(v string) (agentPaneModel, tea.Cmd) {
 	rows := m.rows()
 	if m.sel >= len(rows) {
-		return m
+		return m, nil
 	}
 	switch rows[m.sel].field {
 	case fieldName, fieldModel:
 		if v == "" {
 			m.notice = "That field needs a value"
-			return m
+			return m, nil
 		}
-		if rows[m.sel].field == fieldName {
-			m.rec.Name = v
-		} else {
+		if rows[m.sel].field == fieldModel {
 			m.rec.Model = v
+			break
 		}
+		next := m.rec
+		next.Name = v
+		return m.rename(next)
 	case fieldHandle:
 		v = strings.TrimPrefix(strings.ToLower(v), "@")
 		if err := agent.ValidHandle(v); err != nil {
 			m.notice = err.Error()
-			return m
+			return m, nil
 		}
-		m.rec.Handle = v
+		next := m.rec
+		next.Handle = v
+		return m.rename(next)
 	case fieldPrompt:
 		m.rec.Prompt = v
 	case fieldKnowledge:
 		if err := checkKnowledge(m.mgr.Dir, v); err != nil {
 			m.notice = err.Error()
-			return m
+			return m, nil
 		}
 		if err := m.mgr.Agents.Db.SetAgentKnowledge(m.rec.ID, splitList(v)); err != nil {
 			m.notice = textfmt.CleanError(err)
-			return m
+			return m, nil
 		}
 		m.knowledge = splitList(v)
 		m.mgr.Agents.Reload()
 		m.notice = "Saved"
-		return m
+		return m, nil
 	}
-	return m.save()
+	return m.save(), nil
+}
+
+// rename saves a new name or handle; a registered bot is renamed on the
+// server first, so the two never disagree.
+func (m agentPaneModel) rename(next agent.AgentRecord) (agentPaneModel, tea.Cmd) {
+	if _, ok := m.mgr.Agents.Registration(m.rec.ID); !ok {
+		m.rec = next
+		return m.save(), nil
+	}
+	for _, other := range m.mgr.Agents.AgentsFor(m.acct) {
+		if other.ID != next.ID && other.Handle == next.Handle {
+			m.notice = "@" + next.Handle + " is used by bot " + textfmt.Plain(other.Name)
+			return m, nil
+		}
+	}
+	rt, acct := m.mgr.Agents, m.acct
+	return m.botOp("Renaming on the server…", func(ctx context.Context) agentBotDone {
+		err := rt.Rename(ctx, acct, next.ID, next.Handle, next.Name)
+		return agentBotDone{err: err, done: "Renamed", rec: &next}
+	})
+}
+
+func (m agentPaneModel) register() (agentPaneModel, tea.Cmd) {
+	rt, acct, id, handle := m.mgr.Agents, m.acct, m.rec.ID, m.rec.Handle
+	return m.botOp("Registering @"+handle+"…", func(ctx context.Context) agentBotDone {
+		err := rt.Register(ctx, acct, id)
+		return agentBotDone{err: err, done: "Registered @" + handle}
+	})
+}
+
+func (m agentPaneModel) rotate() (agentPaneModel, tea.Cmd) {
+	rt, acct, id := m.mgr.Agents, m.acct, m.rec.ID
+	return m.botOp("Rotating the token…", func(ctx context.Context) agentBotDone {
+		return agentBotDone{err: rt.RotateToken(ctx, acct, id), done: "New token in use"}
+	})
+}
+
+func (m agentPaneModel) unregister() (agentPaneModel, tea.Cmd) {
+	rt, acct, id, handle := m.mgr.Agents, m.acct, m.rec.ID, m.rec.Handle
+	return m.botOp("Unregistering @"+handle+"…", func(ctx context.Context) agentBotDone {
+		return agentBotDone{err: rt.Unregister(ctx, acct, id), done: "@" + handle + " disabled"}
+	})
 }
 
 func (m agentPaneModel) save() agentPaneModel {
@@ -361,12 +498,28 @@ func (m agentPaneModel) saveChats() agentPaneModel {
 }
 
 func (m agentPaneModel) deleteAgent() (agentPaneModel, tea.Cmd) {
-	if err := m.mgr.Agents.Db.DeleteAgent(m.rec.ID); err != nil {
-		m.notice = textfmt.CleanError(err)
-		return m, nil
+	rt, acct, id := m.mgr.Agents, m.acct, m.rec.ID
+	del := func() error {
+		if err := rt.Db.DeleteAgent(id); err != nil {
+			return err
+		}
+		rt.Reload()
+		return nil
 	}
-	m.mgr.Agents.Reload()
-	return m, func() tea.Msg { return agentPaneClosed{} }
+	if _, ok := rt.Registration(id); !ok {
+		if err := del(); err != nil {
+			m.notice = textfmt.CleanError(err)
+			return m, nil
+		}
+		return m, func() tea.Msg { return agentPaneClosed{} }
+	}
+	// The server goes first: a deleted bot would leave no way to disable it.
+	return m.botOp("Disabling the bot on the server…", func(ctx context.Context) agentBotDone {
+		if err := rt.Unregister(ctx, acct, id); err != nil {
+			return agentBotDone{err: fmt.Errorf("not deleted, the server said: %w", err)}
+		}
+		return agentBotDone{err: del(), gone: true}
+	})
 }
 
 func (m agentPaneModel) provider() agent.AgentProvider {
@@ -406,6 +559,15 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 		return "Replies", on(m.rec.Auto, "automatically", "ask me first")
 	case fieldRetention:
 		return "History", fmt.Sprintf("%d days", m.rec.RetentionDays)
+	case fieldBotAccount:
+		if bot, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
+			return "Bot account", "@" + bot.Username + " on " + accountLabel(m.acct)
+		}
+		return "Bot account", "not registered: Register…"
+	case fieldRotate:
+		return "Rotate token…", ""
+	case fieldUnregister:
+		return styleError.Render("Unregister…"), ""
 	case fieldChats:
 		switch {
 		case m.rec.AllChats:
@@ -421,6 +583,14 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 func (m agentPaneModel) view(focused bool) string {
 	inner, height := m.width-4, m.height-2
 	status := "Answers its private chats as you; never groups or channels."
+	if bot, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
+		status = "Answers its private chats as you, and messages to @" + bot.Username +
+			" as the bot; never groups or channels."
+		if n := m.mgr.Agents.InboxWaiting(m.rec.ID); n > 0 {
+			status = fmt.Sprintf("%d %s to @%s waiting for approval.", n,
+				plural(n, "reply", "replies"), bot.Username)
+		}
+	}
 	if problem := m.mgr.Agents.Problem(m.rec.ID); problem != "" {
 		status = styleError.Render(textfmt.ClipLine("Last reply failed: "+problem, inner))
 	} else {

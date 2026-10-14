@@ -247,6 +247,30 @@ type QuoteFetcher interface {
 	Messages(ctx context.Context, ch ChatEntry, ids []string) ([]Message, error)
 }
 
+// BotRegistrar is implemented by backends whose account can create bot
+// accounts on the network, so a wiregram bot can reply as itself.
+type BotRegistrar interface {
+	// RegisterBot creates the bot, or takes back one of the user's own that
+	// was unregistered, and issues it a token.
+	RegisterBot(ctx context.Context, username, displayName string) (BotAccount, error)
+	// RenameBot changes a registered bot's username and display name.
+	RenameBot(ctx context.Context, bot BotAccount, username, displayName string) error
+	// RotateBotToken issues a new token and revokes the old one.
+	RotateBotToken(ctx context.Context, bot BotAccount) (BotAccount, error)
+	// UnregisterBot revokes the bot's token and disables it.
+	UnregisterBot(ctx context.Context, bot BotAccount) error
+	// ConnectBot signs in as the bot; the caller runs the returned backend.
+	ConnectBot(ctx context.Context, bot BotAccount) (Backend, error)
+}
+
+// BotAccount is a bot registered on the network and the token it signs in with.
+type BotAccount struct {
+	UserID   string
+	Username string
+	TokenID  string
+	Token    string
+}
+
 // ThreadFetcher is implemented by backends that keep threads on the server,
 // so the thread pane can show replies older than the loaded history.
 type ThreadFetcher interface {

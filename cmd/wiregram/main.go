@@ -221,7 +221,9 @@ Keyboard shortcuts:
   Bot (a row in the Bots section)
     Up/k, Down/j      Select a setting: status, name, @handle, provider,
                       model, prompt, knowledge files, media, replies (ask me
-                      first or automatically), history, chats, delete
+                      first or automatically), history, chats, bot account
+                      (Mattermost: Register… creates @handle on the server,
+                      then Rotate token… and Unregister…), delete
     Enter, Space      Change it; text opens for typing (Enter saves, Esc
                       cancels); Chats opens the chat picker
     Esc, Left/h       Back

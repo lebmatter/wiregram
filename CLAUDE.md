@@ -232,6 +232,14 @@ These are project constraints, not suggestions:
   server threads (`backend.ThreadFetcher`) a bot answers in the message's own thread, with
   the thread as context (`replyTarget`); elsewhere it quotes the message.
   `wiregram dry-run` drafts the owning bot's reply without sending (`agentRuntime.DryRun`).
+- A bot can be registered on its network where the backend implements
+  `backend.BotRegistrar` (Mattermost): Register… creates `@handle` as a bot the user owns and
+  stores its token in `agent_registrations`. The runtime signs each enabled, registered bot
+  in with `ConnectBot` (`internal/account/bots.go`) and answers DMs sent to the bot as the
+  bot (`ConvKey.Bot`); every DM to the bot is its own, outside the claims rule. Renames go
+  to the server first; deleting the bot or removing its account disables it there first.
+  Messages from other bots are never answered. Approving inbox replies needs the bot inbox,
+  not built yet.
 - Wizards (`internal/tui/wizard.go`) take fixed options or typed values only, never free
   chat with a model. Adding an account (network, server URL), an AI provider or a bot,
   and the sign-in prompts are form modals centred over

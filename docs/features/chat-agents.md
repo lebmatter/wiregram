@@ -96,7 +96,9 @@ some, a new bot starts with none and its chat picker opens right away.
 | Replies | ask me first, or automatically |
 | History | 7, 30 or 90 days |
 | Chats | all private chats, or N selected; opens the chat picker |
-| Delete bot… | asks first, starting on Cancel |
+| Bot account | Mattermost only: not registered (Register…), or `@handle on` the account |
+| Rotate token…, Unregister… | while registered; each asks first |
+| Delete bot… | asks first, starting on Cancel; a registered bot is disabled on the server first |
 
 If the last reply failed, a line on top says why. <kbd>Esc</kbd> goes back, and
 <kbd>Tab</kbd> moves focus as usual.
@@ -134,6 +136,30 @@ In the sidebar a violet ✦ follows the account's name (dim while all its bots a
 and the account chooser shows it beside the bots' names. Each private chat a bot answers
 while on gets a ✦ before its title.
 
+## Registering a bot on Mattermost
+
+A bot can also get an account of its own on the Mattermost server, so people can message
+it directly. Your account needs the permission to manage bots, and the server must allow
+bot accounts.
+
+- **Register…** on the Bot account row creates `@handle` on the server as a bot you own,
+  with the bot's Name as its display name, and gives it an access token. If the handle is
+  taken, change it and register again; one of your own bots unregistered earlier is taken
+  back instead.
+- While wiregram runs and the bot is on, it signs in as the bot and answers the private
+  messages people send to `@handle`, as the bot, with the same prompt, provider and reply
+  mode. Messages from other bots are never answered.
+- Renaming a registered bot's Name or Handle renames it on the server first.
+- **Rotate token…** issues a new token and revokes the old one. **Unregister…** revokes the
+  token and disables the bot on the server; you can register it again later.
+- Deleting a registered bot, or removing its account, disables it on the server first.
+
+With **Ask me first**, replies to messages sent to the bot wait for approval; the bot pane
+counts them. They can't be approved from wiregram yet: the bot's own inbox comes next.
+
+The token is kept in `wiregram.db` and never shown. Telegram registration is planned
+through Telegram's managed bots.
+
 ## Approving replies
 
 With **Ask me first**, a chat whose bot has a reply waiting gets a ✦ before its title in
@@ -167,8 +193,8 @@ wiregram dry-run mattermost alice bob
 
 ## Storage
 
-Providers, bots, their chats, conversation history and the record of sent messages are
-kept in `wiregram.db`, which also enforces that no private chat has two bots and no two
+Providers, bots, their chats, registrations and tokens, conversation history and the record
+of sent messages are kept in `wiregram.db`, which also enforces that no private chat has two bots and no two
 bots of an account share a handle. The sent-message record outlives the history setting.
 Removing an account deletes its bots and that record.
 

@@ -50,11 +50,12 @@ const (
 )
 
 // ConvKey names one agent conversation: an agent, the account it answers on
-// and the DM.
+// and the DM, which is the bot's own when Bot is set.
 type ConvKey struct {
 	AgentID    int64
 	AccountKey string
 	Chat       backend.ChatID
+	Bot        bool // a DM to the registered bot, answered as the bot
 }
 
 // Suggestion is a reply drafted in suggest mode, waiting for approval.
@@ -96,6 +97,8 @@ type agentRuntime struct {
 	agents     map[int64]*runningAgent        // enabled agents only
 	records    map[string][]agent.AgentRecord // account key → agents, paused ones too
 	claims     map[string]agent.ChatClaims    // account key → which agent answers each DM
+	regs       map[int64]backend.BotAccount   // agents registered as bots on their network
+	bots       map[int64]*botConn             // live connections of registered bots
 	problems   map[int64]string               // last failure per agent, one plain line
 	pending    map[ConvKey]Suggestion
 	workers    map[ConvKey]*convWorker
@@ -115,6 +118,8 @@ func NewAgentRuntime(ctx context.Context, db *agent.AgentDB, mgr *AccountManager
 		agents:     make(map[int64]*runningAgent),
 		records:    make(map[string][]agent.AgentRecord),
 		claims:     make(map[string]agent.ChatClaims),
+		regs:       make(map[int64]backend.BotAccount),
+		bots:       make(map[int64]*botConn),
 		problems:   make(map[int64]string),
 		pending:    make(map[ConvKey]Suggestion),
 		workers:    make(map[ConvKey]*convWorker),
@@ -139,6 +144,10 @@ func (rt *agentRuntime) Stop() {
 		b.sub.Close()
 	}
 	rt.subscribed = make(map[*Account]*binding)
+	for id, c := range rt.bots {
+		c.cancel()
+		delete(rt.bots, id)
+	}
 	rt.mu.Unlock()
 	rt.wg.Wait()
 }
@@ -200,6 +209,10 @@ func (rt *agentRuntime) Reload() {
 	if err != nil {
 		return
 	}
+	regs, err := rt.Db.Registrations()
+	if err != nil {
+		return
+	}
 	agents := make(map[int64]*runningAgent)
 	records := make(map[string][]agent.AgentRecord)
 	claims := make(map[string]agent.ChatClaims)
@@ -222,7 +235,7 @@ func (rt *agentRuntime) Reload() {
 		agents[rec.ID] = &runningAgent{record: rec, provider: prov}
 	}
 	rt.mu.Lock()
-	rt.agents, rt.records, rt.claims = agents, records, claims
+	rt.agents, rt.records, rt.claims, rt.regs = agents, records, claims, regs
 	for id := range rt.problems {
 		if agents[id] == nil {
 			delete(rt.problems, id)
@@ -235,6 +248,7 @@ func (rt *agentRuntime) Reload() {
 	}
 	rt.mu.Unlock()
 	rt.syncSubscriptions()
+	rt.syncBots()
 	rt.notify()
 }
 
@@ -294,6 +308,7 @@ func (rt *agentRuntime) watchAccounts() {
 			return
 		case <-rt.mgr.agentChanged:
 			rt.syncSubscriptions()
+			rt.syncBots()
 		}
 	}
 }
@@ -331,29 +346,45 @@ func messageText(msg backend.Message) string {
 	return msg.MediaLabel + " — " + text
 }
 
-func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.Event) {
-	// The subscription filter already guarantees this; it is checked again
-	// because answering in a group would be far worse than a wasted check.
+// dmText is the DM message an event carries and what the agent sees of it.
+// The subscription filter already guarantees a DM; it is checked again
+// because answering in a group would be far worse than a wasted check.
+func dmText(ev backend.Event) (backend.Message, string, bool) {
 	if ev.Kind != backend.EventMessage || ev.Message == nil || !ev.DM || ev.Message.ViaBot {
-		return
+		return backend.Message{}, "", false
 	}
-	msg := *ev.Message
-	text := messageText(msg)
-	if text == "" {
+	text := messageText(*ev.Message)
+	return *ev.Message, text, text != ""
+}
+
+func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.Event) {
+	msg, text, ok := dmText(ev)
+	if !ok {
 		return
 	}
 	rt.mu.Lock()
 	ag := rt.agents[rt.claims[accountKey].Owner(ev.Chat.Id)]
 	rt.mu.Unlock()
-	if ag == nil || (ag.record.TextOnly() && msg.MediaLabel != "") {
+	if ag == nil {
 		return
 	}
-	key := ConvKey{AgentID: ag.record.ID, AccountKey: accountKey, Chat: ev.Chat}
+	rt.enqueue(acct, ConvKey{AgentID: ag.record.ID, AccountKey: accountKey, Chat: ev.Chat},
+		ag, msg, text)
+}
+
+// enqueue logs a DM message for the agent and, when it is incoming, wakes
+// the conversation's worker to answer it.
+func (rt *agentRuntime) enqueue(acct *Account, key ConvKey, ag *runningAgent,
+	msg backend.Message, text string) {
+	if ag.record.TextOnly() && msg.MediaLabel != "" {
+		return
+	}
 	title := ""
 	if !msg.Outgoing {
 		title = msg.Sender
 	}
-	if err := rt.Db.LogMessage(key.AgentID, ev.Chat.Backend, accountKey, ev.Chat.Id, title, msg, text, false); err != nil {
+	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id,
+		title, msg, text, false); err != nil {
 		rt.fail(key.AgentID, err)
 		return
 	}
@@ -445,14 +476,14 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 	if len(history) == 0 || history[len(history)-1].Outgoing {
 		return
 	}
-	s := acct.Snapshot()
-	if s.Backend == nil {
+	b := rt.backendFor(acct, key)
+	if b == nil {
 		return
 	}
-	root := threadRoot(s.Backend, trigger)
+	root := threadRoot(b, trigger)
 	var entry backend.ChatEntry
 	if ag.record.Auto || root != "" {
-		entry, err = rt.findChat(s.Backend, key.Chat)
+		entry, err = rt.findChat(b, key.Chat)
 		if err != nil {
 			rt.fail(key.AgentID, err)
 			return
@@ -460,7 +491,7 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 	}
 	if root != "" {
 		// A thread is its own conversation: answer from it, not the whole chat.
-		thread, err := rt.threadHistory(s.Backend, entry, root, ag.record, "")
+		thread, err := rt.threadHistory(b, entry, root, ag.record, "")
 		if err != nil {
 			rt.fail(key.AgentID, err)
 			return
@@ -471,7 +502,7 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		history = thread
 	}
 	if ag.record.Auto {
-		s.Backend.SetTyping(rt.ctx, entry)
+		b.SetTyping(rt.ctx, entry)
 	}
 	messages, err := rt.buildMessages(ag, history)
 	if err != nil {
@@ -479,7 +510,7 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		return
 	}
 	if ag.record.Vision() {
-		if err := rt.attachPhoto(s.Backend, trigger, messages); err != nil {
+		if err := rt.attachPhoto(b, trigger, messages); err != nil {
 			rt.fail(key.AgentID, err)
 			return
 		}
@@ -490,14 +521,14 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		return
 	}
 	if ag.record.Auto {
-		if err := rt.send(s.Backend, entry, key, ag.record.Name, reply, replyTarget(s.Backend, trigger)); err != nil {
+		if err := rt.send(b, entry, key, ag.record.Name, reply, replyTarget(b, trigger)); err != nil {
 			rt.fail(key.AgentID, err)
 			return
 		}
 	} else {
 		rt.mu.Lock()
 		rt.pending[key] = Suggestion{ChatTitle: trigger.Sender, Text: reply,
-			ReplyTo: replyTarget(s.Backend, trigger), At: time.Now()}
+			ReplyTo: replyTarget(b, trigger), At: time.Now()}
 		rt.mu.Unlock()
 	}
 	rt.mu.Lock()
@@ -839,11 +870,14 @@ func (rt *agentRuntime) Approve(key ConvKey) error {
 	if acct == nil {
 		return fmt.Errorf("that account has been removed")
 	}
-	s := acct.Snapshot()
-	if s.Backend == nil || s.Status != "online" {
+	if s := acct.Snapshot(); s.Backend == nil || s.Status != "online" {
 		return fmt.Errorf("that account is offline")
 	}
-	entry, err := rt.findChat(s.Backend, key.Chat)
+	b := rt.backendFor(acct, key)
+	if b == nil {
+		return fmt.Errorf("the bot is not connected")
+	}
+	entry, err := rt.findChat(b, key.Chat)
 	if err != nil {
 		return err
 	}
@@ -852,7 +886,7 @@ func (rt *agentRuntime) Approve(key ConvKey) error {
 		return fmt.Errorf("that bot has been deleted")
 	}
 	name := rec.Name
-	if err := rt.send(s.Backend, entry, key, name, sug.Text, sug.ReplyTo); err != nil {
+	if err := rt.send(b, entry, key, name, sug.Text, sug.ReplyTo); err != nil {
 		return err
 	}
 	rt.Discard(key)
