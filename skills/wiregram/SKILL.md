@@ -53,7 +53,7 @@ wiregram send -reply p9x2… mattermost alice town-square "Thanks!"     # reply 
 
 ## Testing the user's bots
 
-An account can have several bots (Chat Agents, set up by the user in the
+An account can have several AI powered chat bots (set up by the user in the
 app), each answering its own private chats; no chat has two. `dry-run`
 prints the reply the bot answering the chat would give, without sending or
 recording anything. It works while the bot is paused.

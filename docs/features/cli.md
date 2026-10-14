@@ -1,6 +1,6 @@
 # CLI
 
-Besides the TUI, Wiregram has commands for scripts and AI agents. They print
+Besides the TUI, Wiregram has commands for scripts and AI coding tools. They print
 [JSON Lines](https://jsonlines.org): one JSON object per line on stdout. Errors are one
 plain line on stderr with exit status 1.
 
@@ -94,7 +94,7 @@ Pass text from elsewhere on stdin, so the shell never interprets it.
 wiregram dry-run [-message ID]... BACKEND ACCOUNT RECIPIENT
 ```
 
-Prints the reply the [bot](/features/chat-agents) answering the chat would give, without
+Prints the reply the [bot](/features/chat-bots) answering the chat would give, without
 sending or recording anything. It answers the message `-message` names (repeat it for
 several), or the newest incoming message when none is given, with up to 20 earlier
 messages as history and the bot's prompt, knowledge and media mode. It works while the
@@ -134,8 +134,8 @@ wiregram stream mattermost alice | while IFS= read -r line; do
 done
 ```
 
-## For AI agents
+## For AI coding tools
 
 [`skills/wiregram/SKILL.md`](https://github.com/lebmatter/wiregram/blob/main/skills/wiregram/SKILL.md)
-teaches coding agents to use these commands. Point your agent at it, or install it as a
+teaches AI coding tools to use these commands. Point yours at it, or install it as a
 skill.

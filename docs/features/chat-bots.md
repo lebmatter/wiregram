@@ -1,10 +1,11 @@
-# Bots
+# AI Powered Chat Bots
 
-Bots are optional AI helpers that answer **incoming private messages** for an account,
-as you. An account can have several, each answering its own private chats. They work
-with any OpenAI-compatible API.
+AI powered chat bots are optional helpers that answer **incoming private messages** for an
+account, as you. An account can have several, each answering its own private chats, and
+a bot can also be registered on Mattermost or Telegram as a bot account of its own that
+people message directly. They work with any OpenAI-compatible API.
 
-<img class="wg-shot" src="/img/agent-pane.png" alt="A bot's settings">
+<img class="wg-shot" src="/img/bot-pane.png" alt="A bot's settings">
 
 ::: warning Your messages go to the provider
 Every conversation a bot answers is sent to the AI provider you configure.
@@ -241,6 +242,6 @@ bots of an account share a handle. The sent-message record outlives the history 
 Removing an account deletes its bots and that record.
 
 ::: info Upgrading
-Each account's agent from the previous version becomes its first bot, with its chats
+Each account's bot from the previous version becomes its first bot, with its chats
 kept and a handle made from its name.
 :::

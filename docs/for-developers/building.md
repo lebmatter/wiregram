@@ -59,13 +59,13 @@ internal/
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
   mail/              IMAP/SMTP email backend and its mail cache
-  agent/             SQLite store for providers, per-account agents (bots), their chats,
+  agent/             SQLite store for providers, per-account chat bots, their chats,
                      history and sent-message record
   plugin/            Lua plugin VMs, their API and the built-in plugins
-  account/           account manager and the agent runtime, including dry runs
+  account/           account manager and the chat bot runtime, including dry runs
   tui/               BubbleTea screens and the account/mode loop
 docs/                this site
-skills/wiregram/     SKILL.md for AI agents using the CLI
+skills/wiregram/     SKILL.md for AI coding tools using the CLI
 ```
 
 Imports only point downwards in this list: backends never import each other or `tui`,

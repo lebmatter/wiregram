@@ -34,7 +34,7 @@ Accounts are listed on the left, followed by:
 - **Themes…**: pick a [theme](/features/themes).
 - **Plugins…**: switch [plugins](/features/plugins) on and off and edit their settings.
 - **AI providers…**: add, edit and delete the providers
-  [bots](/features/chat-agents#ai-providers) use.
+  [AI powered chat bots](/features/chat-bots#ai-providers) use.
 - **Reset…**: sign out of every account and delete all local data, then start over as
   a fresh installation.
 - **Quit**

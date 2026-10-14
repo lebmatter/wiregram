@@ -1,8 +1,8 @@
 [<img src="assets/wiregram-animated.svg" alt="" height="117"> <img src="assets/wiregram-logo.svg" alt="Wiregram" width="360">](https://wiregram.chat)
 
 Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Matrix and
-Mattermost in one keyboard-driven window, with optional AI bots that answer your
-DMs. It is a single static binary, written in Go.
+Mattermost in one keyboard-driven window, with optional AI powered chat bots that answer
+your DMs. It is a single static binary, written in Go.
 
 > **Alpha software.** Wiregram is under active development. Expect rough edges, and
 > settings or the database format may change between releases. Please report bugs in
@@ -57,19 +57,30 @@ make
   your default app (`xdg-open`, `open` on macOS, the default app on Windows). Hold
   Shift while dragging to select text.
 
-## Bots
+## AI Powered Chat Bots
 
-Optional AI bots that answer an account's **incoming private messages** as you. Add an
+Optional bots that answer an account's **incoming private messages** as you. Add an
 OpenAI-compatible provider under Settings → AI providers…, then create a bot from the
-account's **New bot…** row in the sidebar. An account can have several, each answering all
-of its private chats or the ones picked for it, never two bots in one chat. A bot can
-suggest replies for you to approve or answer on its own; its messages are marked `✦ NAME`
-in the chat. It never replies in groups or starts a conversation. Try it with `wiregram dry-run` before turning it on.
-Conversations are sent to the provider you configure.
+**New bot…** row in the account's Bots section. An account can have several, each with a
+name and an `@handle`, answering all of its private chats or the ones picked for it, never
+two bots in one chat. A bot can suggest replies for you to approve or answer on its own;
+its messages are marked `✦ NAME` in the chat. It never replies in groups or starts a
+conversation. Try it with `wiregram dry-run` before turning it on.
+
+A bot can also be **registered** as a bot account of its own, so people message it
+directly and it answers as itself:
+
+- **Mattermost:** Register… creates `@handle` on the server, if your account may manage
+  bots.
+- **Telegram:** bots are created inside Wiregram through Telegram's managed bots, after you
+  give each account a manager bot (one with Bot Management on in @BotFather).
+
+A registered bot gets an **Inbox** of its own chats, where you approve its replies or
+answer as the bot. Conversations are sent to the provider you configure.
 
 ## Command line
 
-Scripts and AI agents can read and send messages without the TUI. Output is one JSON
+Scripts and AI coding tools can read and send messages without the TUI. Output is one JSON
 object per line.
 
 ```sh
@@ -84,8 +95,8 @@ wiregram reset                                      # sign out everywhere, delet
 
 Accounts are named by the Telegram phone number, Mattermost username, Matrix ID or email
 address. Sign in to them in the app first. The commands can run beside the app. WhatsApp
-is left out because it allows only one connection. Agents can learn the commands from
-[`skills/wiregram/SKILL.md`](skills/wiregram/SKILL.md).
+is left out because it allows only one connection. AI coding tools can learn the commands
+from [`skills/wiregram/SKILL.md`](skills/wiregram/SKILL.md).
 
 ## Developers
 

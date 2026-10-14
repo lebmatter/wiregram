@@ -35,9 +35,9 @@ format may change between releases. Please report bugs in
 - [Media](/features/media): inline images in kitty and Ghostty, half-blocks elsewhere
 - [Email](/features/email): IMAP and SMTP, one chat per correspondent
 - [Themes](/features/themes): Zest and Copper
-- [Bots](/features/chat-agents): AI bots that answer an account's private messages, each its own chats
+- [AI Powered Chat Bots](/features/chat-bots): bots that answer an account's private messages, each its own chats, and can be registered on Mattermost or Telegram with an inbox of their own
 - [Plugins](/features/plugins): sandboxed Lua widgets
-- [CLI](/features/cli): JSON Lines commands for scripts and AI agents
+- [CLI](/features/cli): JSON Lines commands for scripts and AI coding tools
 
 ## License
 

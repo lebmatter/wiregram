@@ -6,7 +6,7 @@ and email, as many of each as you like. Switching between them never reconnects.
 ## Account chooser
 
 After the splash comes the account chooser, with the logo. It lists every account with
-a status glyph and its tag, and its [bots](/features/chat-agents) with a violet ✦ if
+a status glyph and its tag, and its [bots](/features/chat-bots) with a violet ✦ if
 it has any, then:
 
 - **Settings…**: open [Settings](/configuration#settings)

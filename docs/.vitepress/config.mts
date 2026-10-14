@@ -49,7 +49,7 @@ export default defineConfig({
           { text: 'Media', link: '/features/media' },
           { text: 'Email', link: '/features/email' },
           { text: 'Themes', link: '/features/themes' },
-          { text: 'Bots', link: '/features/chat-agents' },
+          { text: 'AI Powered Chat Bots', link: '/features/chat-bots' },
           { text: 'Plugins', link: '/features/plugins' },
           { text: 'CLI', link: '/features/cli' },
         ],

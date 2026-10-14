@@ -17,5 +17,5 @@ the same in every theme:
 - links (underlined)
 - nick colours, one per sender
 
-Violet is kept for [bots](/features/chat-agents): the ✦ icon, the suggestion card
+Violet is kept for [AI powered chat bots](/features/chat-bots): the ✦ icon, the suggestion card
 and messages a bot sent.

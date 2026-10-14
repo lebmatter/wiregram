@@ -48,8 +48,8 @@ digest, such as the built-in Weather (on by default) and Hacker News.
 Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 
-Bots answer an account's incoming private messages as you, through an
-OpenAI-compatible provider added in Settings > AI providers. Every account
+AI powered chat bots answer an account's incoming private messages as you,
+through an OpenAI-compatible provider added in Settings > AI providers. Every account
 but email can have several: under its Search… sits a Bots section with a
 NAME @handle row for each, which opens the bot's settings in place of the
 chat (a bot registered on Mattermost or Telegram also gets an Inbox row: its
@@ -75,7 +75,7 @@ Quitting, deleting a chat, message, bot or provider, removing an account
 and Reset ask first in a modal: y or Enter on the action goes ahead, Esc
 cancels. Deletes and Reset start on Cancel.
 
-Commands (for scripts and AI agents; output is one JSON object per line):
+Commands (for scripts and AI coding tools; output is one JSON object per line):
 
   wiregram accounts
       List the accounts: backend, account name, label, status.
