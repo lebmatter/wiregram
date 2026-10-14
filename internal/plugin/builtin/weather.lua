@@ -4,10 +4,11 @@
 wiregram.plugin {
   title = "Weather",
   hosts = { "geocoding-api.open-meteo.com", "api.open-meteo.com" },
+  on = true,
 }
 
 local cfg = wiregram.settings {
-  { key = "city", label = "City", type = "string", default = "London" },
+  { key = "city", label = "City", type = "string", default = "Bengaluru" },
   { key = "units", label = "Units", type = "choice", options = { "celsius", "fahrenheit" },
     default = "celsius" },
   { key = "refresh", label = "Refresh (minutes)", type = "choice",

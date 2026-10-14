@@ -54,14 +54,15 @@ func (p *Plugin) requireLoading(L *lua.LState, fn string) {
 	}
 }
 
-// wiregram.plugin{title=, hosts={…}}: the name Settings shows and the hosts
-// http.get may reach.
+// wiregram.plugin{title=, hosts={…}, on=}: the name Settings shows, the hosts
+// http.get may reach, and whether a built-in starts on.
 func (p *Plugin) luaPlugin(L *lua.LState) int {
 	p.requireLoading(L, "plugin")
 	t := L.CheckTable(1)
 	if s, ok := t.RawGetString("title").(lua.LString); ok && s != "" {
 		p.Title = string(s)
 	}
+	p.startOn = lua.LVAsBool(t.RawGetString("on"))
 	if hosts, ok := t.RawGetString("hosts").(*lua.LTable); ok {
 		hosts.ForEach(func(_, v lua.LValue) {
 			if s, ok := v.(lua.LString); ok {

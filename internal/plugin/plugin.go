@@ -60,6 +60,7 @@ type Plugin struct {
 	db      *store.DB
 	client  *http.Client
 	hosts   []string
+	startOn bool
 	loading bool
 
 	mu     sync.Mutex
@@ -166,7 +167,7 @@ func (p *Plugin) load(src string) error {
 			p.values[s.Key] = v
 		}
 	}
-	p.enabled = !p.Builtin
+	p.enabled = !p.Builtin || p.startOn
 	if v, err := p.db.Setting(p.settingKey("enabled")); err == nil {
 		p.enabled = v == "1"
 	}
@@ -176,7 +177,8 @@ func (p *Plugin) load(src string) error {
 func (p *Plugin) settingKey(key string) string { return "plugin." + p.Name + "." + key }
 
 // Enabled reports whether the plugin runs. Built-in plugins start off, since
-// they reach the network; plugins the user installed start on.
+// they reach the network, unless they declare on=true; plugins the user
+// installed start on.
 func (p *Plugin) Enabled() bool {
 	p.vmu.Lock()
 	defer p.vmu.Unlock()

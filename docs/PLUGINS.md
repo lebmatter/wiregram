@@ -7,8 +7,8 @@ gets its own VM, and a plugin can draw a widget on the account chooser.
 ## Where plugins come from
 
 - **Built-in**: `internal/plugin/builtin/*.lua`, embedded in the binary.
-  These start **off** because they reach the network. Turn them on under
-  Settings → Plugins….
+  These start **off** because they reach the network, except Weather, which
+  declares `on = true`. Switch them under Settings → Plugins….
 - **User**: `~/.config/wiregram/plugins/NAME.lua` or `NAME/init.lua`. These
   start **on**. A user plugin with the same name as a built-in replaces it.
 
@@ -41,7 +41,7 @@ account chooser's notice.
 
 | Call | Notes |
 |------|-------|
-| `wiregram.plugin{title=, hosts={…}}` | Load time only. `title` names the plugin in Settings and on its card. `hosts` is the allowlist for `http.get`. |
+| `wiregram.plugin{title=, hosts={…}, on=}` | Load time only. `title` names the plugin in Settings and on its card. `hosts` is the allowlist for `http.get`. `on = true` starts a built-in on. |
 | `wiregram.settings{{key=, label=, type="string"\|"choice", default=, options={…}}, …}` | Load time only. Settings lists them in this order. Returns a read-only table of live values, e.g. `cfg.city`. |
 | `wiregram.widget{height=4, refresh=60, update=fn, render=fn}` | Load time only. See below. |
 | `wiregram.kv.get(k)` / `.set(k, v)` / `.delete(k)` / `.keys()` | String values in `wiregram.db`: keys up to 256 bytes, values up to 64 KB. `set` and `delete` return `true`, or `nil, err`. |
