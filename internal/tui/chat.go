@@ -1866,12 +1866,11 @@ func centerLines(width, height int, text string) []string {
 
 // lockView hides every chat, including the sidebar, until a key is pressed.
 func (m chatViewModel) lockView(width, height int) string {
-	unread := m.b.CachedUnread(m.entry)
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center,
 		lipgloss.JoinVertical(lipgloss.Center,
 			m.st.logo(width),
 			"",
-			m.st.subtle.Render(fmt.Sprintf("locked · %d unread", unread)),
+			m.st.subtle.Render("locked"),
 			m.st.dim.Render("press any key"),
 		))
 }
