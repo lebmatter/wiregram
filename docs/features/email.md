@@ -3,66 +3,122 @@
 Email accounts read mail over IMAP and send over SMTP. Set one up with the
 [Email setup guide](/setup-guides/email).
 
-## One chat per correspondent
+## Folders
 
-Each person you exchange mail with is one chat. A mail's bold subject leads its block,
-and the chat shows the first few lines of its text. Quoted originals are trimmed in the
-chat and kept in the reader.
+An email account's chats are its folders: **Inbox**, **Sent**, **Archive** (where the
+server has one; on Gmail, archiving moves mail to All Mail, which has no row) and the
+labels you show (see [Labels](#labels)). Each has its unread count. Under them sit
+**Compose…** and **Labels…**. Entering the account opens the inbox.
 
-## Labels
+## Conversations
 
-Gmail labels (on other servers, folders) can group your correspondents in the sidebar.
-The labels are read when you sign in and again every few minutes.
+A folder opens as a list of conversations, the newest first:
 
-Under **Search…** sits a **Labels** section. Its **Labels…** row opens a list of every
-label, each ticked when its section is in the sidebar:
+```
+> ● Alice Smith          Quarterly report (3)                        14:05
+    Bob                  Lunch on Friday?                              Mon
+    Carol                Invoice 2291                                3 Oct
+```
 
-| Key | Action |
-|-----|--------|
-| <kbd>Space</kbd>, click | Show or hide the label in the sidebar |
-| <kbd>Enter</kbd> | Go to the label: shows it, expanded and selected |
-| Type | Filter the labels |
-| <kbd>Esc</kbd> | Close |
+A dot marks unread mail. Each row shows who the conversation is with (who wrote last,
+or whom you wrote to), its subject with the number of mails, and the date of the newest.
+Mails are grouped by their reply headers, or failing those, by a `Re:` or `Fwd:` subject.
+Your replies join the conversations they answer, wherever they are filed.
 
-Each shown label is a collapsed row with its unread count; <kbd>Enter</kbd> expands it to
-the people with mail under it, and opening one opens their whole conversation. A
-correspondent appears under every label their mail carries.
-
-Only shown labels are synced, several at once, each on its own connection. Labels are
-read-only here: wiregram never adds or removes them.
+<kbd>Space</kbd> expands a conversation into its mails, oldest first, and collapses it again.
 
 ## Reading
 
-Select a mail and press <kbd>Enter</kbd> to open its actions; **Read** opens the reader
-with the headers and the whole text. In the reader:
+<kbd>Enter</kbd> opens the selected mail, or a conversation's newest, in the reader with
+its headers and whole text, and marks it read. Opening a conversation marks all of it read.
+
+When the folder pane is 140 columns or wider, the reader sits beside the list and
+previews the selected mail as you move (without marking it read). <kbd>]</kbd> moves to
+the reader and <kbd>[</kbd> back to the list.
+
+In the reader:
 
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>j</kbd>/<kbd>k</kbd> | Scroll |
 | <kbd>Space</kbd>/<kbd>b</kbd> | Page |
 | <kbd>g</kbd>/<kbd>G</kbd> | Top, bottom |
-| <kbd>Enter</kbd> | Actions: reply, save attachment, move to Trash… |
+| <kbd>o</kbd> | Open the attachment with the default app |
+| <kbd>s</kbd> | Save the attachment to `~/Downloads` |
 | <kbd>Esc</kbd>, <kbd>q</kbd> | Close |
 
 HTML mail is reduced to text, and nothing it references (images, trackers) is fetched.
 
+## Actions
+
+These keys work in the list, on the selected conversation or mail, and in the reader,
+on the mail being read:
+
+| Key | Action |
+|-----|--------|
+| <kbd>c</kbd> | Compose a new mail |
+| <kbd>r</kbd> | Reply |
+| <kbd>R</kbd> | Reply to all |
+| <kbd>f</kbd> | Forward, with the attachments |
+| <kbd>d</kbd> | Move to Trash |
+| <kbd>a</kbd> | Archive (where the server has an archive) |
+| <kbd>m</kbd> | Move to another folder or label, picked from a list |
+| <kbd>u</kbd> | Mark read; on read mail, mark the newest unread |
+| <kbd>/</kbd> | Search the folder on the server; <kbd>Esc</kbd> clears the results |
+
+Trash doesn't ask first: mail can be moved back from it. On Gmail, Trash removes the mail
+from every label.
+
+### Several at once
+
+<kbd>v</kbd> starts visual mode, picking the selected row. <kbd>Space</kbd> picks or drops
+more conversations or mails (`*` marks them, and the title counts them), then
+<kbd>d</kbd>, <kbd>a</kbd>, <kbd>m</kbd> or <kbd>u</kbd> acts on all of them at once.
+<kbd>Esc</kbd> leaves visual mode.
+
 ## Writing
 
-Email chats write in a multiline draft:
+<kbd>c</kbd>, <kbd>r</kbd>, <kbd>R</kbd> and <kbd>f</kbd> open the composer in the folder's
+place: **To**, **Cc**, **Subject** and **Attach** fields over the text. Replies quote the
+original below the cursor; replies to all copy the other recipients.
 
-- <kbd>Enter</kbd> adds a line, <kbd>Ctrl+S</kbd> sends, <kbd>Esc</kbd> keeps the draft.
-- A new mail's first line is its subject.
-- A first line `Subject: ...` starts a new conversation instead of a reply.
+| Key | Action |
+|-----|--------|
+| <kbd>Tab</kbd>, <kbd>Shift+Tab</kbd> | Next and previous field |
+| <kbd>Tab</kbd> in To or Cc | Take the address offered, from the people you have mailed |
+| <kbd>Enter</kbd> in Attach | Attach the file typed; <kbd>Tab</kbd> completes the path |
+| <kbd>Backspace</kbd> in an empty Attach | Drop the last file |
+| <kbd>Ctrl+S</kbd> | Send |
+| <kbd>Esc</kbd> | Close, keeping the draft: <kbd>c</kbd> opens it again |
+| <kbd>Ctrl+X</kbd> | Discard the draft |
 
-## Cache and deleting
+A mail's attachments come to at most 25 MB. One draft is kept at a time.
+
+## Labels
+
+Gmail labels (on other servers, folders) can be shown in the sidebar. The labels are read
+when you sign in and again every few minutes. **Labels…** opens a list of every label,
+each ticked when it is in the sidebar:
+
+| Key | Action |
+|-----|--------|
+| <kbd>Space</kbd>, click | Show or hide the label in the sidebar |
+| <kbd>Enter</kbd> | Show the label and open it |
+| Type | Filter the labels |
+| <kbd>Esc</kbd> | Close |
+
+Only shown labels are synced, several at once, each on its own connection, as are the
+inbox and Sent. Folders other than the inbox refresh every few minutes and after you
+act on them; the inbox updates as mail arrives.
+
+## Cache
 
 Mail is cached in `wiregram.db` for the window set by the account's **Keep mail cached**
 setting: 30 days, 90 days (the default), 1 year or all. Pruning the cache never touches
-the server.
-
-Deleting a mail moves it to Trash on the server.
+the server. Mail moved or deleted in another client leaves its folder here at the next
+sync.
 
 ## What email doesn't do
 
-Email has no reactions, mentions or Mentions row, and [AI powered chat bots](/features/chat-bots)
-never answer mail.
+Email has no reactions, mentions, Unread or Mentions rows, and
+[AI powered chat bots](/features/chat-bots) never answer mail.

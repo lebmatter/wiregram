@@ -127,9 +127,6 @@ type Capabilities struct {
 	Typing        bool
 	DeleteChat    bool
 	Archive       bool
-	// MultilineCompose gives the chat a multiline composer that sends with
-	// Ctrl+S, and a reader for long messages.
-	MultilineCompose bool
 }
 
 type Backend interface {
@@ -313,16 +310,62 @@ type Syncer interface {
 	Syncing() bool
 }
 
-// Labeler is implemented by backends that group chats under labels: Gmail
-// labels, or another mail server's folders. The sidebar shows a section for
-// each label the user chose.
+// Labeler is implemented by backends with labels: Gmail labels, or another
+// mail server's folders. The sidebar lists those the user chose.
 type Labeler interface {
 	// Labels returns every label by name, shown in the sidebar or not.
 	Labels() ([]Label, error)
-	// ShowLabel puts a label's section in the sidebar or takes it out.
+	// ShowLabel puts a label in the sidebar or takes it out.
 	ShowLabel(name string, shown bool) error
-	// LabelChats returns the chats with something under the label.
-	LabelChats(ctx context.Context, name string) ([]ChatEntry, error)
+}
+
+// Mailbox is implemented by email. Its chats are folders (Dialogs), and a
+// folder opens as a list of conversations instead of a chat. Message IDs are
+// those its threads carry.
+type Mailbox interface {
+	// Threads returns the folder's conversations, newest first. A query asks
+	// the server to search the folder instead.
+	Threads(ctx context.Context, folder ChatEntry, query string) ([]MailThread, error)
+	SetUnread(ctx context.Context, folder ChatEntry, ids []string, unread bool) error
+	// MoveMail moves mails out of folder into the folder named to.
+	MoveMail(ctx context.Context, folder ChatEntry, ids []string, to string) error
+	// TrashFolder and ArchiveFolder name where d and a move mail; "" when
+	// the server has none.
+	TrashFolder() string
+	ArchiveFolder() string
+	// Draft starts a reply, reply to all or forward of msg.
+	Draft(msg Message, kind DraftKind) MailDraft
+	SendMail(ctx context.Context, d MailDraft) error
+	// Addresses lists the addresses the account has mailed with, newest first.
+	Addresses() ([]string, error)
+}
+
+// MailThread is one conversation, its mails oldest first. With names the
+// other side: who wrote last, or whom the user wrote to. Unread counts the
+// incoming mails not read yet.
+type MailThread struct {
+	Subject  string
+	With     string
+	Messages []Message
+	Unread   int
+}
+
+type DraftKind int
+
+const (
+	DraftReply DraftKind = iota
+	DraftReplyAll
+	DraftForward
+)
+
+// MailDraft is a mail being written. To and Cc are comma-separated
+// addresses; Attach are local files. ReplyTo is the ID of the mail answered,
+// which threads the reply; Forward the ID of the mail whose attachments go
+// along.
+type MailDraft struct {
+	To, Cc, Subject, Body string
+	Attach                []string
+	ReplyTo, Forward      string
 }
 
 // Label is one of a Labeler's labels.

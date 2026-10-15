@@ -28,7 +28,7 @@ var RetentionChoices = []int{30, 90, 365, 0}
 // sync sees it; the sync adopts the row so its message ID never changes.
 const sentPlaceholder = ":sent"
 
-const currentDBVersion = 2
+const currentDBVersion = 3
 
 const schemaV1 = `
 CREATE TABLE mail_messages (
@@ -84,6 +84,18 @@ CREATE TABLE mail_label_members (
 );
 CREATE INDEX mail_label_msgid ON mail_label_members (account, label, message_id);
 `
+
+// schemaV3 names the mails that came without a Message-ID as syntheticID
+// does, so each can be a member of the folders it is in.
+const schemaV3 = `
+UPDATE mail_messages SET message_id = uidvalidity || '.' || uid || '.' || mailbox || '@wiregram'
+	WHERE message_id = '';
+`
+
+// syntheticID names a mail without a Message-ID by where it was found.
+func syntheticID(mailbox string, uidvalidity, uid uint32) string {
+	return fmt.Sprintf("%d.%d.%s@wiregram", uidvalidity, uid, mailbox)
+}
 
 // part is one attachment of a cached mail; Section is its IMAP body part path.
 type part struct {
@@ -161,7 +173,7 @@ func migrate(db *sql.DB) error {
 	} else if err != nil {
 		return fmt.Errorf("read mail migration version: %w", err)
 	}
-	steps := []string{schemaV1, schemaV2}
+	steps := []string{schemaV1, schemaV2, schemaV3}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := db.Begin()
 		if err != nil {
@@ -252,8 +264,11 @@ func (d *mailDB) saveSyncState(mailbox string, uidvalidity, lastUID uint32) erro
 // resetMailbox forgets a mailbox whose UIDVALIDITY changed: its UIDs no
 // longer name the same mails.
 func (d *mailDB) resetMailbox(mailbox string) error {
-	if _, err := d.db.Exec(`DELETE FROM mail_messages WHERE account = ? AND mailbox = ?`,
-		d.account, mailbox); err != nil {
+	// A mail other folders hold stays: one copy serves them all.
+	if _, err := d.db.Exec(`DELETE FROM mail_messages WHERE account = ? AND mailbox = ?
+		AND message_id NOT IN (SELECT message_id FROM mail_label_members
+			WHERE account = ? AND label <> ?)`,
+		d.account, mailbox, d.account, mailbox); err != nil {
 		return fmt.Errorf("reset cached mailbox: %w", err)
 	}
 	return d.saveSyncState(mailbox, 0, 0)
@@ -354,22 +369,13 @@ func (d *mailDB) byRowID(id int64) (row, error) {
 	return rows[0], nil
 }
 
-// page returns up to limit of peer's mails older than before (all when
-// before is 0), oldest first.
-func (d *mailDB) page(peer string, before row, limit int) ([]row, error) {
-	var rows []row
-	var err error
-	if before.ID == 0 {
-		rows, err = d.query(`peer = ? ORDER BY date DESC, id DESC LIMIT ?`, peer, limit)
-	} else {
-		rows, err = d.query(`peer = ? AND (date < ? OR (date = ? AND id < ?))
-			ORDER BY date DESC, id DESC LIMIT ?`,
-			peer, before.Date.Unix(), before.Date.Unix(), before.ID, limit)
+// latest is the newest mail with peer.
+func (d *mailDB) latest(peer string) (row, bool) {
+	rows, err := d.query(`peer = ? ORDER BY date DESC, id DESC LIMIT 1`, peer)
+	if err != nil || len(rows) == 0 {
+		return row{}, false
 	}
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
-	}
-	return rows, err
+	return rows[0], true
 }
 
 // correspondent is one sidebar row: everyone the account mails with.
@@ -380,26 +386,15 @@ type correspondent struct {
 	Unread int
 }
 
+// correspondents lists everyone the account mails with, newest first.
 func (d *mailDB) correspondents(limit int) ([]correspondent, error) {
-	return d.correspondentsIn("", limit)
-}
-
-// correspondentsIn lists everyone the account mails with, or with label
-// set, those with a mail under it.
-func (d *mailDB) correspondentsIn(label string, limit int) ([]correspondent, error) {
-	where, args := "", []any{d.account}
-	if label != "" {
-		where = ` AND message_id IN (SELECT message_id FROM mail_label_members
-			WHERE account = m.account AND label = ?)`
-		args = append(args, label)
-	}
 	rows, err := d.db.Query(`SELECT peer, MAX(date),
 		SUM(CASE WHEN seen = 0 AND outgoing = 0 THEN 1 ELSE 0 END),
 		COALESCE((SELECT from_name FROM mail_messages n WHERE n.account = m.account
 			AND n.peer = m.peer AND n.outgoing = 0 AND n.from_name <> ''
 			ORDER BY n.date DESC LIMIT 1), '')
-		FROM mail_messages m WHERE account = ?`+where+`
-		GROUP BY peer ORDER BY MAX(date) DESC LIMIT ?`, append(args, limit)...)
+		FROM mail_messages m WHERE account = ?
+		GROUP BY peer ORDER BY MAX(date) DESC LIMIT ?`, d.account, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list correspondents: %w", err)
 	}
@@ -420,49 +415,153 @@ func (d *mailDB) correspondentsIn(label string, limit int) ([]correspondent, err
 	return out, nil
 }
 
-func (d *mailDB) unread(peer string) int {
+// inFolder is the condition on mail_messages for the mails in folder, taking
+// the account and the folder as arguments.
+const inFolder = `message_id IN (SELECT message_id FROM mail_label_members
+	WHERE account = ? AND label = ?)`
+
+// folderRows returns the cached mails in folder, oldest first; placeholders
+// adds the sent mails the Sent folder's sync has not seen yet.
+func (d *mailDB) folderRows(folder string, placeholders bool) ([]row, error) {
+	where, args := inFolder, []any{d.account, folder}
+	if placeholders {
+		where += ` OR mailbox = ?`
+		args = append(args, sentPlaceholder)
+	}
+	return d.query(`(`+where+`) ORDER BY date, id`, args...)
+}
+
+// folderUnread counts folder's unread incoming mail.
+func (d *mailDB) folderUnread(folder string) int {
 	var n int
-	d.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE account = ? AND peer = ?
-		AND seen = 0 AND outgoing = 0`, d.account, peer).Scan(&n)
+	d.db.QueryRow(`SELECT COUNT(*) FROM mail_messages WHERE account = ? AND seen = 0
+		AND outgoing = 0 AND `+inFolder, d.account, d.account, folder).Scan(&n)
 	return n
 }
 
-// readPosition is the ID of peer's newest mail that needs no read receipt.
-func (d *mailDB) readPosition(peer string) string {
-	rows, err := d.query(`peer = ? AND (seen = 1 OR outgoing = 1) ORDER BY date DESC, id DESC LIMIT 1`, peer)
-	if err != nil || len(rows) == 0 {
-		return ""
+// folderKey is where a mail sits in a folder on the server.
+type folderKey struct{ uidvalidity, uid uint32 }
+
+// memberKeys returns where the mail named messageID sits in folder.
+func (d *mailDB) memberKeys(folder, messageID string) ([]folderKey, error) {
+	rows, err := d.db.Query(`SELECT uidvalidity, uid FROM mail_label_members WHERE account = ?
+		AND label = ? AND message_id = ?`, d.account, folder, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("read folder %s: %w", folder, err)
 	}
-	return rows[0].msgID()
+	defer rows.Close()
+	var out []folderKey
+	for rows.Next() {
+		var k folderKey
+		if err := rows.Scan(&k.uidvalidity, &k.uid); err != nil {
+			return nil, fmt.Errorf("read folder %s: %w", folder, err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read folder %s: %w", folder, err)
+	}
+	return out, nil
 }
 
-// unseenUpTo returns peer's unread incoming mails at or before upTo.
-func (d *mailDB) unseenUpTo(peer string, upTo row) ([]row, error) {
-	return d.query(`peer = ? AND seen = 0 AND outgoing = 0 AND (date < ? OR (date = ? AND id <= ?))`,
-		peer, upTo.Date.Unix(), upTo.Date.Unix(), upTo.ID)
+// dropMembers takes mails out of folder once they moved on the server.
+func (d *mailDB) dropMembers(folder string, keys []folderKey) error {
+	for _, k := range keys {
+		if _, err := d.db.Exec(`DELETE FROM mail_label_members WHERE account = ? AND label = ?
+			AND uidvalidity = ? AND uid = ?`, d.account, folder, k.uidvalidity, k.uid); err != nil {
+			return fmt.Errorf("update folder %s: %w", folder, err)
+		}
+	}
+	return nil
 }
 
-func (d *mailDB) markSeen(ids []int64) error {
+func (d *mailDB) setSeen(ids []int64, seen bool) error {
 	for _, id := range ids {
-		if _, err := d.db.Exec(`UPDATE mail_messages SET seen = 1 WHERE id = ?`, id); err != nil {
+		if _, err := d.db.Exec(`UPDATE mail_messages SET seen = ? WHERE id = ?`, seen, id); err != nil {
 			return fmt.Errorf("mark mail read: %w", err)
 		}
 	}
 	return nil
 }
 
-// setUnseen makes exactly the given UIDs of a mailbox unread, so mail read
-// in another client stops counting here.
-func (d *mailDB) setUnseen(mailbox string, uidvalidity uint32, unseen map[uint32]bool) (bool, error) {
-	rows, err := d.query(`mailbox = ? AND uidvalidity = ? AND outgoing = 0`, mailbox, uidvalidity)
-	if err != nil {
-		return false, err
+// byMessageIDs returns the cached mails named by ids.
+func (d *mailDB) byMessageIDs(ids []string) ([]row, error) {
+	var out []row
+	for _, id := range ids {
+		if r, ok := d.byMessageID(id); ok {
+			out = append(out, r)
+		}
 	}
+	return out, nil
+}
+
+// adopt moves a mail sent from wiregram from its placeholder to where the
+// server filed it.
+func (d *mailDB) adopt(messageID, mailbox string, uidvalidity, uid uint32) error {
+	d.insertMu.Lock()
+	defer d.insertMu.Unlock()
+	if _, err := d.db.Exec(`UPDATE mail_messages SET mailbox = ?, uidvalidity = ?, uid = ?
+		WHERE account = ? AND message_id = ? AND mailbox = ?`,
+		mailbox, uidvalidity, uid, d.account, messageID, sentPlaceholder); err != nil {
+		return fmt.Errorf("adopt sent mail: %w", err)
+	}
+	return nil
+}
+
+// addressRows returns the addresses of the newest mails, for autocomplete.
+func (d *mailDB) addressRows(limit int) ([]string, error) {
+	rows, err := d.db.Query(`SELECT from_addr, to_addrs, cc_addrs FROM mail_messages
+		WHERE account = ? ORDER BY date DESC LIMIT ?`, d.account, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read addresses: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var from, to, cc string
+		if err := rows.Scan(&from, &to, &cc); err != nil {
+			return nil, fmt.Errorf("read addresses: %w", err)
+		}
+		out = append(out, from, to, cc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read addresses: %w", err)
+	}
+	return out, nil
+}
+
+// setUnseen makes exactly the given UIDs of a folder unread, so mail read
+// in another client stops counting here.
+func (d *mailDB) setUnseen(folder string, uidvalidity uint32, unseen map[uint32]bool) (bool, error) {
+	rows, err := d.db.Query(`SELECT m.uid, r.id, r.seen FROM mail_label_members m
+		JOIN mail_messages r ON r.account = m.account AND r.message_id = m.message_id
+		WHERE m.account = ? AND m.label = ? AND m.uidvalidity = ? AND r.outgoing = 0`,
+		d.account, folder, uidvalidity)
+	if err != nil {
+		return false, fmt.Errorf("read read state: %w", err)
+	}
+	type mail struct {
+		id   int64
+		seen bool
+	}
+	want := make(map[int64]bool)
+	var mails []mail
+	for rows.Next() {
+		var uid uint32
+		var m mail
+		if err := rows.Scan(&uid, &m.id, &m.seen); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("read read state: %w", err)
+		}
+		mails = append(mails, m)
+		want[m.id] = !unseen[uid]
+	}
+	rows.Close()
 	changed := false
-	for _, r := range rows {
-		if r.Seen != !unseen[r.UID] {
+	for _, m := range mails {
+		if m.seen != want[m.id] {
 			if _, err := d.db.Exec(`UPDATE mail_messages SET seen = ? WHERE id = ?`,
-				!unseen[r.UID], r.ID); err != nil {
+				want[m.id], m.id); err != nil {
 				return false, fmt.Errorf("update read state: %w", err)
 			}
 			changed = true
@@ -471,24 +570,13 @@ func (d *mailDB) setUnseen(mailbox string, uidvalidity uint32, unseen map[uint32
 	return changed, nil
 }
 
-func (d *mailDB) delete(id int64) error {
-	if _, err := d.db.Exec(`DELETE FROM mail_messages WHERE id = ?`, id); err != nil {
+// deleteUnfiled forgets a cached mail no folder holds any more.
+func (d *mailDB) deleteUnfiled(id int64) error {
+	if _, err := d.db.Exec(`DELETE FROM mail_messages WHERE id = ? AND message_id NOT IN
+		(SELECT message_id FROM mail_label_members WHERE account = ?)`, id, d.account); err != nil {
 		return fmt.Errorf("delete cached mail: %w", err)
 	}
 	return nil
-}
-
-// byUIDs returns the cached rows of a mailbox among uids.
-func (d *mailDB) byUIDs(mailbox string, uidvalidity uint32, uids []uint32) ([]row, error) {
-	var out []row
-	for _, uid := range uids {
-		rows, err := d.query(`mailbox = ? AND uidvalidity = ? AND uid = ?`, mailbox, uidvalidity, uid)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, rows...)
-	}
-	return out, nil
 }
 
 func (d *mailDB) byMessageID(messageID string) (row, bool) {
@@ -500,13 +588,6 @@ func (d *mailDB) byMessageID(messageID string) (row, bool) {
 		return row{}, false
 	}
 	return rows[0], true
-}
-
-func (d *mailDB) hasUID(mailbox string, uidvalidity, uid uint32) bool {
-	var n int
-	d.db.QueryRow(`SELECT 1 FROM mail_messages WHERE account = ? AND mailbox = ? AND uidvalidity = ?
-		AND uid = ?`, d.account, mailbox, uidvalidity, uid).Scan(&n)
-	return n == 1
 }
 
 // saveLabels records the server's labels: new ones start hidden, and those
@@ -615,8 +696,11 @@ func (d *mailDB) shownLabels() ([]string, error) {
 // labelUIDs returns the UIDs of label's folder known to hold mail, under
 // uidvalidity.
 func (d *mailDB) labelUIDs(label string, uidvalidity uint32) (map[uint32]bool, error) {
-	rows, err := d.db.Query(`SELECT uid FROM mail_label_members WHERE account = ? AND label = ?
-		AND uidvalidity = ?`, d.account, label, uidvalidity)
+	// A member whose mail left the cache counts as unknown, so it is fetched again.
+	rows, err := d.db.Query(`SELECT uid FROM mail_label_members m WHERE account = ? AND label = ?
+		AND uidvalidity = ? AND EXISTS (SELECT 1 FROM mail_messages r
+			WHERE r.account = m.account AND r.message_id = m.message_id)`,
+		d.account, label, uidvalidity)
 	if err != nil {
 		return nil, fmt.Errorf("read label %s: %w", label, err)
 	}

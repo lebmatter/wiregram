@@ -1,6 +1,7 @@
 # Unread & Mentions
 
-Each expanded account in the sidebar has two rows that collect what needs you.
+Each expanded account in the sidebar has two rows that collect what needs you. Email
+accounts have neither: their folders show their unread counts.
 
 ## Unread
 

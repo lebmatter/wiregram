@@ -33,7 +33,7 @@ format may change between releases. Please report bugs in
 - [Chats](/features/chats): replies, threads, reactions, forwarding, mentions and search
 - [Unread & Mentions](/features/unread-mentions): one card per chat that needs you
 - [Media](/features/media): inline images in kitty and Ghostty, half-blocks elsewhere
-- [Email](/features/email): IMAP and SMTP, one chat per correspondent
+- [Email](/features/email): IMAP and SMTP, folders of threaded conversations
 - [Themes](/features/themes): Zest and Copper
 - [AI Powered Chat Bots](/features/chat-bots): bots that answer an account's private messages, each its own chats, and can be registered on Mattermost or Telegram with an inbox of their own
 - [Plugins](/features/plugins): sandboxed Lua widgets

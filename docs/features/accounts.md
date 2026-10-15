@@ -36,11 +36,13 @@ expanded to:
 - its chats, newest first, with unread badges
 - **Unread** and **Mentions** (see [Unread & Mentions](/features/unread-mentions))
 - **Search…**, which opens the user search
-- on email, a **Labels** section (see [Email](/features/email#labels))
 
-While a WhatsApp, Matrix or email account is still fetching its chats for the first time
-after connecting, it shows a spinner and `Loading chats…` (on email, `Loading emails…`) in place of them
-and these rows.
+An email account is expanded to its folders instead, then **Compose…** and **Labels…**
+(see [Email](/features/email#folders)).
+
+While a WhatsApp or Matrix account is still fetching its chats for the first time
+after connecting, it shows a spinner and `Loading chats…` in place of them and these
+rows. An email folder shows `Loading emails…` until the first sync fills it.
 
 <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
 

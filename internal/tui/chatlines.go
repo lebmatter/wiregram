@@ -293,7 +293,7 @@ func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry back
 	body, below := s.imageText(msg, img, indent, lineWidth, maxImageRows)
 	prefix := gutter + s.messageHeader(msg, entry, unread) + " "
 	var lines []string
-	if msg.Multiline || msg.Subject != "" {
+	if msg.Multiline {
 		lines = s.paragraphLines(msg, body, prefix, quoted, entry, lineWidth, indent)
 	} else if body = styleLinks(s.dimTag(body)); msg.ReplyToID == "" {
 		lines = textfmt.WrapMessage(prefix, body, lineWidth, indent)
@@ -360,30 +360,15 @@ func mediaTag(label string) string {
 	return label[start : end+1]
 }
 
-// mailPreviewLines caps a mail's text in the chat; Enter opens the reader
-// for the rest, so a long mail never outgrows the pane.
-const mailPreviewLines = 12
-
-// paragraphLines lays out a message that keeps its line breaks: an email's
-// bold subject, then each line of the text wrapped on its own. Mails longer
-// than mailPreviewLines end with a hint to open the reader.
+// paragraphLines lays out a message that keeps its line breaks, each line
+// of the text wrapped on its own.
 func (s *styles) paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Message,
 	entry backend.ChatEntry, lineWidth, indent int) []string {
 	pad := strings.Repeat(" ", indent)
 	var text []string
-	if msg.Subject != "" {
-		for _, line := range textfmt.WrapLineIndent(pad+textfmt.Plain(msg.Subject), lineWidth, indent) {
-			text = append(text, boldLine(line))
-		}
-	}
 	for _, para := range bodyParagraphs(msg, body) {
 		para = styleLinks(s.dimTag(para))
 		text = append(text, textfmt.WrapLineIndent(pad+para, lineWidth, indent)...)
-	}
-	if msg.Subject != "" && len(text) > mailPreviewLines {
-		more := len(text) - mailPreviewLines + 1
-		text = append(text[:mailPreviewLines-1], pad+s.subtle.Render(
-			fmt.Sprintf("… %d more %s (enter to read)", more, plural(more, "line", "lines"))))
 	}
 	if msg.ReplyToID != "" {
 		quote := textfmt.ClipLine(prefix+s.quote(quoted), lineWidth)

@@ -1,5 +1,6 @@
-// Package mail is the IMAP email backend: one chat per correspondent, cached
-// in wiregram.db for the retention window set in Settings.
+// Package mail is the IMAP email backend: its chats are folders (the inbox,
+// Sent, the archive and the labels shown), each opened as conversations, and
+// its mail is cached in wiregram.db for the retention window set in Settings.
 package mail
 
 import (
@@ -10,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,16 +42,18 @@ type MailBackend struct {
 	mu          sync.Mutex
 	ctx         context.Context
 	tokens      oauth2.TokenSource
-	fetched     map[string]bool // peers whose older mail the server has no more of
 	recentEmoji []string
+	// The special folders, named by findMailboxes. They sit under mu, not
+	// connMu, so the screen never waits on a sync to read them.
+	sentBox    string
+	trashBox   string
+	archiveBox string
 
 	// connMu guards the command connection and what it has selected.
 	connMu      sync.Mutex
 	conn        *imapclient.Client
 	selected    string
 	uidValidity uint32
-	sentBox     string
-	trashBox    string
 
 	nudge      chan struct{}
 	labelNudge chan struct{}
@@ -71,13 +73,13 @@ func NewMailBackend(imapHost string, st *store.DB, key string) (*MailBackend, er
 		Account:    Identity{IMAPHost: imapHost, SMTPHost: smtpHostFor(imapHost)},
 		Store:      st,
 		db:         db,
-		fetched:    make(map[string]bool),
 		nudge:      make(chan struct{}, 1),
 		labelNudge: make(chan struct{}, 1),
 	}, nil
 }
 
-func chatID(peer string) backend.ChatID { return backend.ChatID{Backend: backendName, Id: peer} }
+// chatID names a chat: a folder, or for the CLI's send, a correspondent.
+func chatID(id string) backend.ChatID { return backend.ChatID{Backend: backendName, Id: id} }
 
 func (b *MailBackend) report(err error) {
 	if b.Report != nil {
@@ -97,7 +99,7 @@ func (b *MailBackend) runCtx() context.Context {
 func (b *MailBackend) Name() string { return backendName }
 
 func (b *MailBackend) Capabilities() backend.Capabilities {
-	return backend.Capabilities{DeleteForMe: true, Search: true, MultilineCompose: true}
+	return backend.Capabilities{}
 }
 
 func (b *MailBackend) Syncing() bool { return !b.synced.Load() }
@@ -138,19 +140,35 @@ func (b *MailBackend) Logout(ctx context.Context) error {
 	return nil
 }
 
+// Dialogs lists the folders: the inbox, Sent and the archive once the
+// server has named them, then the labels shown in the sidebar.
 func (b *MailBackend) Dialogs(ctx context.Context, archived bool) ([]backend.ChatEntry, int, error) {
 	if archived {
 		return nil, 0, nil
 	}
-	cs, err := b.db.correspondents(200)
+	sent, archive := b.sentMailbox(), b.archiveMailbox()
+	entries := []backend.ChatEntry{b.folderEntry(inbox, "Inbox")}
+	if sent != "" {
+		entries = append(entries, b.folderEntry(sent, "Sent"))
+	}
+	if archive != "" && !isGmail(b.Account.IMAPHost) {
+		entries = append(entries, b.folderEntry(archive, "Archive"))
+	}
+	labels, err := b.db.labels()
 	if err != nil {
 		return nil, 0, err
 	}
-	entries := make([]backend.ChatEntry, 0, len(cs))
-	for _, c := range cs {
-		entries = append(entries, c.entry())
+	for _, l := range labels {
+		if l.Shown {
+			entries = append(entries, backend.ChatEntry{ID: chatID(l.Name), Title: l.Name,
+				Unread: l.Unread})
+		}
 	}
 	return entries, 0, nil
+}
+
+func (b *MailBackend) folderEntry(box, title string) backend.ChatEntry {
+	return backend.ChatEntry{ID: chatID(box), Title: title, Unread: b.db.folderUnread(box)}
 }
 
 func (b *MailBackend) Labels() ([]backend.Label, error) { return b.db.labels() }
@@ -164,18 +182,6 @@ func (b *MailBackend) ShowLabel(name string, shown bool) error {
 		b.wakeLabels()
 	}
 	return nil
-}
-
-func (b *MailBackend) LabelChats(ctx context.Context, name string) ([]backend.ChatEntry, error) {
-	cs, err := b.db.correspondentsIn(name, 200)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]backend.ChatEntry, 0, len(cs))
-	for _, c := range cs {
-		entries = append(entries, c.entry())
-	}
-	return entries, nil
 }
 
 func (c correspondent) entry() backend.ChatEntry {
@@ -195,9 +201,6 @@ func (b *MailBackend) toMessage(r row) backend.Message {
 	m := backend.Message{
 		ID: r.msgID(), Sender: sender, SenderID: r.FromAddr, Text: trimQuoted(r.Body),
 		Timestamp: r.Date, Outgoing: r.Outgoing, Subject: r.Subject, Multiline: true, Raw: r,
-	}
-	if p, ok := b.db.byMessageID(r.InReplyTo); ok && p.ID != r.ID {
-		m.ReplyToID = p.msgID()
 	}
 	var labels []string
 	for _, p := range r.Parts {
@@ -282,54 +285,17 @@ func (b *MailBackend) FullMessage(msg backend.Message) ([]string, string) {
 	return headers, r.Body
 }
 
-// history returns peer's page before before, asking the server for older
-// mail once the cache runs short.
-func (b *MailBackend) history(ctx context.Context, peer string, before row) ([]backend.Message, error) {
-	rows, err := b.db.page(peer, before, pageSize)
+// History is the newest mail in a folder, oldest first.
+func (b *MailBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backend.Message, error) {
+	rows, err := b.db.folderRows(ch.ID.Id, false)
 	if err != nil {
 		return nil, err
 	}
-	b.mu.Lock()
-	done := b.fetched[peer]
-	b.mu.Unlock()
-	if len(rows) < pageSize && !done {
-		var from time.Time
-		if len(rows) > 0 {
-			from = rows[0].Date
-		} else if before.ID != 0 {
-			from = before.Date
-		}
-		if err := b.fetchPeer(ctx, peer, from, pageSize); err != nil {
-			if len(rows) == 0 {
-				return nil, err
-			}
-			b.report(err)
-		} else if more, err := b.db.page(peer, before, pageSize); err == nil {
-			if len(more) == len(rows) {
-				b.mu.Lock()
-				b.fetched[peer] = true
-				b.mu.Unlock()
-			}
-			rows = more
-		}
-	}
-	return b.toMessages(rows), nil
-}
-
-func (b *MailBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backend.Message, error) {
-	return b.history(ctx, ch.ID.Id, row{})
+	return b.toMessages(rows[max(0, len(rows)-pageSize):]), nil
 }
 
 func (b *MailBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, beforeID string) ([]backend.Message, error) {
-	id, ok := rowIDOf(beforeID)
-	if !ok {
-		return nil, nil
-	}
-	before, err := b.db.byRowID(id)
-	if err != nil {
-		return nil, err
-	}
-	return b.history(ctx, ch.ID.Id, before)
+	return nil, nil
 }
 
 func (b *MailBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []string) ([]backend.Message, error) {
@@ -347,17 +313,26 @@ func (b *MailBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []
 }
 
 func (b *MailBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
-	rows, err := b.db.query(`peer = ? AND seen = 0 AND outgoing = 0 ORDER BY date DESC, id DESC LIMIT ?`,
-		ch.ID.Id, limit)
+	rows, err := b.db.folderRows(ch.ID.Id, false)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Date.Before(rows[j].Date) })
-	return b.toMessages(rows), nil
+	var unread []row
+	for _, r := range rows {
+		if !r.Seen && !r.Outgoing {
+			unread = append(unread, r)
+		}
+	}
+	return b.toMessages(unread[max(0, len(unread)-limit):]), nil
 }
 
+// Send is the CLI's send to an address: it answers the newest mail with
+// them, unless the text starts a new conversation (see compose).
 func (b *MailBackend) Send(ctx context.Context, ch backend.ChatEntry, text string, replyTo string) (backend.Message, error) {
 	peer := ch.ID.Id
+	if !strings.Contains(peer, "@") {
+		return backend.Message{}, fmt.Errorf("send email to an address, not a folder")
+	}
 	var parent *row
 	if id, ok := rowIDOf(replyTo); ok {
 		r, err := b.db.byRowID(id)
@@ -365,23 +340,44 @@ func (b *MailBackend) Send(ctx context.Context, ch backend.ChatEntry, text strin
 			return backend.Message{}, err
 		}
 		parent = &r
-	} else if rows, err := b.db.page(peer, row{}, 1); err == nil && len(rows) > 0 {
-		parent = &rows[0]
+	} else if r, ok := b.db.latest(peer); ok {
+		parent = &r
 	}
 	d := compose(peer, text, parent)
 	if strings.TrimSpace(d.Subject) == "" {
 		return backend.Message{}, fmt.Errorf("a new mail needs a subject on its first line")
 	}
-	var err error
-	if d.MessageID, err = newMessageID(b.Account.Email); err != nil {
-		return backend.Message{}, err
-	}
-	data, err := d.encode(b.Account.Email)
+	r, err := b.deliver(ctx, d)
 	if err != nil {
 		return backend.Message{}, err
 	}
-	if err := b.submit(ctx, d.To, data); err != nil {
-		return backend.Message{}, err
+	return b.toMessage(r), nil
+}
+
+// deliver sends d, files it in Sent where the server does not, and caches it
+// until the Sent folder's sync sees it.
+func (b *MailBackend) deliver(ctx context.Context, d draft) (row, error) {
+	to, toHeader, err := recipients(d.To)
+	if err != nil {
+		return row{}, err
+	}
+	cc, ccHeader, err := recipients(d.Cc)
+	if err != nil {
+		return row{}, err
+	}
+	d.To, d.Cc = toHeader, ccHeader
+	if len(to) == 0 {
+		return row{}, fmt.Errorf("add a recipient in To")
+	}
+	if d.MessageID, err = newMessageID(b.Account.Email); err != nil {
+		return row{}, err
+	}
+	data, err := d.encode(b.Account.Email)
+	if err != nil {
+		return row{}, err
+	}
+	if err := b.submit(ctx, append(to, cc...), data); err != nil {
+		return row{}, err
 	}
 	if !isGmail(b.Account.IMAPHost) {
 		// Gmail files what it sends; other servers leave that to the client.
@@ -391,14 +387,19 @@ func (b *MailBackend) Send(ctx context.Context, ch backend.ChatEntry, text strin
 	}
 	r := row{
 		Mailbox: sentPlaceholder, UID: uint32(time.Now().UnixNano()), MessageID: d.MessageID,
-		InReplyTo: d.InReplyTo, Peer: peer, FromAddr: b.Account.Email, To: peer,
-		Subject: d.Subject, Date: d.Date, Seen: true, Outgoing: true, Body: d.Body,
+		InReplyTo: d.InReplyTo, Peer: strings.ToLower(to[0]), FromAddr: b.Account.Email,
+		To: d.To, Cc: d.Cc, Subject: d.Subject, Date: d.Date, Seen: true, Outgoing: true,
+		Body: d.Body,
+	}
+	for _, a := range d.Attach {
+		r.Parts = append(r.Parts, part{Name: a.Name, Type: a.Type, Size: int64(len(a.Data))})
 	}
 	if _, err := b.db.insert(&r); err != nil {
-		return backend.Message{}, err
+		return row{}, err
 	}
+	b.events.Publish(backend.Event{Kind: backend.EventUnread})
 	b.wake()
-	return b.toMessage(r), nil
+	return r, nil
 }
 
 func (b *MailBackend) fileSent(ctx context.Context, data []byte, date time.Time) error {
@@ -424,7 +425,7 @@ func (b *MailBackend) fileSent(ctx context.Context, data []byte, date time.Time)
 }
 
 func (b *MailBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, path, caption, replyTo string) (backend.Message, error) {
-	return backend.Message{}, fmt.Errorf("sending attachments is not supported for email yet")
+	return backend.Message{}, fmt.Errorf("attach files to a mail in the composer")
 }
 
 func (b *MailBackend) UploadPlaceholder(path, caption string) backend.Message {
@@ -442,48 +443,7 @@ func (b *MailBackend) Edit(ctx context.Context, ch backend.ChatEntry, msg backen
 // DeleteMessages moves the mails to the server's Trash, whichever scope
 // was asked for: mail cannot be unsent.
 func (b *MailBackend) DeleteMessages(ctx context.Context, ch backend.ChatEntry, ids []string, forEveryone bool) error {
-	var deleted []string
-	defer func() {
-		if len(deleted) > 0 {
-			b.events.Publish(backend.Event{Kind: backend.EventDelete, Chat: ch.ID, Deleted: deleted})
-		}
-	}()
-	for _, id := range ids {
-		rowID, ok := rowIDOf(id)
-		if !ok {
-			continue
-		}
-		r, err := b.db.byRowID(rowID)
-		if err != nil {
-			return err
-		}
-		if r.Mailbox != sentPlaceholder {
-			err := b.withConn(ctx, func(c *imapclient.Client) error {
-				if b.trashBox == "" {
-					return fmt.Errorf("this server has no Trash folder")
-				}
-				uv, err := b.selectBox(c, r.Mailbox)
-				if err != nil {
-					return err
-				}
-				if uv != r.UIDValidity {
-					return nil // the mailbox was rebuilt; the next sync forgets the row
-				}
-				if _, err := c.Move(imap.UIDSetNum(imap.UID(r.UID)), b.trashBox).Wait(); err != nil {
-					return fmt.Errorf("move mail to Trash: %w", err)
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-		}
-		if err := b.db.delete(r.ID); err != nil {
-			return err
-		}
-		deleted = append(deleted, id)
-	}
-	return nil
+	return b.MoveMail(ctx, ch, ids, b.TrashFolder())
 }
 
 func (b *MailBackend) DeleteChat(ctx context.Context, ch backend.ChatEntry, forEveryone bool) error {
@@ -491,51 +451,7 @@ func (b *MailBackend) DeleteChat(ctx context.Context, ch backend.ChatEntry, forE
 }
 
 func (b *MailBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID string) error {
-	id, ok := rowIDOf(upToID)
-	if !ok {
-		return nil
-	}
-	upTo, err := b.db.byRowID(id)
-	if err != nil {
-		return err
-	}
-	rows, err := b.db.unseenUpTo(ch.ID.Id, upTo)
-	if err != nil || len(rows) == 0 {
-		return err
-	}
-	byBox := make(map[string][]row)
-	for _, r := range rows {
-		byBox[r.Mailbox] = append(byBox[r.Mailbox], r)
-	}
-	var seen []int64
-	err = b.withConn(ctx, func(c *imapclient.Client) error {
-		for box, rows := range byBox {
-			uv, err := b.selectBox(c, box)
-			if err != nil {
-				return err
-			}
-			var set imap.UIDSet
-			for _, r := range rows {
-				if r.UIDValidity == uv {
-					set.AddNum(imap.UID(r.UID))
-					seen = append(seen, r.ID)
-				}
-			}
-			if len(set) == 0 {
-				continue
-			}
-			if err := c.Store(set, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true,
-				Flags: []imap.Flag{imap.FlagSeen}}, nil).Close(); err != nil {
-				return fmt.Errorf("mark mail read: %w", err)
-			}
-		}
-		return nil
-	})
-	if markErr := b.db.markSeen(seen); markErr != nil && err == nil {
-		err = markErr
-	}
-	b.events.Publish(backend.Event{Kind: backend.EventUnread, Chat: ch.ID})
-	return err
+	return b.SetUnread(ctx, ch, []string{upToID}, false)
 }
 
 func (b *MailBackend) SetTyping(ctx context.Context, ch backend.ChatEntry) {}
@@ -552,68 +468,18 @@ func (b *MailBackend) Pin(ctx context.Context, ch backend.ChatEntry, msg backend
 	return fmt.Errorf("pinning is not supported for email")
 }
 
-// SearchMessages asks the server, so mail older than the cache is found too.
+// SearchMessages searches the folder on the server, so mail older than the
+// cache is found too.
 func (b *MailBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, query string) ([]backend.Message, error) {
-	peer := ch.ID.Id
-	sent := b.sentMailbox()
-	type hit struct {
-		box  string
-		uv   uint32
-		uids []uint32
-	}
-	var hits []hit
-	err := b.withConn(ctx, func(c *imapclient.Client) error {
-		for _, box := range []struct{ name, header string }{{inbox, "From"}, {sent, "To"}} {
-			if box.name == "" {
-				continue
-			}
-			uv, err := b.selectBox(c, box.name)
-			if err != nil {
-				return err
-			}
-			found, err := c.UIDSearch(&imap.SearchCriteria{
-				Header: []imap.SearchCriteriaHeaderField{{Key: box.header, Value: peer}},
-				Text:   []string{query},
-			}, nil).Wait()
-			if err != nil {
-				return fmt.Errorf("search mail: %w", err)
-			}
-			all := found.AllUIDs()
-			all = all[max(0, len(all)-searchLimit):]
-			var missing []imap.UID
-			h := hit{box: box.name, uv: uv}
-			for _, uid := range all {
-				h.uids = append(h.uids, uint32(uid))
-				if !b.db.hasUID(box.name, uv, uint32(uid)) {
-					missing = append(missing, uid)
-				}
-			}
-			rows, err := b.fetchRows(c, box.name, uv, missing, box.name != inbox)
-			if err != nil {
-				return err
-			}
-			for i := range rows {
-				if _, err := b.db.insert(&rows[i]); err != nil {
-					return err
-				}
-			}
-			hits = append(hits, h)
-		}
-		return nil
-	})
+	threads, err := b.Threads(ctx, ch, query)
 	if err != nil {
 		return nil, err
 	}
-	var rows []row
-	for _, h := range hits {
-		got, err := b.db.byUIDs(h.box, h.uv, h.uids)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, got...)
+	var out []backend.Message
+	for _, t := range threads {
+		out = append(out, t.Messages...)
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Date.After(rows[j].Date) })
-	return b.toMessages(rows), nil
+	return out, nil
 }
 
 func (b *MailBackend) SetActive(ch backend.ChatEntry) {}
@@ -629,14 +495,12 @@ func (b *MailBackend) ReadMarker(ch backend.ChatEntry, msg backend.Message) stri
 func (b *MailBackend) RefreshReadState(ctx context.Context, ch backend.ChatEntry) error { return nil }
 
 func (b *MailBackend) RefreshChatUnread(ctx context.Context, ch backend.ChatEntry) (int, error) {
-	return b.db.unread(ch.ID.Id), nil
+	return b.db.folderUnread(ch.ID.Id), nil
 }
 
-func (b *MailBackend) CachedUnread(ch backend.ChatEntry) int { return b.db.unread(ch.ID.Id) }
+func (b *MailBackend) CachedUnread(ch backend.ChatEntry) int { return b.db.folderUnread(ch.ID.Id) }
 
-func (b *MailBackend) InboxPosition(ch backend.ChatEntry) string {
-	return b.db.readPosition(ch.ID.Id)
-}
+func (b *MailBackend) InboxPosition(ch backend.ChatEntry) string { return "" }
 
 func (b *MailBackend) MediaPlayable(msg backend.Message) bool { return false }
 
@@ -667,10 +531,22 @@ func (b *MailBackend) SaveMedia(ctx context.Context, msg backend.Message, destDi
 	if !ok || len(r.Parts) == 0 {
 		return fmt.Errorf("this mail has no attachment")
 	}
-	if r.Mailbox == sentPlaceholder {
-		return fmt.Errorf("this mail is still being filed in Sent; try again shortly")
+	data, err := b.fetchPart(ctx, r, r.Parts[0])
+	if err != nil {
+		return err
 	}
-	p := r.Parts[0]
+	dest := filepath.Join(destDir, safeName(r.Parts[0].Name))
+	if err := os.WriteFile(dest, data, 0600); err != nil {
+		return fmt.Errorf("save attachment: %w", err)
+	}
+	return nil
+}
+
+// fetchPart downloads and decodes one attachment of r.
+func (b *MailBackend) fetchPart(ctx context.Context, r row, p part) ([]byte, error) {
+	if r.Mailbox == sentPlaceholder {
+		return nil, fmt.Errorf("this mail is still being filed in Sent; try again shortly")
+	}
 	var raw []byte
 	err := b.withConn(ctx, func(c *imapclient.Client) error {
 		uv, err := b.selectBox(c, r.Mailbox)
@@ -678,7 +554,7 @@ func (b *MailBackend) SaveMedia(ctx context.Context, msg backend.Message, destDi
 			return err
 		}
 		if uv != r.UIDValidity {
-			return fmt.Errorf("this mail moved on the server; reopen the chat")
+			return fmt.Errorf("this mail moved on the server; reopen the folder")
 		}
 		item := &imap.FetchItemBodySection{Part: p.Section, Peek: true}
 		msgs, err := c.Fetch(imap.UIDSetNum(imap.UID(r.UID)), &imap.FetchOptions{
@@ -693,17 +569,9 @@ func (b *MailBackend) SaveMedia(ctx context.Context, msg backend.Message, destDi
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	data, err := decodePart(raw, p.Type, p.Encoding, "")
-	if err != nil {
-		return err
-	}
-	dest := filepath.Join(destDir, safeName(p.Name))
-	if err := os.WriteFile(dest, data, 0600); err != nil {
-		return fmt.Errorf("save attachment: %w", err)
-	}
-	return nil
+	return decodePart(raw, p.Type, p.Encoding, "")
 }
 
 func (b *MailBackend) AcknowledgeMedia(ctx context.Context, msg backend.Message) {}

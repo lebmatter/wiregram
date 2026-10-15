@@ -32,6 +32,10 @@ Every command that needs an account takes `BACKEND ACCOUNT`:
   people. A name that matches more than one chat is an error; use the chat ID then.
   Naming a public channel you have not joined joins it.
 
+On email, `chats` lists the folders (kind `folder`), `stream` takes a folder, and `send`
+takes an address: it answers the newest mail with them, or with a first line
+`Subject: ...`, starts a new conversation.
+
 ## accounts
 
 ```sh

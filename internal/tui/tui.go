@@ -78,18 +78,22 @@ type tuiModel struct {
 	height         int
 	// botEvents is the open bot chat's subscription to the bot's connection.
 	botEvents *backend.Subscription
-	// labels is the Labels modal, over the screen.
+	// labels is the Labels modal, over the screen, or the move picker.
 	labels *labelPicker
-	// labelOpen names the expanded label sections in the sidebar.
-	labelOpen map[string]bool
-	// goToLabel is the label section to select once the list reloads.
+	// goToLabel is the label to open once the list reloads.
 	goToLabel string
+	// mail is the open email folder, in the chat's place.
+	mail     mailListModel
+	mailOpen bool
+	// mailDraft is the draft kept while no folder is open.
+	mailDraft *mailComposer
+	// moving is the mail the move picker is choosing a folder for.
+	moving []string
 }
 
 type tuiDialogsLoaded struct {
 	entries       []backend.ChatEntry
 	archiveUnread int
-	labels        []labelSection
 	err           error
 }
 
@@ -141,36 +145,8 @@ func listenBotEvents(sub *backend.Subscription) tea.Cmd {
 func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
 	return func() tea.Msg {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
-		if err != nil {
-			return tuiDialogsLoaded{err: err}
-		}
-		labels, err := loadLabels(ctx, b)
-		return tuiDialogsLoaded{entries, archiveUnread, labels, err}
+		return tuiDialogsLoaded{entries, archiveUnread, err}
 	}
-}
-
-// loadLabels reads the label sections shown in the sidebar with their chats.
-func loadLabels(ctx context.Context, b backend.Backend) ([]labelSection, error) {
-	lb, ok := b.(backend.Labeler)
-	if !ok {
-		return nil, nil
-	}
-	labels, err := lb.Labels()
-	if err != nil {
-		return nil, err
-	}
-	var out []labelSection
-	for _, l := range labels {
-		if !l.Shown {
-			continue
-		}
-		entries, err := lb.LabelChats(ctx, l.Name)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, labelSection{name: l.Name, unread: l.Unread, entries: entries})
-	}
-	return out, nil
 }
 
 // chipsTick refreshes the account chips; mgr.changed already has a consumer.
@@ -191,7 +167,6 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		entries:       entries,
 		archiveUnread: archiveUnread,
 		agentsCtx:     ctx,
-		labelOpen:     make(map[string]bool),
 		width:         w,
 		height:        h,
 	}
@@ -200,21 +175,20 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 	}
 	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(m.st.accent))
 	m.list = newChatListModel(ctx, m.st, mgr, active, b, entries, false, archiveUnread)
-	m.list.labelOpen = m.labelOpen
 	m.spinning = m.list.loading
 	return m.sized()
 }
 
-// Init opens the Unread view, so entering an account starts there.
+// Init opens the Unread view, or on email the inbox, so entering an account
+// starts there.
 func (m tuiModel) Init() tea.Cmd {
-	openUnread := func() tea.Msg { return chatListUnread{} }
-	cmds := []tea.Cmd{listenEvents(m.events), chipsTick(), pruneMediaCache, openUnread}
+	start := func() tea.Msg { return chatListUnread{} }
+	if _, ok := m.b.(backend.Mailbox); ok {
+		start = func() tea.Msg { return chatListChoice{0} }
+	}
+	cmds := []tea.Cmd{listenEvents(m.events), chipsTick(), pruneMediaCache, start}
 	if m.mgr != nil && m.mgr.Agents != nil {
 		cmds = append(cmds, listenAgents(m.agentsCtx, m.mgr))
-	}
-	if _, ok := m.b.(backend.Labeler); ok {
-		// The screen opens with the chats alone; this adds the label sections.
-		cmds = append(cmds, loadDialogs(m.ctx, m.b, m.archived))
 	}
 	if m.spinning {
 		cmds = append(cmds, m.spin.Tick)
@@ -224,9 +198,11 @@ func (m tuiModel) Init() tea.Cmd {
 
 func (m tuiModel) twoPane() bool { return m.width >= twoPaneWidth }
 
-// paneOpen reports whether the right-hand pane holds a chat, the unread view
-// or the agent pane.
-func (m tuiModel) paneOpen() bool { return m.chatOpen || m.unreadOpen || m.agentOpen }
+// paneOpen reports whether the right-hand pane holds a chat, the unread view,
+// the agent pane or an email folder.
+func (m tuiModel) paneOpen() bool {
+	return m.chatOpen || m.unreadOpen || m.agentOpen || m.mailOpen
+}
 
 // forwarding reports whether the forward picker is up over the chat it came from.
 func (m tuiModel) forwarding() bool { return m.searchOpen && m.search.forward != nil }
@@ -262,6 +238,10 @@ func (m tuiModel) sized() tuiModel {
 	if m.agentOpen {
 		m.agentPane = m.agentPane.resized(paneWidth, bodyHeight)
 	}
+	if m.mailOpen {
+		m.mail.width, m.mail.height = paneWidth, bodyHeight
+		m.mail = m.mail.scrolled()
+	}
 	if m.labels != nil {
 		m.labels.resized(m.width, bodyHeight)
 	}
@@ -284,6 +264,9 @@ func (m tuiModel) closeChat() tuiModel {
 	m.searchOpen = false
 	m.unreadOpen = false
 	m.agentOpen = false
+	if m.mailOpen {
+		m.mailDraft, m.mailOpen = m.mail.composer, false
+	}
 	if !m.chatOpen {
 		m.focus = focusList
 		return m
@@ -340,6 +323,22 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 	return m, tea.Batch(m.chat.Init(), reload)
 }
 
+// openFolder shows an email folder in the chat's place, with any kept draft.
+func (m tuiModel) openFolder(mb backend.Mailbox, entry backend.ChatEntry) (tuiModel, tea.Cmd) {
+	m = m.closeChat()
+	var cmd tea.Cmd
+	m.mail, cmd = newMailList(m.ctx, m.st, m.b, mb, entry, m.mailDraft)
+	m.mailDraft = nil
+	m.mailOpen = true
+	m.focus = focusChat
+	m = m.sized()
+	if !m.spinning && m.mail.syncing() {
+		m.spinning = true
+		cmd = tea.Batch(cmd, m.spin.Tick)
+	}
+	return m, cmd
+}
+
 // openInbox shows the registered bot's private chats, over its connection.
 func (m tuiModel) openInbox(bot inboxBot) (tuiModel, tea.Cmd) {
 	b := m.mgr.Agents.BotBackend(bot.id)
@@ -391,7 +390,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	if tick, ok := msg.(spinner.TickMsg); ok && tick.ID == m.spin.ID() {
-		m.spinning = m.list.loading
+		m.spinning = m.list.loading || (m.mailOpen && m.mail.syncing())
 		if !m.spinning {
 			return m, nil
 		}
@@ -484,6 +483,11 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 				m = m.withAgentSent() // the agent may have sent it
 			}
 		}
+		if m.mailOpen {
+			var reload tea.Cmd
+			m.mail, reload = m.mail.reload()
+			cmd = tea.Batch(cmd, reload)
+		}
 		m.list = m.list.refreshUnread()
 		if msg.ev.Kind == backend.EventUnread && msg.ev.Chat == (backend.ChatID{}) {
 			cmd = tea.Batch(cmd, loadDialogs(m.ctx, m.b, m.archived))
@@ -505,6 +509,60 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case chatListInbox:
 		return m.openInbox(msg.bot)
+
+	case mailDone:
+		if !m.mailOpen {
+			// The folder closed while the mail was sending.
+			if d := m.mailDraft; msg.sent && d != nil {
+				d.sending = false
+				if msg.err != nil {
+					d.notice = textfmt.CleanError(msg.err)
+					m.notice = "mail not sent: " + d.notice + "; c in a folder reopens the draft"
+				} else {
+					m.mailDraft, m.notice = nil, "sent"
+				}
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.mail, cmd = m.mail.update(msg)
+		return m, cmd
+
+	case mailLoaded:
+		if !m.mailOpen {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.mail, cmd = m.mail.update(msg)
+		return m, cmd
+
+	case mediaOpened, chatSaveResult:
+		if m.mailOpen {
+			var cmd tea.Cmd
+			m.mail, cmd = m.mail.update(msg)
+			return m, cmd
+		}
+
+	case mailClosed:
+		m = m.closeChat()
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+
+	case mailMoveReq:
+		lb, ok := m.b.(backend.Labeler)
+		if !ok {
+			return m, nil
+		}
+		first := []string{"INBOX"}
+		if archive := m.mail.mb.ArchiveFolder(); archive != "" {
+			first = append(first, archive)
+		}
+		picker, err := newMovePicker(m.st, lb, first, m.mail.folder.ID.Id)
+		if err != nil {
+			m.mail.notice = textfmt.CleanError(err)
+			return m, nil
+		}
+		m.labels, m.moving = picker, msg.ids
+		return m.sized(), nil
 
 	case chatHistoryLoaded:
 		if !m.chatOpen {
@@ -635,6 +693,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		if m.chatOpen {
 			m.chat, cmd = m.chat.updateInput(msg)
 		}
+		if m.mailOpen {
+			m.mail, cmd = m.mail.paste(msg)
+		}
 		return m, cmd
 	}
 
@@ -643,9 +704,12 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	}
 	// While forwarding, the chat underneath still has work in flight; each
 	// model ignores messages that are not its own.
-	var searchCmd, chatCmd tea.Cmd
+	var searchCmd, chatCmd, mailCmd tea.Cmd
 	if m.searchOpen {
 		m.search, searchCmd = m.search.Update(msg)
+	}
+	if m.mailOpen {
+		m.mail, mailCmd = m.mail.update(msg)
 	}
 	var inputCmd tea.Cmd
 	if m.chatOpen {
@@ -655,7 +719,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			m.chat, inputCmd = m.chat.updateInput(msg)
 		}
 	}
-	return m, tea.Batch(searchCmd, chatCmd, inputCmd)
+	return m, tea.Batch(searchCmd, chatCmd, inputCmd, mailCmd)
 }
 
 // overList reports whether column x of the body shows the chat list.
@@ -698,8 +762,8 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 			return m, nil
 		}
 		x, y := m.labelsAt()
-		if m.labels.click(mouse.X-x, mouse.Y-y) {
-			return m.closeLabels("")
+		if pick, done := m.labels.click(mouse.X-x, mouse.Y-y); done {
+			return m.closeLabels(pick)
 		}
 		return m, nil
 	}
@@ -737,7 +801,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.menuClick(mouse.X-x, mouse.Y-y, inside)
 		return m, cmd
 	}
-	if right && (m.overList(mouse.X) || m.unreadOpen || m.agentOpen) {
+	if right && (m.overList(mouse.X) || m.unreadOpen || m.agentOpen || m.mailOpen) {
 		return m, nil
 	}
 	if m.overList(mouse.X) {
@@ -759,6 +823,8 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	m.focus = focusChat
 	x := m.chatX(mouse.X)
 	switch {
+	case m.mailOpen:
+		m.mail, cmd = m.mail.click(x, mouse.Y)
 	case m.unreadOpen:
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
 			return m.openCard(m.unread.cards[i])
@@ -800,6 +866,8 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		if m.loadErr == nil {
 			m.list, cmd = m.list.Update(k)
 		}
+	case m.mailOpen:
+		m.mail, cmd = m.mail.wheel(m.chatX(mouse.X), k)
 	case m.unreadOpen:
 		m.unread, cmd = m.unread.Update(k)
 	case m.agentOpen:
@@ -814,7 +882,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		m.chat = m.chat.scrollThread(lines)
 	case m.chatOpen:
 		switch m.chat.subMode {
-		case chatSubNone, chatSubThread, chatSubMenu, chatSubSearch, chatSubUpload, chatSubReader:
+		case chatSubNone, chatSubThread, chatSubMenu, chatSubSearch, chatSubUpload:
 			// Other submodes are prompts that any key would answer.
 			m.chat, cmd = m.chat.Update(k)
 		}
@@ -826,8 +894,7 @@ func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
 		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListAccounts, chatListSettings, chatListSwitch,
-		chatListDeleteDone, chatListAgent, chatListInbox, chatListLabel, chatListLabels,
-		chatListOpen:
+		chatListDeleteDone, chatListAgent, chatListInbox, chatListLabels, chatListCompose:
 		return true
 	}
 	return false
@@ -862,7 +929,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	paneFocused := m.paneOpen() && m.focus == focusChat
 	chatFocused := m.chatOpen && m.focus == focusChat
 	editing := m.agentOpen && (m.agentPane.editing || m.agentPane.confirm != nil ||
-		m.agentPane.picker != nil)
+		m.agentPane.picker != nil) || m.mailOpen && m.mail.typing() && m.focus == focusChat
 
 	k := msg.String()
 	switch {
@@ -890,6 +957,10 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	if paneFocused && m.agentOpen {
 		m.agentPane, cmd = m.agentPane.Update(msg)
+		return m, cmd
+	}
+	if paneFocused && m.mailOpen {
+		m.mail, cmd = m.mail.key(msg)
 		return m, cmd
 	}
 	if chatFocused {
@@ -922,27 +993,41 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.entries = msg.entries
 		m.archiveUnread = msg.archiveUnread
 		m.list = newChatListModel(m.ctx, m.st, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
-		m.list.labels, m.list.labelOpen = msg.labels, m.labelOpen
 		m.list.selected = min(selected, m.list.maxIndex())
 		m.list.offset = offset
 		var tick tea.Cmd
 		if m.list.loading && !m.spinning {
 			m.spinning, tick = true, m.spin.Tick
 		}
-		if i, ok := m.list.labelIndex(m.goToLabel); ok {
-			m.list.selected = i
-			m.focus = focusList
-		}
+		label := m.goToLabel
 		m.goToLabel = ""
+		for i, e := range m.entries {
+			if label != "" && e.ID.Id == label {
+				m.list.selected = m.list.before() + i
+				return m.chooseChat(i)
+			}
+		}
 		return m, tick
 
 	case tuiRetryDialogs:
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 
 	case chatListChoice:
-		if msg.index >= 0 && msg.index < len(m.entries) {
-			return m.openChat(m.entries[msg.index])
+		return m.chooseChat(msg.index)
+
+	case chatListCompose:
+		var load tea.Cmd
+		if !m.mailOpen {
+			m, load = m.chooseChat(0)
 		}
+		if !m.mailOpen {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.mail.reading, m.mail.search = nil, nil
+		m.mail, cmd = m.mail.act("c")
+		m.focus = focusChat
+		return m, tea.Batch(load, cmd)
 
 	case chatListRefresh:
 		return m, loadDialogs(m.ctx, m.b, m.archived)
@@ -990,10 +1075,6 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case chatListAgent:
 		return m.agentRow(msg.id)
 
-	case chatListLabel:
-		m.labelOpen[msg.name] = !m.labelOpen[msg.name]
-		return m, nil
-
 	case chatListLabels:
 		lb, ok := m.b.(backend.Labeler)
 		if !ok {
@@ -1006,9 +1087,6 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		m.labels = picker
 		return m.sized(), nil
-
-	case chatListOpen:
-		return m.openChat(msg.entry)
 	}
 
 	var cmd tea.Cmd
@@ -1042,6 +1120,12 @@ func (m tuiModel) footer() string {
 		if m.twoPane() {
 			keys = append(keys, helpKey{"tab", "chats"})
 		}
+	case m.mailOpen && m.focus == focusChat:
+		keys = m.mail.helpKeys()
+		if m.twoPane() && !m.mail.typing() {
+			keys = append(keys, helpKey{"tab", "folders"})
+		}
+		notice = m.mail.notice
 	case m.agentOpen && m.focus == focusChat:
 		keys = m.agentPane.helpKeys()
 		if m.twoPane() && m.agentPane.confirm == nil && m.agentPane.picker == nil &&
@@ -1062,6 +1146,9 @@ func (m tuiModel) footer() string {
 		}
 		if m.agentOpen {
 			keys = append(keys, helpKey{"tab", "bot"}, helpKey{"esc", "close bot"})
+		}
+		if m.mailOpen {
+			keys = append(keys, helpKey{"tab", "mail"}, helpKey{"esc", "close folder"})
 		}
 		if m.chatOpen {
 			keys = append(keys, helpKey{"tab", "chat"}, helpKey{"esc", "close chat"})
@@ -1088,6 +1175,7 @@ func (m tuiModel) View() tea.View {
 
 func (m tuiModel) render() string {
 	m.list.spin = m.spin.View()
+	m.mail.spin = m.spin.View()
 	if m.chatOpen && m.chat.locked {
 		return m.chat.lockView(m.width, m.height)
 	}
@@ -1105,6 +1193,8 @@ func (m tuiModel) render() string {
 			sidebarWidth, bodyHeight, m.st.border(listFocused))
 		right := m.emptyPane(m.width-sidebarWidth, bodyHeight)
 		switch {
+		case m.mailOpen:
+			right = m.mail.view(!listFocused)
 		case m.unreadOpen:
 			right = m.unread.view(!listFocused)
 		case m.agentOpen:
@@ -1113,6 +1203,8 @@ func (m tuiModel) render() string {
 			right = m.chat.View()
 		}
 		body = joinColumns(list, right)
+	case m.mailOpen:
+		body = m.mail.view(true)
 	case m.unreadOpen:
 		body = m.unread.view(true)
 	case m.agentOpen:
@@ -1193,15 +1285,39 @@ func (m tuiModel) labelsAt() (x, y int) {
 	return modalRect(m.width, m.bodyHeight(), w, h)
 }
 
-// closeLabels closes the Labels modal and reloads the list for the sections
-// it changed, then selects label's section when one was picked, expanded.
+// closeLabels closes the Labels modal and reloads the list for the labels it
+// showed or hid, then opens label when one was picked. Closing the move
+// picker on a folder moves the mail there.
 func (m tuiModel) closeLabels(label string) (tuiModel, tea.Cmd) {
 	m.labels = nil
-	if label != "" {
-		m.labelOpen[label] = true
-		m.goToLabel = label
+	if ids := m.moving; ids != nil {
+		m.moving = nil
+		if label == "" || !m.mailOpen {
+			return m, nil
+		}
+		name := label
+		for _, e := range m.entries {
+			if e.ID.Id == label {
+				name = textfmt.Plain(e.Title)
+			}
+		}
+		var cmd tea.Cmd
+		m.mail, cmd = m.mail.move(ids, label, name)
+		return m, cmd
 	}
+	m.goToLabel = label
 	return m, loadDialogs(m.ctx, m.b, m.archived)
+}
+
+// chooseChat opens the list's chat at index: on email, a folder.
+func (m tuiModel) chooseChat(index int) (tuiModel, tea.Cmd) {
+	if index < 0 || index >= len(m.entries) {
+		return m, nil
+	}
+	if mb, ok := m.b.(backend.Mailbox); ok {
+		return m.openFolder(mb, m.entries[index])
+	}
+	return m.openChat(m.entries[index])
 }
 
 // pickerAt is the top-left corner of the bot's chat picker: centred over its pane.

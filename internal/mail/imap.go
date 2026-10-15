@@ -110,32 +110,34 @@ func (b *MailBackend) selectBox(c *imapclient.Client, mailbox string) (uint32, e
 	return data.UIDValidity, nil
 }
 
-// findMailboxes locates the Sent and Trash folders by their special-use
-// flags and saves the labels. The caller holds connMu.
+// findMailboxes locates the Sent, Trash and archive folders by their
+// special-use flags and saves the labels. Gmail archives to All Mail.
 func (b *MailBackend) findMailboxes(c *imapclient.Client) error {
 	boxes, err := c.List("", "*", nil).Collect()
 	if err != nil {
 		return fmt.Errorf("list mailboxes: %w", err)
 	}
+	var sent, trash, archive, all string
 	for _, box := range boxes {
 		for _, attr := range box.Attrs {
 			switch attr {
 			case imap.MailboxAttrSent:
-				b.sentBox = box.Mailbox
+				sent = box.Mailbox
 			case imap.MailboxAttrTrash:
-				b.trashBox = box.Mailbox
+				trash = box.Mailbox
+			case imap.MailboxAttrArchive:
+				archive = box.Mailbox
+			case imap.MailboxAttrAll:
+				all = box.Mailbox
 			}
 		}
 	}
-	return b.db.saveLabels(labelNames(boxes))
-}
-
-// listLabels saves the labels the server has now.
-func (b *MailBackend) listLabels(c *imapclient.Client) error {
-	boxes, err := c.List("", "*", nil).Collect()
-	if err != nil {
-		return fmt.Errorf("list labels: %w", err)
+	if archive == "" && isGmail(b.Account.IMAPHost) {
+		archive = all
 	}
+	b.mu.Lock()
+	b.sentBox, b.trashBox, b.archiveBox = sent, trash, archive
+	b.mu.Unlock()
 	return b.db.saveLabels(labelNames(boxes))
 }
 
@@ -151,7 +153,8 @@ func labelNames(boxes []*imap.ListData) []string {
 
 // isLabel reports whether a mailbox is one of the user's labels: Gmail
 // lists each as a folder, and other servers' own folders count too. The
-// inbox and the special folders (Sent, Trash, Gmail's All Mail…) do not.
+// inbox and the special folders (Sent, Trash, Archive, Gmail's All Mail…)
+// do not.
 func isLabel(box *imap.ListData) bool {
 	if strings.EqualFold(box.Mailbox, inbox) {
 		return false
@@ -160,7 +163,7 @@ func isLabel(box *imap.ListData) bool {
 		for _, skip := range []imap.MailboxAttr{imap.MailboxAttrNoSelect,
 			imap.MailboxAttrNonExistent, imap.MailboxAttrAll, imap.MailboxAttrDrafts,
 			imap.MailboxAttrFlagged, imap.MailboxAttrJunk, imap.MailboxAttrSent,
-			imap.MailboxAttrTrash, imap.MailboxAttrImportant} {
+			imap.MailboxAttrTrash, imap.MailboxAttrImportant, imap.MailboxAttrArchive} {
 			if strings.EqualFold(string(attr), string(skip)) {
 				return false
 			}
@@ -170,7 +173,7 @@ func isLabel(box *imap.ListData) bool {
 }
 
 // runSync keeps the cache current: at start, when IDLE reports a change,
-// and every few minutes for read state changed elsewhere.
+// and every few minutes for mail moved or read elsewhere.
 func (b *MailBackend) runSync(ctx context.Context) {
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
@@ -211,113 +214,55 @@ func (b *MailBackend) runSync(ctx context.Context) {
 	}
 }
 
+// syncAll brings the inbox and the Sent folder up to date on the command
+// connection.
 func (b *MailBackend) syncAll(ctx context.Context) error {
-	if err := b.syncMailbox(ctx, inbox); err != nil {
+	changed := false
+	defer func() {
+		if changed {
+			b.events.Publish(backend.Event{Kind: backend.EventUnread})
+		}
+	}()
+	sync := func(box string) error {
+		var news []row
+		err := b.withConn(ctx, func(c *imapclient.Client) error {
+			b.selected = "" // syncFolder selects the folder itself
+			ok, added, err := b.syncFolder(ctx, c, box, box != inbox)
+			changed, news = changed || ok, added
+			return err
+		})
+		b.announce(box, news) // after connMu is released
 		return err
 	}
+	if err := sync(inbox); err != nil {
+		return err
+	}
+	// The first connection names Sent, so it is read after the inbox.
 	if sent := b.sentMailbox(); sent != "" {
-		return b.syncMailbox(ctx, sent)
+		return sync(sent)
 	}
 	return nil
 }
 
 func (b *MailBackend) sentMailbox() string {
-	b.connMu.Lock()
-	defer b.connMu.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.sentBox
 }
 
-// syncMailbox fetches the mails new since the last sync, or the newest ones
-// inside the retention window on the first, and refreshes read state.
-func (b *MailBackend) syncMailbox(ctx context.Context, mailbox string) error {
-	var added []row
-	unreadChanged := false
-	err := b.withConn(ctx, func(c *imapclient.Client) error {
-		uv, err := b.selectBox(c, mailbox)
-		if err != nil {
-			return err
-		}
-		savedUV, last, err := b.db.syncState(mailbox)
-		if err != nil {
-			return err
-		}
-		if savedUV != uv {
-			if savedUV != 0 {
-				if err := b.db.resetMailbox(mailbox); err != nil {
-					return err
-				}
-			}
-			last = 0
-		}
-		criteria := &imap.SearchCriteria{}
-		if last == 0 {
-			if days := RetentionDays(b.Store); days > 0 {
-				criteria.Since = time.Now().AddDate(0, 0, -days)
-			}
-		} else {
-			criteria.UID = []imap.UIDSet{{{Start: imap.UID(last + 1), Stop: 0}}}
-		}
-		found, err := c.UIDSearch(criteria, nil).Wait()
-		if err != nil {
-			return fmt.Errorf("search %s: %w", mailbox, err)
-		}
-		var uids []imap.UID
-		for _, uid := range found.AllUIDs() {
-			if uint32(uid) > last {
-				uids = append(uids, uid)
-			}
-		}
-		if last == 0 && len(uids) > initialSyncLimit {
-			uids = uids[len(uids)-initialSyncLimit:]
-		}
-		rows, err := b.fetchRows(c, mailbox, uv, uids, mailbox != inbox)
-		if err != nil {
-			return err
-		}
-		newest := last
-		for i := range rows {
-			newest = max(newest, rows[i].UID)
-			ok, err := b.db.insert(&rows[i])
-			if err != nil {
-				return err
-			}
-			if ok && last != 0 {
-				added = append(added, rows[i])
-			}
-		}
-		if err := b.db.saveSyncState(mailbox, uv, newest); err != nil {
-			return err
-		}
-		if last == 0 && len(rows) > 0 {
-			unreadChanged = true
-		}
-		if mailbox != inbox {
-			return nil
-		}
-		unseen := &imap.SearchCriteria{NotFlag: []imap.Flag{imap.FlagSeen}}
-		if days := RetentionDays(b.Store); days > 0 {
-			unseen.Since = time.Now().AddDate(0, 0, -days)
-		}
-		found, err = c.UIDSearch(unseen, nil).Wait()
-		if err != nil {
-			return fmt.Errorf("search unread mail: %w", err)
-		}
-		set := make(map[uint32]bool)
-		for _, uid := range found.AllUIDs() {
-			set[uint32(uid)] = true
-		}
-		changed, err := b.db.setUnseen(mailbox, uv, set)
-		unreadChanged = unreadChanged || changed
-		return err
-	})
-	for _, r := range added {
+func (b *MailBackend) archiveMailbox() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.archiveBox
+}
+
+// announce publishes mail new to folder.
+func (b *MailBackend) announce(folder string, news []row) {
+	for _, r := range news {
 		msg := b.toMessage(r)
-		b.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chatID(r.Peer), Message: &msg})
+		b.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chatID(folder),
+			Message: &msg})
 	}
-	if unreadChanged || len(added) > 0 {
-		b.events.Publish(backend.Event{Kind: backend.EventUnread})
-	}
-	return err
 }
 
 // fetchRows downloads the envelope, structure and readable text of uids;
@@ -387,6 +332,9 @@ func (b *MailBackend) envelopeRow(m *imapclient.FetchMessageBuffer, mailbox stri
 		To:        joinAddrs(env.To),
 		Cc:        joinAddrs(env.Cc),
 	}
+	if r.MessageID == "" {
+		r.MessageID = syntheticID(mailbox, uv, r.UID)
+	}
 	if len(env.InReplyTo) > 0 {
 		r.InReplyTo = strings.Trim(env.InReplyTo[0], "<>")
 	}
@@ -432,49 +380,6 @@ func joinAddrs(list []imap.Address) string {
 		out = append(out, addr)
 	}
 	return strings.Join(out, ", ")
-}
-
-// fetchPeer downloads up to limit of peer's mails older than before (now
-// when zero) that are not cached, from the inbox and the Sent folder.
-func (b *MailBackend) fetchPeer(ctx context.Context, peer string, before time.Time, limit int) error {
-	sent := b.sentMailbox()
-	return b.withConn(ctx, func(c *imapclient.Client) error {
-		for _, box := range []struct{ name, header string }{{inbox, "From"}, {sent, "To"}} {
-			if box.name == "" {
-				continue
-			}
-			uv, err := b.selectBox(c, box.name)
-			if err != nil {
-				return err
-			}
-			criteria := &imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{
-				{Key: box.header, Value: peer}}}
-			if !before.IsZero() {
-				criteria.Before = before.AddDate(0, 0, 1) // SEARCH compares dates only
-			}
-			found, err := c.UIDSearch(criteria, nil).Wait()
-			if err != nil {
-				return fmt.Errorf("search %s: %w", box.name, err)
-			}
-			var uids []imap.UID
-			all := found.AllUIDs()
-			for i := len(all) - 1; i >= 0 && len(uids) < limit; i-- {
-				if !b.db.hasUID(box.name, uv, uint32(all[i])) {
-					uids = append(uids, all[i])
-				}
-			}
-			rows, err := b.fetchRows(c, box.name, uv, uids, box.name != inbox)
-			if err != nil {
-				return err
-			}
-			for i := range rows {
-				if _, err := b.db.insert(&rows[i]); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
 }
 
 // runIdle holds a second connection in IDLE on the inbox and nudges the sync
@@ -562,7 +467,8 @@ func (b *MailBackend) syncLabels(ctx context.Context) {
 		}
 		return
 	}
-	if err := b.listLabels(c); err != nil {
+	// Listing names the archive too, before the first inbox pass may have.
+	if err := b.findMailboxes(c); err != nil {
 		b.report(err)
 		return
 	}
@@ -570,6 +476,11 @@ func (b *MailBackend) syncLabels(ctx context.Context) {
 	if err != nil {
 		b.report(err)
 		return
+	}
+	if archive := b.archiveMailbox(); archive != "" && !isGmail(b.Account.IMAPHost) {
+		// Gmail's All Mail holds everything, so only another server's
+		// archive is a folder of its own.
+		labels = append(labels, archive)
 	}
 	if len(labels) == 0 {
 		c.Logout().Wait()
@@ -615,8 +526,9 @@ func (b *MailBackend) labelWorker(ctx context.Context, c *imapclient.Client,
 				return changed
 			}
 		}
-		ok, err := b.syncLabel(ctx, c, label)
+		ok, news, err := b.syncFolder(ctx, c, label, false)
 		changed = changed || ok
+		b.announce(label, news)
 		var imapErr *imap.Error
 		if err != nil && ctx.Err() == nil {
 			b.report(err)
@@ -632,22 +544,25 @@ func (b *MailBackend) labelWorker(ctx context.Context, c *imapclient.Client,
 	return changed
 }
 
-// syncLabel records which mails are under label, caching any not cached
-// yet, and refreshes the read state of those cached from its folder. It
-// reports whether anything changed.
-func (b *MailBackend) syncLabel(ctx context.Context, c *imapclient.Client, label string) (bool, error) {
+// syncFolder records which mails are in a folder (the inbox, Sent or a
+// label) inside the retention window, caching any not cached yet, and
+// refreshes their read state. sent marks the Sent folder. It reports
+// whether anything changed, and the mail new to a folder synced before,
+// for the caller to announce.
+func (b *MailBackend) syncFolder(ctx context.Context, c *imapclient.Client, label string,
+	sent bool) (changed bool, news []row, err error) {
 	data, err := c.Select(label, nil).Wait()
 	if err != nil {
-		return false, fmt.Errorf("open label %s: %w", label, err)
+		return false, nil, fmt.Errorf("open label %s: %w", label, err)
 	}
 	uv := data.UIDValidity
 	savedUV, _, err := b.db.syncState(label)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if savedUV != 0 && savedUV != uv {
 		if err := b.db.resetMailbox(label); err != nil {
-			return false, err
+			return false, nil, err
 		}
 	}
 	criteria := &imap.SearchCriteria{}
@@ -656,13 +571,13 @@ func (b *MailBackend) syncLabel(ctx context.Context, c *imapclient.Client, label
 	}
 	found, err := c.UIDSearch(criteria, nil).Wait()
 	if err != nil {
-		return false, fmt.Errorf("search label %s: %w", label, err)
+		return false, nil, fmt.Errorf("search label %s: %w", label, err)
 	}
 	all := found.AllUIDs()
 	all = all[max(0, len(all)-initialSyncLimit):]
 	known, err := b.db.labelUIDs(label, uv)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	present := make(map[uint32]bool, len(all))
 	var fresh []imap.UID
@@ -674,44 +589,38 @@ func (b *MailBackend) syncLabel(ctx context.Context, c *imapclient.Client, label
 			fresh = append(fresh, uid)
 		}
 	}
-	added, members, err := b.labelMail(c, label, uv, fresh)
+	added, members, err := b.labelMail(c, label, uv, fresh, sent)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if err := b.db.setLabelMembers(label, uv, present, members); err != nil {
-		return false, err
+		return false, nil, err
 	}
-	changed := len(fresh) > 0 || len(known) > len(present)
+	changed = len(fresh) > 0 || len(known) > len(present)
+	if savedUV == uv {
+		news = added // on a first sync, everything would be news
+	}
 	if err := b.db.saveSyncState(label, uv, newest); err != nil {
-		return changed, err
+		return changed, news, err
 	}
 	unseen := &imap.SearchCriteria{NotFlag: []imap.Flag{imap.FlagSeen}, Since: criteria.Since}
 	found, err = c.UIDSearch(unseen, nil).Wait()
 	if err != nil {
-		return changed, fmt.Errorf("search unread mail in %s: %w", label, err)
+		return changed, news, fmt.Errorf("search unread mail in %s: %w", label, err)
 	}
 	set := make(map[uint32]bool)
 	for _, uid := range found.AllUIDs() {
 		set[uint32(uid)] = true
 	}
 	read, err := b.db.setUnseen(label, uv, set)
-	if savedUV == uv {
-		// Mail new to a label synced before is news, as in the inbox.
-		for _, r := range added {
-			msg := b.toMessage(r)
-			b.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chatID(r.Peer),
-				Message: &msg})
-		}
-	}
-	return changed || read, err
+	return changed || read, news, err
 }
 
-// labelMail reads the Message-IDs of uids in label's folder and caches the
-// mails not cached yet. It returns those it cached and every mail it could
-// name; a mail without a Message-ID cannot be told apart from its copies
-// and is left out.
-func (b *MailBackend) labelMail(c *imapclient.Client, label string, uv uint32, uids []imap.UID) (
-	added []row, members []labelMember, err error) {
+// labelMail reads the Message-IDs of uids in label's folder, selected on c,
+// and caches the mails not cached yet; sent marks the Sent folder. It
+// returns those it cached and every mail it read.
+func (b *MailBackend) labelMail(c *imapclient.Client, label string, uv uint32, uids []imap.UID,
+	sent bool) (added []row, members []labelMember, err error) {
 	var missing []imap.UID
 	for start := 0; start < len(uids); start += fetchBatch {
 		batch := uids[start:min(len(uids), start+fetchBatch)]
@@ -726,15 +635,17 @@ func (b *MailBackend) labelMail(c *imapclient.Client, label string, uv uint32, u
 			}
 			id := strings.Trim(m.Envelope.MessageID, "<>")
 			if id == "" {
-				continue
+				id = syntheticID(label, uv, uint32(m.UID))
 			}
 			members = append(members, labelMember{uid: uint32(m.UID), messageID: id})
 			if !b.db.hasMessageID(id) {
 				missing = append(missing, m.UID)
+			} else if err := b.db.adopt(id, label, uv, uint32(m.UID)); err != nil {
+				return nil, nil, err
 			}
 		}
 	}
-	rows, err := b.fetchRows(c, label, uv, missing, false)
+	rows, err := b.fetchRows(c, label, uv, missing, sent)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -12,11 +13,13 @@ import (
 )
 
 // labelPicker is the modal opened from the sidebar's "Labels…" row: every
-// label of the account, each ticked when its section is in the sidebar.
-// Space shows or hides one there; Enter goes to one, showing it first.
+// label of the account, each ticked when it is in the sidebar. Space shows
+// or hides one there; Enter goes to one, showing it first. Opened to move
+// mail (move), it lists the folders mail can go to and Enter picks one.
 type labelPicker struct {
 	st     *styles
 	lb     backend.Labeler
+	move   bool
 	labels []backend.Label
 	input  textinput.Model
 	sel    int // index into shown()
@@ -39,6 +42,24 @@ func newLabelPicker(st *styles, lb backend.Labeler) (*labelPicker, error) {
 	in.CharLimit = 64
 	m := &labelPicker{st: st, lb: lb, labels: labels, input: in}
 	m.input.Focus()
+	return m, nil
+}
+
+// newMovePicker lists where mail in the folder from can move: the folders
+// named first, then every label.
+func newMovePicker(st *styles, lb backend.Labeler, first []string, from string) (*labelPicker,
+	error) {
+	m, err := newLabelPicker(st, lb)
+	if err != nil {
+		return nil, err
+	}
+	var labels []backend.Label
+	for _, name := range first {
+		labels = append(labels, backend.Label{Name: name})
+	}
+	m.labels = append(labels, m.labels...)
+	m.labels = slices.DeleteFunc(m.labels, func(l backend.Label) bool { return l.Name == from })
+	m.move = true
 	return m, nil
 }
 
@@ -88,6 +109,9 @@ func (m *labelPicker) key(msg tea.KeyPressMsg) (open string, done bool, cmd tea.
 		if m.sel >= len(shown) {
 			return "", false, nil
 		}
+		if m.move {
+			return shown[m.sel].Name, true, nil
+		}
 		if !m.setShown(shown[m.sel].Name, true) {
 			return "", false, nil
 		}
@@ -97,7 +121,9 @@ func (m *labelPicker) key(msg tea.KeyPressMsg) (open string, done bool, cmd tea.
 	case "down":
 		m.sel = min(max(0, len(m.shown())-1), m.sel+1)
 	case "space", " ":
-		m.toggle(m.sel)
+		if !m.move {
+			m.toggle(m.sel)
+		}
 	default:
 		m.input, cmd = m.input.Update(msg)
 		m.sel = min(m.sel, max(0, len(m.shown())-1))
@@ -140,16 +166,20 @@ func (m *labelPicker) View() string {
 	for i := first; i < min(len(shown), first+m.rows()); i++ {
 		l := shown[i]
 		box := "[ ] "
-		if l.Shown {
+		switch {
+		case m.move:
+			box = ""
+		case l.Shown:
 			box = "[x] "
 		}
 		count := ""
 		if l.Unread > 0 {
 			count = fmt.Sprintf("%d unread", l.Unread)
 		}
-		room := max(1, inner-2-4-textfmt.DisplayWidth(count)-1)
+		boxW := textfmt.DisplayWidth(box)
+		room := max(1, inner-2-boxW-textfmt.DisplayWidth(count)-1)
 		name := truncate(textfmt.Plain(l.Name), room)
-		gap := strings.Repeat(" ", max(1, inner-2-4-textfmt.DisplayWidth(name)-
+		gap := strings.Repeat(" ", max(1, inner-2-boxW-textfmt.DisplayWidth(name)-
 			textfmt.DisplayWidth(count)))
 		row := box + name
 		if i == m.sel {
@@ -165,31 +195,41 @@ func (m *labelPicker) View() string {
 	for len(body) < m.height-3 {
 		body = append(body, "")
 	}
-	status := m.st.dim.Render(textfmt.ClipLine("space: show/hide in sidebar · enter: go to label",
-		inner))
+	hint, title := "space: show/hide in sidebar · enter: go to label", "Labels"
+	if m.move {
+		hint, title = "enter: move the mail here", "Move to"
+	}
+	status := m.st.dim.Render(textfmt.ClipLine(hint, inner))
 	if m.notice != "" {
 		status = styleError.Render(textfmt.ClipLine(m.notice, inner))
 	}
 	body = append(body, status)
-	return renderBox("Labels", body, m.width, m.height, m.st.accentColor)
+	return renderBox(title, body, m.width, m.height, m.st.accentColor)
 }
 
 // click answers a left click at x, y of the box, counted from its top-left
-// corner: a label row shows or hides it, and outside the box closes it.
-func (m *labelPicker) click(x, y int) (done bool) {
+// corner: a label row shows or hides it, or when moving, picks it; outside
+// the box closes it.
+func (m *labelPicker) click(x, y int) (pick string, done bool) {
 	if x < 0 || x >= m.width || y < 0 || y >= m.height {
-		return true
+		return "", true
 	}
 	if row := y - 1 - labelPickerTop; row >= 0 && row < m.rows() {
 		if i := window(m.sel, m.rows()) + row; i < len(m.shown()) {
 			m.sel = i
+			if m.move {
+				return m.shown()[i].Name, true
+			}
 			m.toggle(i)
 		}
 	}
-	return false
+	return "", false
 }
 
 func (m *labelPicker) helpKeys() []helpKey {
+	if m.move {
+		return []helpKey{{"↑↓", "select"}, {"enter", "move here"}, {"esc", "cancel"}}
+	}
 	return []helpKey{{"↑↓", "select"}, {"space", "show/hide"}, {"enter", "go to"},
 		{"esc", "close"}}
 }

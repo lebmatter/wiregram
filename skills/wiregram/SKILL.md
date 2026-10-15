@@ -31,6 +31,10 @@ Matrix ID or an email address. A DM's title is the person's display name, so
 prefer the username for people. A name that matches more than
 one chat is an error; use the chat ID then.
 
+On email, `chats` lists the folders (kind `folder`, e.g. `INBOX`), `stream`
+takes a folder, and `send` takes an address: it answers the newest mail with
+them, or with a first line `Subject: ...`, starts a new conversation.
+
 ## Commands
 
 ```sh

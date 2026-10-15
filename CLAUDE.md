@@ -95,11 +95,10 @@ These are project constraints, not suggestions:
   shortcut list lives only in `wiregram -h` (`usageText`).
 - The sidebar is an account tree (`internal/tui/list.go`): every
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
-  has a bot), the active one expanded to its chats, archive (Telegram only), search and,
-  on email a `── Labels` section (`backend.Labeler`: a collapsible row per label the user
-  shows, its correspondents under it, then `Labels…`, the modal in `internal/tui/labels.go`
-  that shows or hides each), and except on email, a `── Bots` section: a `NAME @handle` row
-  per bot, then `New bot…`. Enter on
+  has a bot), the active one expanded to its chats, archive (Telegram only), search and
+  a `── Bots` section: a `NAME @handle` row per bot, then `New bot…`. An email account
+  is expanded to its folders instead, then `Compose…` and `Labels…` (`backend.Labeler`,
+  the modal in `internal/tui/labels.go` that shows or hides each label). Enter on
   another account switches to it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
@@ -124,7 +123,7 @@ These are project constraints, not suggestions:
   Settings' Plugins… row switches them and edits their settings
   (`internal/tui/plugins.go`). The built-ins are Weather (Open-Meteo) and Hacker News
   (the Algolia HN API).
-- Each expanded account has an Unread row (`u`, `internal/tui/unread.go`): a column
+- Each expanded account but email has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
 - A message that mentions the user (`Message.Mentioned`: `@you` or a chat-wide
@@ -168,8 +167,8 @@ These are project constraints, not suggestions:
   from `/users/autocomplete`) and Telegram (members with a username), the MXID
   on Matrix (`m.mentions`), `@number` on WhatsApp (`MentionedJID`). Email has
   no mentions.
-- Messages have no per-message shortcuts. Enter on an empty composer (always,
-  in email chats and the mail reader) or a right click opens the actions modal
+- Messages have no per-message shortcuts (email aside: see its bullet). Enter on an empty
+  composer or a right click opens the actions modal
   (`internal/tui/msgmenu.go`) for the selected message: when the backend has
   reactions, a `reaction:` search field (typing in the modal filters) over the
   matching emoji row, then only the actions the message allows. The root draws
@@ -199,17 +198,26 @@ These are project constraints, not suggestions:
   details (`videoCard`); nothing is fetched for it, and a click opens the file.
 - Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   Multiline messages keep their line breaks.
-- Email (`internal/mail`, tag `EM`) is one chat per correspondent. A mail's
-  bold subject leads its block and its text stops after `mailPreviewLines`;
-  Enter opens the reader (`internal/tui/mail.go`) with headers and the whole
-  text. Email chats write in a multiline draft sent with Ctrl+S. Quoted
-  originals are trimmed in the chat, kept in the reader. HTML mail is reduced
-  to text and nothing it references is fetched. Mail is cached in
-  `wiregram.db` for the Keep mail cached setting of an email account's Settings (`mail_retention_days`,
-  default 90); pruning never touches the server, and deleting moves to Trash. Labels are
-  the server's folders (`isLabel`), listed at sign-in and on each label pass; only shown
-  ones sync, in parallel on their own connections (`syncLabels`), with membership by
-  Message-ID in `mail_label_members`.
+- Email (`internal/mail`, tag `EM`, `backend.Mailbox`) has folders for chats: Dialogs
+  lists Inbox, Sent, Archive (`\Archive`; Gmail archives to All Mail, without a row) and
+  the shown labels. A folder opens in the chat's place as `mailListModel`
+  (`internal/tui/mail.go`): one row per conversation (unread dot, who it is with, subject
+  and count, date), threaded in `internal/mail/thread.go` by In-Reply-To, else by a
+  reply-prefixed subject, with the user's Sent mail joining the conversations it answers.
+  Space expands one; Enter reads a mail with headers and its whole text, beside the list
+  when the pane is `mailSplitWidth` (140) or wider. Email is the exception to "no
+  per-message shortcuts": `c` `r` `R` `f` `d` `a` `m` `u` `/` and `v` (visual mode,
+  Space picks rows) act on the selected row, the mail read or the picked ones, and
+  Trash asks nothing since it can be undone. The composer (`internal/tui/compose.go`)
+  has To, Cc, Subject and Attach fields, completing addresses (`Mailbox.Addresses`) and
+  paths. HTML mail is reduced to text and nothing it references is fetched. Mail is
+  cached once per Message-ID (a missing one gets `syntheticID`) in `wiregram.db` for the
+  Keep mail cached setting of an email account's Settings (`mail_retention_days`, default
+  90); pruning never touches the server. Every folder, inbox and Sent included, records
+  its mail by Message-ID in `mail_label_members` (`syncFolder`), so mail moved elsewhere
+  leaves it, and actions find each mail's UID in the open folder. Labels are the server's
+  folders (`isLabel`), listed at sign-in and on each label pass; only shown ones sync, in
+  parallel on their own connections (`syncLabels`).
 - Themes live in `internal/tui/theme.go`: a fixed `themes` table (Zest, the
   default, from the website's lime and purples, then Copper), one entry per theme.
   The accent, subtle, dim, selection and badge colours come from a `*styles`
@@ -258,14 +266,14 @@ These are project constraints, not suggestions:
   and the sign-in prompts are form modals centred over
   the screen they were opened from, faded behind it (`styles.overlay`): answered
   steps as label and value rows, then the current question (`wizardModel.formView`).
-- Every yes/no question (quit, delete chat/message/bot/provider, remove account, Reset) is a
-  `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
+- Every yes/no question (quit, delete chat/message/bot/provider, remove account, Reset;
+  not moving mail to Trash) is a `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
   there, never a footer notice. Deletes and Reset start on Cancel.
 - A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
   over its screen, faded behind it: navigation and search keys; any key or click closes it.
 - Bots answer incoming DMs only (`BackendEvent.DM`); they never act in
-  groups or channels and never start a chat. Email publishes no DM events,
-  so bots never answer mail.
+  groups or channels and never start a chat. Email publishes no DM events
+  (its events name folders), so bots never answer mail.
 
 ## Architecture
 
@@ -285,7 +293,7 @@ internal/
   matrix/            Matrix backend
   mattermost/        Mattermost backend
   whatsapp/          whatsmeow backend
-  mail/              IMAP/SMTP email backend and its mail cache tables
+  mail/              IMAP/SMTP email backend: folders, threading, its mail cache tables
   agent/             SQLite store for providers, per-account agents (bots), the DMs
                      each answers, message history and the record of what they sent
   plugin/            Lua plugin VMs, their API (settings, kv, http, widgets)
@@ -315,7 +323,9 @@ lowest package that needs them rather than importing sideways.
   when the agent is). `SetActive` only scopes unread suppression and typing.
 - `Publish` never blocks and no lock is held across a channel operation;
   backends release their own mutex before publishing. Lock order is
-  `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`.
+  `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`; in the mail backend,
+  `connMu` (the IMAP connection, held through syncs) → `mu`, so the screen reads the
+  special folders under `mu` without waiting on a sync.
 - The chat lock lives in the chat model (`locked`): the root sets it on `tea.BlurMsg`
   (focus reporting) and Alt+L; there is no idle timer. Media plays through
   `tea.ExecProcess`.

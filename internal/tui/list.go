@@ -13,11 +13,11 @@ import (
 )
 
 // chatListModel is the sidebar tree: every account as a header, with the
-// active account expanded to its chats and the others collapsed above and
-// below it. Selection indexes run over the selectable rows in display order:
-// accounts above, chats, the action rows (Unread, Mentions, archive, search,
-// the label sections and the account's agent), accounts below, then
-// "Settings…".
+// active account expanded to its chats (on email, its folders) and the
+// others collapsed above and below it. Selection indexes run over the
+// selectable rows in display order: accounts above, chats, the action rows
+// (Unread, Mentions, archive, search and the account's bots; on email,
+// Compose and Labels), accounts below, then "Settings…".
 type chatListModel struct {
 	st            *styles
 	ctx           context.Context
@@ -30,15 +30,12 @@ type chatListModel struct {
 	archiveUnread int
 	caps          backend.Capabilities
 	mentions      bool // the backend can list mentions
-	labeler       bool // the backend groups chats under labels
+	labeler       bool // the backend has labels to show in the sidebar
+	mailbox       bool // the chats are email folders
 	// loading is set while the backend's first sync has brought no chats
 	// yet; the tree shows spin, the root's spinner frame, in their place.
-	loading bool
-	spin    string
-	labels  []labelSection
-	// labelOpen names the expanded label sections; the screen owns it, so
-	// it outlasts reloads of the list.
-	labelOpen     map[string]bool
+	loading       bool
+	spin          string
 	confirm       *chatListConfirm
 	offset        int
 	width, height int
@@ -63,16 +60,8 @@ type chatListArchiveToggle struct{}
 type chatListAgent struct{ id int64 } // 0 creates a bot
 type chatListInbox struct{ bot inboxBot }
 type chatListDeleteDone struct{ err error }
-type chatListLabel struct{ name string } // expands or collapses a label section
 type chatListLabels struct{}
-type chatListOpen struct{ entry backend.ChatEntry }
-
-// labelSection is a label shown in the sidebar, with its chats.
-type labelSection struct {
-	name    string
-	unread  int
-	entries []backend.ChatEntry
-}
+type chatListCompose struct{}
 
 func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
 	w, h := termSize()
@@ -91,6 +80,7 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 	}
 	_, m.mentions = b.(backend.MentionFetcher)
 	_, m.labeler = b.(backend.Labeler)
+	_, m.mailbox = b.(backend.Mailbox)
 	if s, ok := b.(backend.Syncer); ok {
 		m.loading = s.Syncing() && len(entries) == 0 && !archived
 	}
@@ -105,15 +95,19 @@ type listAction struct {
 	msg   tea.Msg
 	// section is the heading ruled above the row, which starts a section.
 	section string
-	// chat is a chat inside a label section, drawn as a chat, indented.
-	chat bool
-	// label is the label section header's name.
-	label string
 }
 
 func (m chatListModel) actions() []listAction {
 	if m.loading {
 		return nil // nothing to act on until the chats arrive
+	}
+	if m.mailbox {
+		acts := []listAction{{entry: backend.ChatEntry{Title: "Compose…"}, msg: chatListCompose{}}}
+		if m.labeler {
+			acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Labels…"},
+				msg: chatListLabels{}})
+		}
+		return acts
 	}
 	unread := backend.ChatEntry{Title: "Unread"}
 	for _, e := range m.entries {
@@ -132,9 +126,6 @@ func (m chatListModel) actions() []listAction {
 		acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}})
 	}
 	acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
-	if m.labeler && !m.archived {
-		acts = append(acts, m.labelActions()...)
-	}
 	if agentsAllowed(m.mgr, m.active) {
 		first := len(acts)
 		for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
@@ -156,40 +147,6 @@ func (m chatListModel) actions() []listAction {
 		acts[first].section = "Bots"
 	}
 	return acts
-}
-
-// labelActions is the Labels section: a header per label shown in the
-// sidebar, its chats under it while expanded, then "Labels…".
-func (m chatListModel) labelActions() []listAction {
-	var acts []listAction
-	for _, l := range m.labels {
-		arrow := "▸ "
-		if m.labelOpen[l.name] {
-			arrow = "▾ "
-		}
-		acts = append(acts, listAction{entry: backend.ChatEntry{Title: arrow + l.name,
-			Unread: l.unread}, msg: chatListLabel{l.name}, label: l.name})
-		if !m.labelOpen[l.name] {
-			continue
-		}
-		for _, e := range l.entries {
-			acts = append(acts, listAction{entry: e, msg: chatListOpen{e}, chat: true})
-		}
-	}
-	acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Labels…"},
-		msg: chatListLabels{}})
-	acts[0].section = "Labels"
-	return acts
-}
-
-// labelIndex is the selection index of label's section header, if shown.
-func (m chatListModel) labelIndex(label string) (int, bool) {
-	for i, a := range m.actions() {
-		if label != "" && a.label == label {
-			return m.before() + len(m.entries) + i, true
-		}
-	}
-	return 0, false
 }
 
 // agentsAllowed reports whether the account can have bots (Chat Agents): they
@@ -233,11 +190,6 @@ func (m chatListModel) Init() tea.Cmd { return nil }
 func (m chatListModel) refreshUnread() chatListModel {
 	for i := range m.entries {
 		m.entries[i].Unread = m.b.CachedUnread(m.entries[i])
-	}
-	for _, l := range m.labels {
-		for i := range l.entries {
-			l.entries[i].Unread = m.b.CachedUnread(l.entries[i])
-		}
 	}
 	return m
 }
@@ -314,9 +266,17 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 		case "r":
 			return m, func() tea.Msg { return chatListRefresh{} }
 		case "/":
-			return m, func() tea.Msg { return chatListSearch{} }
+			if !m.mailbox {
+				return m, func() tea.Msg { return chatListSearch{} }
+			}
 		case "u":
-			return m, func() tea.Msg { return chatListUnread{} }
+			if !m.mailbox {
+				return m, func() tea.Msg { return chatListUnread{} }
+			}
+		case "c":
+			if m.mailbox {
+				return m, func() tea.Msg { return chatListCompose{} }
+			}
 		case "m":
 			if m.mentions {
 				return m, func() tea.Msg { return chatListMentions{} }
@@ -385,8 +345,11 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 }
 
 func (m chatListModel) title() string {
-	if m.archived {
+	switch {
+	case m.archived:
 		return "Archived"
+	case m.mailbox:
+		return "Mail"
 	}
 	return "Chats"
 }
@@ -454,11 +417,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	}
 	switch {
 	case m.loading:
-		what := " Loading chats…"
-		if m.b.Name() == "email" {
-			what = " Loading emails…"
-		}
-		rows = append(rows, "      "+m.spin+m.st.subtle.Render(what))
+		rows = append(rows, "      "+m.spin+m.st.subtle.Render(" Loading chats…"))
 	case len(m.entries) == 0:
 		rows = append(rows, m.st.subtle.Render("      No chats here"))
 	}
@@ -469,16 +428,12 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── "+a.section+" ",
 				max(1, width-4))))
 		}
-		indent := "    "
-		if a.chat {
-			indent = "      "
-		}
 		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused,
-			max(1, width-len(indent)))
-		if index != m.selected && !a.chat && a.label == "" {
+			max(1, width-4))
+		if index != m.selected {
 			line = m.st.subtle.Render(line)
 		}
-		rows = append(rows, indent+line)
+		rows = append(rows, "    "+line)
 		index++
 	}
 	for _, a := range below {
@@ -506,6 +461,10 @@ func (m chatListModel) askDelete(entry backend.ChatEntry, revoke bool) *chatList
 }
 
 func (m chatListModel) helpKeys() []helpKey {
+	if m.mailbox {
+		return []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"c", "compose"},
+			{"a", "manage accounts"}, {"r", "refresh"}}
+	}
 	keys := []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"/", "search"}, {"u", "unread"}}
 	if m.mentions {
 		keys = append(keys, helpKey{"m", "mentions"})

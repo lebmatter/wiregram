@@ -26,7 +26,8 @@ an empty composer (or right-click it) to open its actions.
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat or account |
-| <kbd>Enter</kbd> | Open chat, switch to the selected account, or open a bot, its Inbox, or create one (**New bot…**) in the Bots section |
+| <kbd>Enter</kbd> | Open chat (on email, a folder), switch to the selected account, or open a bot, its Inbox, or create one (**New bot…**) in the Bots section |
+| <kbd>c</kbd> | Compose a mail (email) |
 | <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
 | <kbd>u</kbd> | Unread: cards for every chat with unread messages |
 | <kbd>m</kbd> | Mentions: cards for the groups and channels mentioning you (not email) |
@@ -89,16 +90,24 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Ctrl+C</kbd> | Close chat |
 | Any key | Unlock the locked chat |
 
-## Email chat
+## Email folder
 
 | Key | Action |
 |-----|--------|
-| <kbd>↑</kbd>/<kbd>↓</kbd> | Select mail |
-| <kbd>Enter</kbd> | Open the selected mail's actions (Read first) |
-| Type | Write: <kbd>Enter</kbd> adds a line, <kbd>Ctrl+S</kbd> sends, <kbd>Esc</kbd> keeps the draft |
-
-A new mail's first line is its subject; a first line `Subject: ...` starts a new
-conversation instead of a reply.
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select a conversation, or a mail in an expanded one |
+| <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>g</kbd>/<kbd>G</kbd> | Page, top, bottom |
+| <kbd>Space</kbd> | Expand or collapse the conversation |
+| <kbd>Enter</kbd> | Read the mail (a conversation: its newest), marking it read |
+| <kbd>]</kbd>, <kbd>[</kbd> | Move to the reader and back, when it sits beside the list (140+ column pane) |
+| <kbd>c</kbd> | Compose a new mail |
+| <kbd>r</kbd>, <kbd>R</kbd>, <kbd>f</kbd> | Reply, reply to all, forward |
+| <kbd>d</kbd> | Move to Trash |
+| <kbd>a</kbd> | Archive (where the server has an archive) |
+| <kbd>m</kbd> | Move to another folder or label |
+| <kbd>u</kbd> | Mark read, or the newest mail unread |
+| <kbd>/</kbd> | Search the folder on the server (<kbd>Esc</kbd> clears the results) |
+| <kbd>v</kbd> | Visual mode: <kbd>Space</kbd> picks rows, then <kbd>d</kbd>, <kbd>a</kbd>, <kbd>m</kbd> or <kbd>u</kbd> acts on them; <kbd>Esc</kbd> leaves it |
+| <kbd>Esc</kbd> | Back |
 
 ## Mail reader
 
@@ -107,8 +116,20 @@ conversation instead of a reply.
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Scroll |
 | <kbd>PgUp</kbd>/<kbd>b</kbd>, <kbd>PgDn</kbd>/<kbd>Space</kbd> | Page |
 | <kbd>Home</kbd>/<kbd>g</kbd>, <kbd>End</kbd>/<kbd>G</kbd> | Top, bottom |
-| <kbd>Enter</kbd> | Actions (reply, save attachment, move to Trash…) |
+| <kbd>o</kbd>, <kbd>s</kbd> | Open the attachment, or save it to `~/Downloads` |
+| <kbd>r</kbd>, <kbd>R</kbd>, <kbd>f</kbd>, <kbd>d</kbd>, <kbd>a</kbd>, <kbd>m</kbd>, <kbd>u</kbd> | As in the folder, on this mail |
 | <kbd>Esc</kbd>, <kbd>q</kbd> | Close |
+
+## Mail composer
+
+| Key | Action |
+|-----|--------|
+| <kbd>Tab</kbd>, <kbd>Shift+Tab</kbd> | Next and previous field: To, Cc, Subject, Attach, text; in To and Cc, <kbd>Tab</kbd> first takes the address offered |
+| <kbd>Enter</kbd> in Attach | Attach the file typed (<kbd>Tab</kbd> completes paths) |
+| <kbd>Backspace</kbd> in an empty Attach | Drop the last file |
+| <kbd>Ctrl+S</kbd> | Send |
+| <kbd>Esc</kbd> | Close, keeping the draft (<kbd>c</kbd> opens it again) |
+| <kbd>Ctrl+X</kbd> | Discard the draft |
 
 ## Thread
 

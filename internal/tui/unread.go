@@ -272,9 +272,6 @@ func (m unreadModel) card(i, width int, focused bool) string {
 			sender = agentIcon + " " + m.bot.name // the bot wrote it, not the user
 		}
 		text := textfmt.ShortExcerpt(backend.GenericMessageText(msg))
-		if msg.Subject != "" {
-			text = textfmt.ShortExcerpt(textfmt.Plain(msg.Subject))
-		}
 		lines = append(lines, prefix+textfmt.NickColor(sender)+sender+"\x1b[0m"+
 			m.st.subtle.Render(": ")+text)
 	}

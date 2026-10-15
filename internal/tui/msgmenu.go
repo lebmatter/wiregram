@@ -14,7 +14,6 @@ type msgActionKind int
 
 const (
 	actReact msgActionKind = iota
-	actRead
 	actReply
 	actThread
 	actQuote
@@ -64,7 +63,6 @@ const msgMenuWidth = 46
 
 func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel backend.Message,
 	prev chatSubMode) msgMenuModel {
-	mail := caps.MultilineCompose
 	var acts []msgAction
 	add := func(ok bool, kind msgActionKind, label string) {
 		if ok {
@@ -72,14 +70,13 @@ func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel ba
 		}
 	}
 	_, saveable := b.MediaSaveable(sel)
-	add(mail && prev != chatSubReader, actRead, "Read")
 	add(true, actReply, "Reply")
 	add(true, actThread, "Thread")
 	add(sel.ReplyToID != "", actQuote, "Go to quoted message")
 	add(caps.Edit && b.Editable(sel) == nil, actEdit, "Edit")
 	add(caps.Forward, actForward, "Forward")
 	add(saveable, actOpen, "Open attachment")
-	add(!mail && b.MediaPlayable(sel), actPlay, "Play in mpv")
+	add(b.MediaPlayable(sel), actPlay, "Play in mpv")
 	add(saveable, actSave, "Save to ~/Downloads")
 	pin := "Pin"
 	if sel.Pinned {
@@ -87,8 +84,6 @@ func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel ba
 	}
 	add(caps.Pin, actPin, pin)
 	switch {
-	case mail:
-		add(true, actDeleteForMe, "Move to Trash")
 	case caps.DeleteForMe:
 		add(true, actDeleteForMe, "Delete for me")
 		add(true, actDeleteForAll, "Delete for everyone")

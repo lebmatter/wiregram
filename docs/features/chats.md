@@ -6,16 +6,18 @@ Every network's messages look the same, in the chat and in the thread pane.
 
 The footer and the actions modal only offer what the account's network supports.
 
-| | Telegram | WhatsApp | Matrix | Mattermost | Email |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Reactions | ✓ | ✓ | ✓ | ✓ | |
-| Edit | ✓ | ✓ | ✓ | ✓ | |
-| Forward | ✓ | ✓ | | | |
-| Pin | ✓ | | | ✓ | |
-| Upload | ✓ | ✓ | ✓ | ✓ | |
-| Search messages | ✓ | | ✓ | ✓ | ✓ |
-| Read receipts (`✓✓`) | ✓ | ✓ | ✓ | | |
-| Delete chat | ✓ | | | | |
+| | Telegram | WhatsApp | Matrix | Mattermost |
+|---|:-:|:-:|:-:|:-:|
+| Reactions | ✓ | ✓ | ✓ | ✓ |
+| Edit | ✓ | ✓ | ✓ | ✓ |
+| Forward | ✓ | ✓ | | |
+| Pin | ✓ | | | ✓ |
+| Upload | ✓ | ✓ | ✓ | ✓ |
+| Search messages | ✓ | | ✓ | ✓ |
+| Read receipts (`✓✓`) | ✓ | ✓ | ✓ | |
+| Delete chat | ✓ | | | |
+
+Email has folders of conversations instead of chats; see [Email](/features/email).
 
 ## Messages
 

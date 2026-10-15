@@ -171,6 +171,9 @@ func chatKind(e backend.ChatEntry) (kind, title string) {
 	if e.IsDM {
 		return "dm", title
 	}
+	if e.ID.Backend == "email" {
+		return "folder", title // email's chats are its folders
+	}
 	if rest, ok := strings.CutPrefix(title, "Channel: "); ok {
 		return "channel", rest
 	}
@@ -441,6 +444,9 @@ func cmdStream(ctx context.Context, args []string) error {
 		ch, err := findChat(ctx, b, entries, args[2])
 		if err != nil {
 			return err
+		}
+		if ch.ID.Backend == "email" && ch.IsDM {
+			return fmt.Errorf("stream email by folder; wiregram chats lists them")
 		}
 		filter.Chat = ch.ID
 	}

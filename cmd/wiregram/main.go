@@ -31,12 +31,13 @@ https://my.telegram.org/apps (unless embedded with -ldflags), then your
 phone number, login code, and optional 2FA password.
 Email accounts ask for an IMAP server (imap.gmail.com by default), the
 address, and an app password, or Google sign-in in the browser when the build
-embeds a Google OAuth client. Each correspondent is one chat. Under Search…,
-a Labels section holds the Gmail labels (other servers' folders) picked in
-its Labels… row (Space shows or hides one, Enter goes to it); Enter on a
-label expands it to the people with mail under it. Mail is cached in
-wiregram.db for the window set in an email account's Settings (90 days by default); mail
-on the server is never deleted by it.
+embeds a Google OAuth client. An email account's chats are its folders:
+Inbox, Sent, Archive (where the server has one) and the Gmail labels (other
+servers' folders) picked in its Labels… row (Space shows or hides one, Enter
+goes to it). A folder opens as a list of conversations, grouped by reply
+headers or subject. Mail is cached in wiregram.db for the window set in an
+email account's Settings (90 days by default); mail on the server is never
+deleted by it.
 A new account opens with an Account connected card listing the keys to get
 around and search; any key or click closes it.
 Config and sessions are stored in ~/.config/wiregram/.
@@ -76,20 +77,24 @@ while dragging to select text with the terminal.
 
 Quitting, deleting a chat, message, bot or provider, removing an account
 and Reset ask first in a modal: y or Enter on the action goes ahead, Esc
-cancels. Deletes and Reset start on Cancel.
+cancels. Deletes and Reset start on Cancel. Moving mail to Trash does not
+ask: it can be moved back.
 
 Commands (for scripts and AI coding tools; output is one JSON object per line):
 
   wiregram accounts
       List the accounts: backend, account name, label, status.
   wiregram chats BACKEND ACCOUNT
-      List the account's chats: chat ID, title, kind, unread count.
+      List the account's chats: chat ID, title, kind, unread count. An
+      email account lists its folders (kind folder).
   wiregram stream [BACKEND [ACCOUNT [RECIPIENT]]]
       Print incoming messages as they arrive, from every signed-in account,
       every account of a backend, one account, or one of its chats.
       Until Ctrl+C. Connection changes are reported on stderr.
   wiregram send [-reply ID] BACKEND ACCOUNT RECIPIENT [MESSAGE...]
       Send MESSAGE, or stdin when none is given, and print the sent message.
+      Email goes to an address and answers the newest mail with it; a first
+      line "Subject: ..." starts a new conversation.
   wiregram dry-run [-message ID]... BACKEND ACCOUNT RECIPIENT
       Print the reply the bot answering the chat would give to each message
       ID, or to the newest incoming message, without sending it. Works
@@ -103,7 +108,9 @@ Commands (for scripts and AI coding tools; output is one JSON object per line):
   disconnect the running app. ACCOUNT is the Telegram phone number, the
   Mattermost username, the Matrix ID or the email address, as accounts
   shows it. RECIPIENT is a chat ID or title, a username, a Matrix ID or
-  an email address; naming a public channel you have not joined joins it. Accounts are signed in from the app first.
+  an email address; naming a public channel you have not joined joins it.
+  Email is streamed by folder (as chats lists them) and sent to an address.
+  Accounts are signed in from the app first.
   The commands can run beside the app.
 
 Keyboard shortcuts:
@@ -120,8 +127,10 @@ Keyboard shortcuts:
 
   Chat list
     Up/k, Down/j      Select chat or account
-    Enter             Open chat, switch to the selected account, or open
-                      a bot's settings or create one (New bot…), under Bots
+    Enter             Open chat (on email, a folder), switch to the selected
+                      account, or open a bot's settings or create one
+                      (New bot…), under Bots
+    c                 Compose a mail (email)
     /                 Search users (a modal over the screen); on Mattermost
                       also channels, joining a public one when picked
     u                 Unread: cards for every chat with unread messages
@@ -189,19 +198,41 @@ Keyboard shortcuts:
     Alt+L             Lock the chat (it also locks when the terminal loses focus)
     Any key           Unlock the locked chat
 
-  Email chat
-    Up/Down           Select mail
-    Enter             Open the selected mail's actions (Read first)
-    Type              Write: Enter adds a line, Ctrl+S sends, Esc keeps the draft
-                      A new mail's first line is its subject; a first line
-                      "Subject: ..." starts a new conversation instead of a reply
+  Email folder (a list of conversations; the newest mail first)
+    Up/k, Down/j      Select a conversation, or a mail in an expanded one
+    PgUp/PgDn, g/G    Page, top, bottom
+    Space             Expand or collapse the conversation
+    Enter             Read the mail (a conversation: its newest), marking it
+                      read; panes 140+ columns wide show the reader beside
+                      the list, previewing the selected mail; ] and [ move
+                      between them
+    c                 Compose a new mail
+    r, R, f           Reply, reply to all, forward
+    d                 Move to Trash
+    a                 Archive (where the server has an archive)
+    m                 Move to another folder or label (a picker)
+    u                 Mark read, or the newest mail unread
+    /                 Search the folder on the server (Esc clears the results)
+    v                 Visual mode: Space picks conversations or mails, then
+                      d, a, m or u acts on them all; Esc leaves it
+    Esc               Back
 
   Mail reader
     Up/k, Down/j      Scroll
     PgUp/b, PgDn/Space  Page
     Home/g, End/G     Top, bottom
-    Enter             Actions (reply, save attachment, move to Trash…)
+    o, s              Open the attachment, or save it to ~/Downloads
+    r, R, f, d, a, m, u  As in the folder, on this mail
     Esc, q            Close
+
+  Mail composer
+    Tab, Shift+Tab    Next and previous field: To, Cc, Subject, Attach, text;
+                      in To and Cc, Tab first takes the address offered
+    Enter             In Attach, attach the file typed (Tab completes paths)
+    Backspace         In an empty Attach, drop the last file
+    Ctrl+S            Send
+    Esc               Close, keeping the draft (c opens it again)
+    Ctrl+X            Discard the draft
 
   Thread (opens by itself on a threaded message in wide terminals)
     Up/Down           Move through the chat's messages
