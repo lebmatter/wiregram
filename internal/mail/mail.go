@@ -540,17 +540,23 @@ func (b *MailBackend) fetchPart(ctx context.Context, r row, p part) ([]byte, err
 	if r.Mailbox == sentPlaceholder {
 		return nil, fmt.Errorf("this mail is still being filed in Sent; try again shortly")
 	}
+	box, key := r.Mailbox, folderKey{r.UIDValidity, r.UID}
+	if label, k, ok, err := b.db.whereIs(r.MessageID, r.Mailbox); err != nil {
+		return nil, err
+	} else if ok {
+		box, key = label, k
+	}
 	var raw []byte
 	err := b.withConn(ctx, func(c *imapclient.Client) error {
-		uv, err := b.selectBox(c, r.Mailbox)
+		uv, err := b.selectBox(c, box)
 		if err != nil {
 			return err
 		}
-		if uv != r.UIDValidity {
+		if uv != key.uidvalidity {
 			return fmt.Errorf("this mail moved on the server; reopen the folder")
 		}
 		item := &imap.FetchItemBodySection{Part: p.Section, Peek: true}
-		msgs, err := c.Fetch(imap.UIDSetNum(imap.UID(r.UID)), &imap.FetchOptions{
+		msgs, err := c.Fetch(imap.UIDSetNum(imap.UID(key.uid)), &imap.FetchOptions{
 			UID: true, BodySection: []*imap.FetchItemBodySection{item}}).Collect()
 		if err != nil {
 			return fmt.Errorf("download attachment: %w", err)

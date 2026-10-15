@@ -231,7 +231,9 @@ func (d *mailDB) prune(days int) error {
 	if days <= 0 {
 		return nil
 	}
-	cutoff := time.Now().AddDate(0, 0, -days).Unix()
+	// A day beyond the window: syncFolder's SINCE counts whole days in the
+	// server's time zone, and mail it still finds would be fetched again.
+	cutoff := time.Now().AddDate(0, 0, -days-1).Unix()
 	if _, err := d.db.Exec(`DELETE FROM mail_messages WHERE account = ? AND date < ?`,
 		d.account, cutoff); err != nil {
 		return fmt.Errorf("prune cached mail: %w", err)
@@ -441,6 +443,24 @@ func (d *mailDB) folderUnread(folder string) int {
 
 // folderKey is where a mail sits in a folder on the server.
 type folderKey struct{ uidvalidity, uid uint32 }
+
+// whereIs finds a folder the mail named messageID is recorded in, and where it
+// sits there, preferring prefer: a mail moved since it was cached is fetched
+// from where it is now.
+func (d *mailDB) whereIs(messageID, prefer string) (string, folderKey, bool, error) {
+	var label string
+	var k folderKey
+	err := d.db.QueryRow(`SELECT label, uidvalidity, uid FROM mail_label_members
+		WHERE account = ? AND message_id = ? ORDER BY label = ? DESC LIMIT 1`,
+		d.account, messageID, prefer).Scan(&label, &k.uidvalidity, &k.uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", folderKey{}, false, nil
+	}
+	if err != nil {
+		return "", folderKey{}, false, fmt.Errorf("find mail: %w", err)
+	}
+	return label, k, true, nil
+}
 
 // memberKeys returns where the mail named messageID sits in folder.
 func (d *mailDB) memberKeys(folder, messageID string) ([]folderKey, error) {
@@ -767,6 +787,20 @@ func (d *mailDB) setLabelMembers(label string, uidvalidity uint32, present map[u
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("save label %s: %w", label, err)
+	}
+	return nil
+}
+
+// addMembers records mails found in label without dropping any it holds, for
+// search hits older than the synced window; the next sync of a synced
+// folder drops them again.
+func (d *mailDB) addMembers(label string, uidvalidity uint32, added []labelMember) error {
+	for _, a := range added {
+		if _, err := d.db.Exec(`INSERT OR IGNORE INTO mail_label_members (account, label,
+			uidvalidity, uid, message_id) VALUES (?, ?, ?, ?, ?)`,
+			d.account, label, uidvalidity, a.uid, a.messageID); err != nil {
+			return fmt.Errorf("save label %s: %w", label, err)
+		}
 	}
 	return nil
 }

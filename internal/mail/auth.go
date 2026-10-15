@@ -236,8 +236,12 @@ func (b *MailBackend) setToken(t *oauth2.Token) {
 	if err != nil {
 		return
 	}
+	// Refreshes run under connMu, so a stalled one must not block mail for good;
+	// without a client here oauth2 uses http.DefaultClient, which never times out.
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient,
+		&http.Client{Timeout: 30 * time.Second})
 	b.mu.Lock()
-	b.tokens = cfg.TokenSource(context.Background(), t)
+	b.tokens = cfg.TokenSource(ctx, t)
 	b.mu.Unlock()
 }
 

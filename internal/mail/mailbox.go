@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mime"
 	"net/mail"
@@ -91,16 +92,28 @@ func (b *MailBackend) searchFolder(ctx context.Context, box, query string) ([]ro
 		all := found.AllUIDs()
 		_, members, err := b.labelMail(c, box, uv, all[max(0, len(all)-searchLimit):],
 			box == b.sentMailbox())
+		if err != nil {
+			return err
+		}
+		// Hits older than the synced window are in no folder yet, and
+		// actions find a mail's UID through its folder.
+		if err := b.db.addMembers(box, uv, members); err != nil {
+			return err
+		}
 		for _, m := range members {
 			ids = append(ids, m.messageID)
 		}
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return b.db.byMessageIDs(ids)
 }
+
+// errNotInFolder is returned when none of the mails acted on is known to be in
+// the folder, rather than reporting an action that never reached the server.
+var errNotInFolder = errors.New("this mail is no longer in this folder; reopen it and try again")
 
 // locate finds the cached mails named by ids that are in folder, and where
 // each sits there.
@@ -143,6 +156,9 @@ func (b *MailBackend) SetUnread(ctx context.Context, folder backend.ChatEntry, i
 	rows, keys, err := b.locate(folder.ID.Id, ids)
 	if err != nil {
 		return err
+	}
+	if len(ids) > 0 && len(keys) == 0 {
+		return errNotInFolder
 	}
 	if len(keys) > 0 {
 		err := b.withConn(ctx, func(c *imapclient.Client) error {
@@ -195,6 +211,9 @@ func (b *MailBackend) MoveMail(ctx context.Context, folder backend.ChatEntry, id
 	rows, keys, err := b.locate(box, ids)
 	if err != nil {
 		return err
+	}
+	if len(ids) > 0 && len(keys) == 0 {
+		return errNotInFolder
 	}
 	if len(keys) > 0 {
 		err := b.withConn(ctx, func(c *imapclient.Client) error {

@@ -556,7 +556,7 @@ func (b *MailBackend) syncFolder(ctx context.Context, c *imapclient.Client, labe
 		return false, nil, fmt.Errorf("open label %s: %w", label, err)
 	}
 	uv := data.UIDValidity
-	savedUV, _, err := b.db.syncState(label)
+	savedUV, lastUID, err := b.db.syncState(label)
 	if err != nil {
 		return false, nil, err
 	}
@@ -597,8 +597,14 @@ func (b *MailBackend) syncFolder(ctx context.Context, c *imapclient.Client, labe
 		return false, nil, err
 	}
 	changed = len(fresh) > 0 || len(known) > len(present)
+	// On a first sync everything would be news; after it, only mail that
+	// arrived since, not older mail fetched again after leaving the cache.
 	if savedUV == uv {
-		news = added // on a first sync, everything would be news
+		for _, r := range added {
+			if r.UID > lastUID {
+				news = append(news, r)
+			}
+		}
 	}
 	if err := b.db.saveSyncState(label, uv, newest); err != nil {
 		return changed, news, err
