@@ -125,7 +125,7 @@ Keyboard shortcuts:
     Enter             Open the account, or the selected row (Settings…,
                       Add account, Quit)
     r                 Reconnect the selected account
-    q, Ctrl+C         Quit (asks first)
+    Esc, Ctrl+C       Quit (asks first)
 
   Chat list
     Up/k, Down/j      Select chat or account
@@ -179,8 +179,8 @@ Keyboard shortcuts:
     Reset…            Sign out of every account and delete all local data
                       (settings, plugins, bots, cached mail and media),
                       then start over as a fresh installation
-    Esc, Left/h       Back to the accounts, then to where Settings was opened
-    q                 Quit
+    Esc, Left/h       Back to the accounts, then to where Settings was opened,
+                      or quit when there is nowhere to go back to
 
   Chat
     Up/Down           Select message (Up at the top loads older ones)
@@ -227,7 +227,7 @@ Keyboard shortcuts:
     Home/g, End/G     Top, bottom
     o, s              Open the attachment, or save it to ~/Downloads
     r, R, f, d, a, m, u  As in the folder, on this mail
-    Esc, q            Close
+    Esc               Close
 
   Mail composer
     Tab, Shift+Tab    Next and previous field: To, Cc, Subject, Attach, text;

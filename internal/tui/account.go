@@ -144,7 +144,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.quitAnswered(m.quitting.key(msg.String()))
 		}
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "esc", "ctrl+c":
 			m.quitting = newQuitModal(m.st)
 		case "k", "up":
 			if m.selected > 0 {
@@ -354,7 +354,7 @@ func (m accountListModel) quitRect() (x, y, w, h int) {
 }
 
 func (m accountListModel) helpKeys() []helpKey {
-	return []helpKey{{"↑↓", "select"}, {"enter", "switch"}, {"r", "reconnect"}, {"q", "quit"}}
+	return []helpKey{{"↑↓", "select"}, {"enter", "switch"}, {"r", "reconnect"}, {"esc", "quit"}}
 }
 
 func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *account.Account) (*account.Account, error) {

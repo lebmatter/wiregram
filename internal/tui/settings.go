@@ -252,10 +252,6 @@ func (m settingsModel) handleKey(k string) (tea.Model, tea.Cmd) {
 		return m.confirmAnswered(m.confirm.key(k))
 	}
 	m.notice = ""
-	switch k {
-	case "q":
-		return m, tea.Quit
-	}
 	if m.focus == paneAccounts {
 		return m.accountsKey(k)
 	}
@@ -267,8 +263,8 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 	case "esc", "ctrl+c":
 		if m.canGoBack() {
 			m.result.back = true
-			return m, tea.Quit
 		}
+		return m, tea.Quit
 	case "up", "k":
 		m.left, m.sel = max(0, m.left-1), 0
 	case "down", "j":
@@ -784,7 +780,7 @@ func themeCard(t theme, current, selected bool) []string {
 func (m settingsModel) helpKeys() []helpKey {
 	back := helpKey{"esc", "back"}
 	if !m.canGoBack() {
-		back = helpKey{"q", "quit"}
+		back = helpKey{"esc", "quit"}
 	}
 	if m.confirm != nil {
 		return m.confirm.helpKeys()

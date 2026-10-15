@@ -19,7 +19,7 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select account or menu row |
 | <kbd>Enter</kbd> | Open the account, or the selected row (Settings…, Add account, Quit) |
 | <kbd>r</kbd> | Reconnect the selected account |
-| <kbd>q</kbd>, <kbd>Ctrl+C</kbd> | Quit (asks first) |
+| <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> | Quit (asks first) |
 
 ## Chat list
 
@@ -66,8 +66,7 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Enter</kbd> | Show the account's settings, or change the selected one |
 | <kbd>Tab</kbd>, <kbd>→</kbd>/<kbd>l</kbd> | Move to the account's settings |
 | <kbd>Space</kbd> | Change the selected setting |
-| <kbd>Esc</kbd>, <kbd>←</kbd>/<kbd>h</kbd> | Back to the accounts, then to where Settings was opened |
-| <kbd>q</kbd> | Quit |
+| <kbd>Esc</kbd>, <kbd>←</kbd>/<kbd>h</kbd> | Back to the accounts, then to where Settings was opened, or quit when there is nowhere to go back to |
 
 In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows in place
 (<kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels), or runs **+ Add provider…** or
@@ -118,7 +117,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Home</kbd>/<kbd>g</kbd>, <kbd>End</kbd>/<kbd>G</kbd> | Top, bottom |
 | <kbd>o</kbd>, <kbd>s</kbd> | Open the attachment, or save it to `~/Downloads` |
 | <kbd>r</kbd>, <kbd>R</kbd>, <kbd>f</kbd>, <kbd>d</kbd>, <kbd>a</kbd>, <kbd>m</kbd>, <kbd>u</kbd> | As in the folder, on this mail |
-| <kbd>Esc</kbd>, <kbd>q</kbd> | Close |
+| <kbd>Esc</kbd> | Close |
 
 ## Mail composer
 

@@ -411,7 +411,7 @@ func (m mailListModel) readerKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	page := max(1, m.height-2)
 	last := max(0, len(m.readerLines(m.readerWidth()-4))-page)
 	switch msg.String() {
-	case "esc", "q":
+	case "esc":
 		if m.split() {
 			m.readerFocus = false
 		} else {

@@ -45,7 +45,7 @@ In the reader:
 | <kbd>g</kbd>/<kbd>G</kbd> | Top, bottom |
 | <kbd>o</kbd> | Open the attachment with the default app |
 | <kbd>s</kbd> | Save the attachment to `~/Downloads` |
-| <kbd>Esc</kbd>, <kbd>q</kbd> | Close |
+| <kbd>Esc</kbd> | Close |
 
 HTML mail is reduced to text, and nothing it references (images, trackers) is fetched.
 
