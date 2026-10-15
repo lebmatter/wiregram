@@ -39,6 +39,7 @@ type Setting struct {
 	Kind    string // "string" or "choice"
 	Default string
 	Options []string // the values a choice cycles through
+	Secret  bool     // a string Settings masks, such as a private URL
 }
 
 // Host gives plugins that declared the "messages" permission the user's

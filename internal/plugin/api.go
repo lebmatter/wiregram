@@ -151,7 +151,8 @@ func (p *Plugin) luaUnread(L *lua.LState) int {
 	return 1
 }
 
-// wiregram.settings{{key=, label=, type="string"|"choice", default=, options={…}}, …}
+// wiregram.settings{{key=, label=, type="string"|"choice", default=, options={…},
+// secret=}, …}
 // declares the settings in the order Settings lists them, and returns a table
 // that reads their live values.
 func (p *Plugin) luaSettings(L *lua.LState) int {
@@ -167,6 +168,7 @@ func (p *Plugin) luaSettings(L *lua.LState) int {
 			Label:   lua.LVAsString(t.RawGetString("label")),
 			Kind:    lua.LVAsString(t.RawGetString("type")),
 			Default: lua.LVAsString(t.RawGetString("default")),
+			Secret:  lua.LVAsBool(t.RawGetString("secret")),
 		}
 		if opts, ok := t.RawGetString("options").(*lua.LTable); ok {
 			for j := 1; j <= opts.Len(); j++ {

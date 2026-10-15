@@ -82,7 +82,10 @@ func (m settingsModel) applyPlugin(r pluginRow) (tea.Model, tea.Cmd) {
 	}
 	in := textinput.New()
 	in.Prompt = ""
-	in.CharLimit = 200
+	in.CharLimit = 1000
+	if s.Secret {
+		in.EchoMode = textinput.EchoPassword
+	}
 	in.SetValue(p.Value(s.Key))
 	m.edit, m.editing = in, true
 	return m, m.edit.Focus()
@@ -107,6 +110,9 @@ func (m settingsModel) editKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		s := r.p.Settings[r.setting]
 		v := strings.TrimSpace(textfmt.Plain(m.edit.Value()))
 		m.notice = r.p.Title + ": " + s.Label + " " + v
+		if s.Secret {
+			m.notice = r.p.Title + ": " + s.Label + " saved"
+		}
 		if err := r.p.SetValue(s.Key, v); err != nil {
 			m.notice = textfmt.CleanError(err)
 		}
@@ -153,7 +159,11 @@ func (m settingsModel) pluginLines(width, height int) []string {
 			continue
 		}
 		s := r.p.Settings[r.setting]
-		label, value := "  "+s.Label, m.st.subtle.Render(r.p.Value(s.Key))
+		shown := r.p.Value(s.Key)
+		if s.Secret && shown != "" {
+			shown = "••••••"
+		}
+		label, value := "  "+s.Label, m.st.subtle.Render(shown)
 		if selected && m.editing {
 			in := m.edit
 			in.SetWidth(max(8, width-labelW-5))

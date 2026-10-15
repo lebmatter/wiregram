@@ -18,7 +18,14 @@ click outside closes it.
 |--------|---------------|---------|--------|
 | **Unread** | Per online account, how many private chats have unread messages. Click the card for their newest messages | Your accounts (the `messages` permission) | on |
 | **Weather** | Current conditions for one city, with a small animated sky. Click the card for today's forecast hour by hour. Settings: city, units, refresh | Open-Meteo | on |
+| **Calendar** | The next events of a Google Calendar, from its secret iCal address. Click the card for the upcoming and recent events by day. Settings: secret iCal URL, upcoming and recent days, refresh | calendar.google.com | off |
 | **Hacker News** | The top front-page stories | The Algolia HN API | off |
+
+For Calendar, copy the address from Google Calendar's **Settings → your calendar →
+Integrate calendar → Secret address in iCal format**. Anyone with that address can read
+the calendar, so Settings shows it masked. Recurring events are expanded and times shown
+in the calendar's own time zone. Google sends the whole calendar each time, and a plugin
+may fetch at most 1 MB, so a calendar with years of history may be too large.
 
 Built-ins are embedded in the binary. They start **off** because they reach the network,
 except Unread and Weather, which declare `on = true`.
@@ -77,7 +84,7 @@ wiregram.widget { height = 2, render = render }
 | Call | Notes |
 |------|-------|
 | `wiregram.plugin{title=, hosts={…}, permissions={…}, on=}` | Load time only. `title` names the plugin in Settings and on its card. `hosts` is the allowlist for `http.get`. `permissions` may hold `"messages"`, for the two calls below. `on = true` starts a built-in on. |
-| `wiregram.settings{{key=, label=, type="string"\|"choice", default=, options={…}}, …}` | Load time only. Settings lists them in this order. Returns a read-only table of live values, e.g. `cfg.city`. |
+| `wiregram.settings{{key=, label=, type="string"\|"choice", default=, options={…}, secret=}, …}` | Load time only. Settings lists them in this order and masks a `secret` string. Returns a read-only table of live values, e.g. `cfg.city`. |
 | `wiregram.widget{height=4, refresh=60, update=fn, render=fn, click=fn}` | Load time only. See [Widgets](#widgets). |
 | `wiregram.modal{title=, width=60, height=12, render=fn}` | From `click` only. See [Modals](#modals). |
 | `wiregram.accounts()` | Needs `messages`. The online accounts that have private chats (not email): `{key=, tag="TG1", label=, backend=}`. |

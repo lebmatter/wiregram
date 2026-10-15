@@ -125,7 +125,8 @@ These are project constraints, not suggestions:
   Settings' Plugins… row switches them and edits their settings
   (`internal/tui/plugins.go`). The built-ins are Unread (unread private chats per account; a
   click shows their newest messages), Weather (Open-Meteo; a click shows today hour by
-  hour) and Hacker News (the Algolia HN API).
+  hour), Calendar (a Google Calendar's secret iCal URL, a `secret` setting Settings
+  masks; a click lists upcoming and recent events) and Hacker News (the Algolia HN API).
 - Each expanded account but email has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.

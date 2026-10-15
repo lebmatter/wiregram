@@ -48,8 +48,9 @@ Enter on another account switches to it; the last two rows open Home (the
 account list) and Settings.
 Plugins are Lua scripts; enabled ones may add widget cards under the
 account list, such as the built-in Unread (unread private chats per account;
-click it to read them), Weather (click it for today's hourly forecast) and
-Hacker News. Unread and Weather are on by default.
+click it to read them), Weather (click it for today's hourly forecast),
+Calendar (a Google Calendar's secret iCal address; click it for upcoming and
+recent events) and Hacker News. Unread and Weather are on by default.
 Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 
