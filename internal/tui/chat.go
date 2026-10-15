@@ -89,7 +89,10 @@ type chatViewModel struct {
 	upload  uploadPanel
 	uploads []pendingUpload
 	opening *mediaDownload
-	spin    spinner.Model
+	// openedAt is when an attachment last went to the desktop's viewer, whose
+	// window takes focus; the root skips the blur lock just after it.
+	openedAt time.Time
+	spin     spinner.Model
 
 	threadRoot  string
 	threadInput textinput.Model
@@ -664,6 +667,7 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 			}
 		} else {
 			m.notice = "opened " + msg.filename
+			m.openedAt = time.Now()
 		}
 
 	case tea.KeyPressMsg:

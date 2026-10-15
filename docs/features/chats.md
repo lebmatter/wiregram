@@ -117,5 +117,6 @@ embeds, WhatsApp, the Matrix homeserver). Wiregram never fetches linked pages it
 
 - <kbd>Alt+H</kbd> toggles private mode, hiding the chat's history.
 - The chat locks when the terminal loses focus and on <kbd>Alt+L</kbd>; any key unlocks it.
+  Focus moving to the viewer of an attachment you clicked does not lock it.
 - <kbd>Alt+D</kbd> deletes a private chat for you; <kbd>Ctrl+Alt+D</kbd> deletes it
   for both sides (Telegram).

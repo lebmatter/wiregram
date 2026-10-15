@@ -405,8 +405,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case tea.BlurMsg:
-		// Leaving the terminal's tab or window locks the chat at once.
-		if m.chatOpen {
+		// Leaving the terminal's tab or window locks the chat at once, unless
+		// focus went to a viewer for an attachment the user just clicked.
+		if m.chatOpen && m.chat.opening == nil && time.Since(m.chat.openedAt) > 5*time.Second {
 			m.chat.locked = true
 		}
 		return m, nil
