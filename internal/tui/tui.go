@@ -96,6 +96,7 @@ type tuiModel struct {
 }
 
 type tuiDialogsLoaded struct {
+	archived      bool // which list it was loaded for
 	entries       []backend.ChatEntry
 	archiveUnread int
 	err           error
@@ -149,7 +150,7 @@ func listenBotEvents(sub *backend.Subscription) tea.Cmd {
 func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
 	return func() tea.Msg {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
-		return tuiDialogsLoaded{entries, archiveUnread, err}
+		return tuiDialogsLoaded{archived, entries, archiveUnread, err}
 	}
 }
 
@@ -1026,6 +1027,9 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 
 	case tuiDialogsLoaded:
+		if msg.archived != m.archived {
+			return m, nil // loaded before switching between inbox and archive
+		}
 		if msg.err != nil {
 			m.loadErr = msg.err
 			// Every failed load lands here, so only the first starts a retry.
@@ -1038,12 +1042,27 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 			})
 		}
 		m.loadErr = nil
-		selected, offset := m.list.selected, m.list.offset
+		old := m.list
+		var selectedChat backend.ChatID
+		if i, ok := old.chatIndex(); ok {
+			selectedChat = old.entries[i].ID
+		}
 		m.entries = msg.entries
 		m.archiveUnread = msg.archiveUnread
 		m.list = newChatListModel(m.ctx, m.st, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
-		m.list.selected = min(selected, m.list.maxIndex())
-		m.list.offset = offset
+		m.list.width, m.list.height = old.width, old.height
+		m.list.selected = min(old.selected, m.list.maxIndex())
+		m.list.offset = old.offset
+		// New activity re-sorts the chats; stay on the chat, not the row.
+		if selectedChat != (backend.ChatID{}) {
+			for i, e := range m.list.entries {
+				if e.ID == selectedChat {
+					m.list.selected = m.list.firstChat() + i
+					m.list = m.list.scrolled()
+					break
+				}
+			}
+		}
 		var tick tea.Cmd
 		if m.list.loading && !m.spinning {
 			m.spinning, tick = true, m.spin.Tick

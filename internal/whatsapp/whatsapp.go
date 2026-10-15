@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -321,6 +322,12 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 	if !evt.IsEdit && reaction == nil && !evt.Info.IsFromMe {
 		wa.unreads[chatJID]++
 	}
+	switch {
+	case evt.IsEdit:
+		wa.edited(chatJID, getEditTargetID(evt), msg)
+	case reaction == nil:
+		wa.remember(chatJID, msg)
+	}
 	var reactions []backend.MessageReaction
 	if reaction != nil {
 		user := evt.Info.Sender.User
@@ -498,6 +505,73 @@ func (wa *WaBackend) historySyncMessages(chatJID types.JID, hsmsgs []*waHistoryS
 	return result
 }
 
+// msgCacheLimit is how many messages a chat keeps in memory.
+const msgCacheLimit = 500
+
+// remember keeps msg among chatJID's messages, for History, Mentions,
+// Forward and finding a message's sender. The caller holds wa.mu.
+func (wa *WaBackend) remember(chatJID types.JID, msg backend.Message) {
+	cached := wa.msgCache[chatJID]
+	for _, m := range cached {
+		if m.ID == msg.ID {
+			return
+		}
+	}
+	cached = append(cached, msg)
+	if len(cached) > msgCacheLimit {
+		cached = slices.Clone(cached[len(cached)-msgCacheLimit:])
+	}
+	wa.msgCache[chatJID] = cached
+}
+
+// edited applies an edit to the cached message id. The caller holds wa.mu.
+func (wa *WaBackend) edited(chatJID types.JID, id string, msg backend.Message) {
+	cached := wa.msgCache[chatJID]
+	for i := range cached {
+		if cached[i].ID == id {
+			cached[i].Text, cached[i].Spans, cached[i].Source = msg.Text, msg.Spans, msg.Source
+			return
+		}
+	}
+}
+
+// senderOf is who sent the cached message id in chatJID, or the empty JID
+// when it is not cached.
+func (wa *WaBackend) senderOf(chatJID types.JID, id string) types.JID {
+	wa.mu.Lock()
+	defer wa.mu.Unlock()
+	for _, m := range wa.msgCache[chatJID] {
+		if m.ID == id && m.SenderID != "" {
+			if jid, err := types.ParseJID(m.SenderID); err == nil {
+				return jid
+			}
+		}
+	}
+	return types.EmptyJID
+}
+
+// quotedParticipant is who wrote the message replyTo in jid, for the
+// reply's context; unknown in a group, it is left out.
+func (wa *WaBackend) quotedParticipant(jid types.JID, replyTo string) *string {
+	sender := wa.senderOf(jid, replyTo)
+	if sender.IsEmpty() {
+		if jid.Server == types.GroupServer {
+			return nil
+		}
+		sender = jid // in a DM, most replies quote the other person
+	}
+	return proto.String(sender.ToNonAD().String())
+}
+
+// sent caches a message this device sent, which WhatsApp does not echo.
+func (wa *WaBackend) sent(jid types.JID, msg backend.Message) {
+	msg.SenderID = wa.Jid.ToNonAD().String()
+	wa.mu.Lock()
+	wa.touchChat(jid, msg.Timestamp)
+	wa.remember(jid, msg)
+	wa.mu.Unlock()
+}
+
 func (wa *WaBackend) touchChat(chatJID types.JID, ts time.Time) {
 	for i := range wa.chatCache {
 		if wa.chatCache[i].jid == chatJID {
@@ -667,7 +741,7 @@ func (wa *WaBackend) Send(ctx context.Context, ch backend.ChatEntry, text string
 		info := &waE2E.ContextInfo{MentionedJID: mentioned}
 		if replyTo != "" {
 			info.StanzaID = proto.String(replyTo)
-			info.Participant = proto.String(jid.String())
+			info.Participant = wa.quotedParticipant(jid, replyTo)
 			info.QuotedMessage = &waE2E.Message{Conversation: proto.String("")}
 		}
 		msg.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
@@ -681,14 +755,16 @@ func (wa *WaBackend) Send(ctx context.Context, ch backend.ChatEntry, text string
 	if err != nil {
 		return backend.Message{}, fmt.Errorf("send message: %w", err)
 	}
-	return backend.Message{
+	out := backend.Message{
 		ID:        resp.ID,
 		Sender:    "you",
 		Text:      text,
 		Timestamp: resp.Timestamp,
 		Outgoing:  true,
 		ReplyToID: replyTo,
-	}, nil
+	}
+	wa.sent(jid, out)
+	return out, nil
 }
 
 func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, filePath, caption, replyTo string) (backend.Message, error) {
@@ -724,7 +800,7 @@ func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, fileP
 	if replyTo != "" {
 		ctxInfo = &waE2E.ContextInfo{
 			StanzaID:      proto.String(replyTo),
-			Participant:   proto.String(jid.String()),
+			Participant:   wa.quotedParticipant(jid, replyTo),
 			QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
 		}
 	}
@@ -784,7 +860,7 @@ func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, fileP
 		return backend.Message{}, fmt.Errorf("send media: %w", err)
 	}
 	label := mediaLabelForMIME(mimeType, fileName, int64(uploaded.FileLength))
-	return backend.Message{
+	out := backend.Message{
 		ID:         resp.ID,
 		Sender:     "you",
 		Text:       caption,
@@ -792,7 +868,9 @@ func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, fileP
 		Timestamp:  resp.Timestamp,
 		Outgoing:   true,
 		ReplyToID:  replyTo,
-	}, nil
+	}
+	wa.sent(jid, out)
+	return out, nil
 }
 
 func mediaLabelForMIME(mimeType, fileName string, size int64) string {
@@ -888,17 +966,17 @@ func (wa *WaBackend) React(ctx context.Context, ch backend.ChatEntry, msg backen
 		emoji = ""
 	}
 	wa.mu.Unlock()
-	reactionMsg := &waE2E.Message{
-		ReactionMessage: &waE2E.ReactionMessage{
-			Key: &waCommon.MessageKey{
-				RemoteJID: proto.String(jid.String()),
-				FromMe:    proto.Bool(msg.Outgoing),
-				ID:        proto.String(msg.ID),
-			},
-			Text:              proto.String(emoji),
-			SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
-		},
+	// The key names the message's sender, which a group reaction needs.
+	sender := types.EmptyJID
+	if parsed, err := types.ParseJID(msg.SenderID); err == nil && !msg.Outgoing {
+		sender = parsed
+	} else if !msg.Outgoing {
+		sender = wa.senderOf(jid, msg.ID)
+		if sender.IsEmpty() && jid.Server != types.GroupServer {
+			sender = jid
+		}
 	}
+	reactionMsg := wa.Client.BuildReaction(jid, sender, msg.ID, emoji)
 	if _, err := wa.Client.SendMessage(ctx, jid, reactionMsg); err != nil {
 		return nil, fmt.Errorf("send reaction: %w", err)
 	}
@@ -967,7 +1045,9 @@ func (wa *WaBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID 
 	if err != nil {
 		return err
 	}
-	err = wa.Client.MarkRead(ctx, []types.MessageID{upToID}, time.Now(), jid, types.EmptyJID)
+	// WhatsApp needs the message's sender in groups.
+	err = wa.Client.MarkRead(ctx, []types.MessageID{upToID}, time.Now(), jid,
+		wa.senderOf(jid, upToID))
 	if err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
@@ -1424,9 +1504,18 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 	}
 	source, mediaLabel, multiline := wa.extractMessageContent(m)
 	text, spans := backend.WhatsApp(source)
+	// As a live message, so its media opens and its sender is known.
+	var raw any
+	senderID := ""
+	if evt, err := wa.Client.ParseWebMessage(chatJID, wmi); err == nil {
+		raw, senderID = evt, evt.Info.Sender.ToNonAD().String()
+	}
 	return backend.Message{
 		ID:         key.GetID(),
 		Sender:     senderName,
+		SenderID:   senderID,
+		Image:      raw != nil && waInlineImage(m),
+		Raw:        raw,
 		Text:       text,
 		Timestamp:  ts,
 		Outgoing:   outgoing,
