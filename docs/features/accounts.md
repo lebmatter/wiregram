@@ -39,7 +39,8 @@ expanded to:
 - on email, a **Labels** section (see [Email](/features/email#labels))
 
 While a WhatsApp, Matrix or email account is still fetching its chats for the first time
-after connecting, it shows a spinner and `Loading chats…` in place of them and these rows.
+after connecting, it shows a spinner and `Loading chats…` (on email, `Loading emails…`) in place of them
+and these rows.
 
 <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
 

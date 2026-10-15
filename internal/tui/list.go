@@ -454,7 +454,11 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	}
 	switch {
 	case m.loading:
-		rows = append(rows, "      "+m.spin+m.st.subtle.Render(" Loading chats…"))
+		what := " Loading chats…"
+		if m.b.Name() == "email" {
+			what = " Loading emails…"
+		}
+		rows = append(rows, "      "+m.spin+m.st.subtle.Render(what))
 	case len(m.entries) == 0:
 		rows = append(rows, m.st.subtle.Render("      No chats here"))
 	}
