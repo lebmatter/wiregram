@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
@@ -77,11 +79,24 @@ type agentBotAlert struct{ title, text string }
 // agentBotDone ends a request to the server about the bot: done is the
 // notice on success, and rec, when set, is the record to save after it.
 type agentBotDone struct {
-	err  error
-	fail string // the alert's title when err is set
-	done string
-	rec  *agent.AgentRecord
-	gone bool // the bot was deleted; close the pane
+	agentID int64 // the bot asked about; its pane may have closed since
+	err     error
+	fail    string // the alert's title when err is set
+	done    string
+	rec     *agent.AgentRecord
+	gone    bool // the bot was deleted; close the pane
+}
+
+// alert is the alert a failed request shows.
+func (d agentBotDone) alert() agentBotAlert {
+	text := textfmt.CleanError(d.err)
+	if r, size := utf8.DecodeRuneInString(text); size > 0 {
+		text = string(unicode.ToUpper(r)) + text[size:]
+	}
+	if !strings.HasSuffix(text, ".") {
+		text += "."
+	}
+	return agentBotAlert{title: d.fail, text: text}
 }
 
 // botTimeout bounds a request to the server about a bot.
@@ -141,11 +156,12 @@ func (m agentPaneModel) rows() []agentRow {
 func (m agentPaneModel) botOp(notice, fail string, op func(ctx context.Context) agentBotDone) (
 	agentPaneModel, tea.Cmd) {
 	m.busy, m.notice = true, notice
+	id := m.rec.ID
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), botTimeout)
 		defer cancel()
 		done := op(ctx)
-		done.fail = fail
+		done.agentID, done.fail = id, fail
 		return done
 	}
 }
@@ -155,14 +171,7 @@ func (m agentPaneModel) botDone(msg agentBotDone) (agentPaneModel, tea.Cmd) {
 	m.busy = false
 	if msg.err != nil {
 		m.notice = ""
-		text := textfmt.CleanError(msg.err)
-		if text != "" {
-			text = strings.ToUpper(text[:1]) + text[1:]
-		}
-		if !strings.HasSuffix(text, ".") {
-			text += "."
-		}
-		alert := agentBotAlert{title: msg.fail, text: text}
+		alert := msg.alert()
 		return m, func() tea.Msg { return alert }
 	}
 	if msg.gone {

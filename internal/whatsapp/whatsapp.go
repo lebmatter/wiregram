@@ -416,7 +416,9 @@ func (wa *WaBackend) handleHistorySync(evt *events.HistorySync) {
 		if ts := conv.GetConversationTimestamp(); ts > 0 {
 			lastAt = time.Unix(int64(ts), 0)
 		}
-		unread := int(conv.GetUnreadCount())
+		// One count per chat for Dialogs and CachedUnread alike; live
+		// messages and read receipts update it from here on.
+		wa.unreads[jid] = int(conv.GetUnreadCount())
 		isGroup := jid.Server == types.GroupServer
 
 		found := false
@@ -426,7 +428,6 @@ func (wa *WaBackend) handleHistorySync(evt *events.HistorySync) {
 				if !lastAt.IsZero() {
 					wa.chatCache[i].lastAt = lastAt
 				}
-				wa.chatCache[i].unread = unread
 				found = true
 				break
 			}
@@ -436,7 +437,6 @@ func (wa *WaBackend) handleHistorySync(evt *events.HistorySync) {
 				jid:     jid,
 				name:    name,
 				lastAt:  lastAt,
-				unread:  unread,
 				isGroup: isGroup,
 			})
 		}
@@ -556,14 +556,17 @@ func (wa *WaBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 }
 
 func (wa *WaBackend) chatEntry(c waChatEntry) backend.ChatEntry {
+	wa.mu.Lock()
 	title := c.name
 	if title == "" {
-		title = wa.lookupName(c.jid)
+		title = wa.contactName(c.jid)
 	}
+	unread := wa.unreads[c.jid]
+	wa.mu.Unlock()
 	return backend.ChatEntry{
 		ID:      backend.ChatID{Backend: "whatsapp", Id: c.jid.String()},
 		Title:   title,
-		Unread:  c.unread,
+		Unread:  unread,
 		LastAt:  c.lastAt,
 		IsDM:    c.jid.Server == types.DefaultUserServer,
 		IsGroup: c.isGroup,

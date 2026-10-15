@@ -77,6 +77,7 @@ type tuiModel struct {
 	result         *tuiResult
 	kitty          *kittyImages // nil without kitty graphics
 	loadErr        error
+	retryPending   bool // a tuiRetryDialogs is scheduled; one is enough
 	width          int
 	height         int
 	// botEvents is the open bot chat's subscription to the bot's connection.
@@ -461,7 +462,20 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		return m, nil
 
-	case agentBotDone, dmSearchDebounce, dmSearchResults, dmResolved:
+	case agentBotDone:
+		if !m.agentOpen || m.agentPane.rec.ID != msg.agentID {
+			// The pane it was for has closed; a failure still needs saying.
+			if msg.err != nil {
+				a := msg.alert()
+				m.alert = newAlertModal(m.st, a.title, a.text)
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.agentPane, cmd = m.agentPane.Update(msg)
+		return m, cmd
+
+	case dmSearchDebounce, dmSearchResults, dmResolved:
 		if !m.agentOpen {
 			return m, nil
 		}
@@ -1013,9 +1027,11 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case tuiDialogsLoaded:
 		if msg.err != nil {
 			m.loadErr = msg.err
-			if !backend.NetworkError(msg.err) {
+			// Every failed load lands here, so only the first starts a retry.
+			if !backend.NetworkError(msg.err) || m.retryPending {
 				return m, nil
 			}
+			m.retryPending = true
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
 				return tuiRetryDialogs{}
 			})
@@ -1042,6 +1058,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, tick
 
 	case tuiRetryDialogs:
+		m.retryPending = false
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 
 	case chatListChoice:

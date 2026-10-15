@@ -277,11 +277,14 @@ func (c *Client) handleUpdates(_ context.Context, value tg.UpdatesClass) error {
 		case *tg.UpdateReadHistoryOutbox:
 			c.rememberRead(keyOf(u.Peer), 0, u.MaxID)
 		case *tg.UpdateReadHistoryInbox:
+			// Read here or on another device: the badge follows the server.
 			c.rememberRead(keyOf(u.Peer), u.MaxID, 0)
+			c.rememberUnread(keyOf(u.Peer), u.StillUnreadCount)
 		case *tg.UpdateReadChannelOutbox:
 			c.rememberRead(peerKey{'c', u.ChannelID}, 0, u.MaxID)
 		case *tg.UpdateReadChannelInbox:
 			c.rememberRead(peerKey{'c', u.ChannelID}, u.MaxID, 0)
+			c.rememberUnread(peerKey{'c', u.ChannelID}, u.StillUnreadCount)
 		case *tg.UpdateDeleteMessages:
 			c.acceptDeletion(peerKey{}, u.Messages)
 		case *tg.UpdateDeleteChannelMessages:

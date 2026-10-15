@@ -999,13 +999,19 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if msg.Text == "@" && m.mentionAllowed() {
 			return m, func() tea.Msg { return chatMentionReq{} }
 		}
+		var typing tea.Cmd
 		if m.caps.Typing && time.Since(m.lastTypingSent) > 5*time.Second {
 			m.lastTypingSent = time.Now()
-			m.b.SetTyping(m.ctx, m.entry)
+			// A network round trip; run it off the key handler.
+			ctx, b, entry := m.ctx, m.b, m.entry
+			typing = func() tea.Msg {
+				b.SetTyping(ctx, entry)
+				return nil
+			}
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m, tea.Batch(typing, cmd)
 	}
 	return m, nil
 }

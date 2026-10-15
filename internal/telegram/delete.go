@@ -37,6 +37,10 @@ func (c *Client) deleteChat(ctx context.Context, entry chat, revoke bool) error 
 func (c *Client) deleteMessages(ctx context.Context, entry chat, ids []int, revoke bool) error {
 	switch entry.key.kind {
 	case 'c':
+		// channels.deleteMessages has no revoke flag: it always deletes for all.
+		if !revoke {
+			return fmt.Errorf("Telegram supergroups and channels only delete for everyone")
+		}
 		channel, ok := entry.peer.(*tg.InputPeerChannel)
 		if !ok {
 			return fmt.Errorf("delete messages: unexpected peer type for channel")

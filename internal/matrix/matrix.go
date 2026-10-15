@@ -581,11 +581,6 @@ func (mx *MxBackend) processTimelineEvent(ctx context.Context, roomID string, ev
 				return
 			}
 		}
-		if roomID != subscribed && ev.Sender != mx.UserID {
-			mx.mu.Lock()
-			mx.unreads[roomID]++
-			mx.mu.Unlock()
-		}
 		msg := mx.eventToMessage(roomID, ev)
 		mx.events.Publish(backend.Event{
 			Kind: backend.EventMessage, Chat: chat, DM: mx.isDirect(roomID), Message: &msg,
