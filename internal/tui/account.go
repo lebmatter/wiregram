@@ -79,7 +79,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
 
 func (m accountListModel) Init() tea.Cmd {
-	_, widgets := m.widgets.start(m.width - 4)
+	_, widgets := m.widgets.start(m.width-4, m.width, m.bodyHeight()+1)
 	return tea.Batch(listenAccounts(m.mgr), func() tea.Msg { return digestSync{} }, widgets)
 }
 
@@ -107,11 +107,14 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case widgetTick:
 		var cmd tea.Cmd
-		m.widgets, cmd = m.widgets.tick(m.width - 4)
+		m.widgets, cmd = m.widgets.tick(m.width-4, m.width, m.bodyHeight()+1)
 		return m, cmd
 
 	case widgetUpdated:
 		m.widgets = m.widgets.updated(msg)
+
+	case widgetClicked:
+		m.widgets = m.widgets.clicked(msg)
 
 	case tea.MouseWheelMsg:
 		if k, ok := wheelKey(msg); ok {
@@ -126,11 +129,18 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x, y, _, _ := m.quitRect()
 			return m.quitAnswered(m.quitting.click(msg.X, msg.Y, x, y))
 		}
+		if m.widgets.modal != nil {
+			x, y, w, h := m.widgetModalRect()
+			if msg.X < x || msg.X >= x+w || msg.Y < y || msg.Y >= y+h {
+				m.widgets.modal = nil
+			}
+			return m, nil
+		}
 		if i, ok := m.itemAt(msg.Y); ok {
 			m.selected = i
 			return m.Update(keyPress(tea.KeyEnter))
 		}
-		_, shift, digest, _ := m.layout()
+		_, shift, digest, widgets := m.layout()
 		top := 2 + shift + len(m.accounts) + 4 + digestGap // the cards' first screen row
 		if a, ok := m.digest.cardAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < digest {
 			if i := slices.Index(m.accounts, a); i >= 0 {
@@ -138,10 +148,26 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.Update(keyPress(tea.KeyEnter))
 			}
 		}
+		if digest > 0 {
+			top += digest / digestCardH * digestCardH
+		} else {
+			top -= digestGap
+		}
+		top += widgetsGap
+		if p, ok := m.widgets.widgetAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < widgets {
+			return m, m.widgets.click(p)
+		}
 
 	case tea.KeyPressMsg:
 		if m.quitting != nil {
 			return m.quitAnswered(m.quitting.key(msg.String()))
+		}
+		if m.widgets.modal != nil {
+			switch msg.String() {
+			case "esc", "q", "enter", "ctrl+c":
+				m.widgets.modal = nil
+			}
+			return m, nil
 		}
 		switch msg.String() {
 		case "esc", "ctrl+c":
@@ -260,6 +286,10 @@ func (m accountListModel) View() tea.View {
 		x, y, _, _ := m.quitRect()
 		body = m.st.fadeUnder(body, m.quitting.View(), x, y)
 		keys, notice = m.quitting.helpKeys(), ""
+	} else if md := m.widgets.modal; md != nil {
+		x, y, _, _ := m.widgetModalRect()
+		body = m.st.fadeUnder(body, md.box(m.st, m.width, m.bodyHeight()+1), x, y)
+		keys, notice = []helpKey{{"esc", "close"}}, ""
 	}
 	content := body + "\n" + m.st.footer(keys, notice, m.width)
 	v := tea.NewView(content)
@@ -350,6 +380,13 @@ func (m accountListModel) quitAnswered(quit, done bool) (tea.Model, tea.Cmd) {
 // quitRect is where the quit modal sits: centred over the screen.
 func (m accountListModel) quitRect() (x, y, w, h int) {
 	w, h = m.quitting.size()
+	return max(0, (m.width-w)/2), max(0, (m.bodyHeight()+1-h)/2), w, h
+}
+
+// widgetModalRect is where a widget's modal sits: centred over the screen.
+func (m accountListModel) widgetModalRect() (x, y, w, h int) {
+	w, h = m.widgets.modal.size(m.width, m.bodyHeight()+1)
+	w, h = w+4, h+2
 	return max(0, (m.width-w)/2), max(0, (m.bodyHeight()+1-h)/2), w, h
 }
 

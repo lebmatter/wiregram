@@ -25,7 +25,8 @@ account comes online. Clicking a card opens the account.
 To leave an account out, set its **Unread digest** setting to `hidden` in Settings.
 
 Under the digest, enabled [plugins](/features/plugins) can draw widget cards. When the
-screen is short, widgets give way to the digest.
+screen is short, widgets give way to the digest. Clicking a widget may open a modal with
+more detail, such as the Weather widget's hourly forecast.
 
 ## Account tree
 

@@ -121,9 +121,11 @@ These are project constraints, not suggestions:
   `internal/plugin/builtin` and start off; user plugins in
   `~/.config/wiregram/plugins/` start on. Enabled plugins with a widget draw
   a card in the chooser's `── Widgets` section under the digest, which
-  gives way to the digest when space is short (`internal/tui/widgets.go`).
+  gives way to the digest when space is short (`internal/tui/widgets.go`). A widget's
+  `click` may open a plugin modal (`wiregram.modal`, its own width and height) centred
+  over the chooser, faded behind it.
   Settings' Plugins… row switches them and edits their settings
-  (`internal/tui/plugins.go`). The built-ins are Weather (Open-Meteo) and Hacker News
+  (`internal/tui/plugins.go`). The built-ins are Weather (Open-Meteo; a click shows today hour by hour) and Hacker News
   (the Algolia HN API).
 - Each expanded account but email has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the

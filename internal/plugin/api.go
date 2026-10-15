@@ -29,6 +29,7 @@ func (p *Plugin) registerAPI() {
 		"plugin":   p.luaPlugin,
 		"settings": p.luaSettings,
 		"widget":   p.luaWidget,
+		"modal":    p.luaModal,
 		"now":      func(L *lua.LState) int { L.Push(lua.LNumber(time.Now().Unix())); return 1 },
 	})
 	kv := L.NewTable()
@@ -123,10 +124,10 @@ func (p *Plugin) luaSettings(L *lua.LState) int {
 	return 1
 }
 
-// wiregram.widget{height=, refresh=, update=fn, render=fn(width, frame)}:
+// wiregram.widget{height=, refresh=, update=fn, render=fn(width, frame), click=fn}:
 // a card on the account chooser. render returns up to height lines and runs
 // about four times a second; update runs every refresh seconds and when a
-// setting changes.
+// setting changes; click runs when the card is clicked.
 func (p *Plugin) luaWidget(L *lua.LState) int {
 	p.requireLoading(L, "widget")
 	t := L.CheckTable(1)
@@ -143,7 +144,36 @@ func (p *Plugin) luaWidget(L *lua.LState) int {
 		L.ArgError(1, "a widget needs a render function")
 	}
 	w.render = render
+	w.click, _ = t.RawGetString("click").(*lua.LFunction)
 	p.widget = w
+	return 0
+}
+
+// wiregram.modal{title=, width=, height=, render=fn(width, height, frame)}:
+// opens a modal over the account chooser once the click that called it
+// returns. width and height are the cells inside its border, cut to the
+// screen; render gets the size it really has.
+func (p *Plugin) luaModal(L *lua.LState) int {
+	if !p.clicking {
+		L.RaiseError("wiregram.modal can only be called from a widget's click")
+	}
+	t := L.CheckTable(1)
+	m := &Modal{Title: p.Title, Width: 60, Height: 12}
+	if s, ok := t.RawGetString("title").(lua.LString); ok && s != "" {
+		m.Title = string(s)
+	}
+	if n, ok := t.RawGetString("width").(lua.LNumber); ok {
+		m.Width = max(10, min(200, int(n)))
+	}
+	if n, ok := t.RawGetString("height").(lua.LNumber); ok {
+		m.Height = max(1, min(100, int(n)))
+	}
+	render, ok := t.RawGetString("render").(*lua.LFunction)
+	if !ok {
+		L.ArgError(1, "a modal needs a render function")
+	}
+	m.render = render
+	p.modal = m
 	return 0
 }
 

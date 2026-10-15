@@ -1,5 +1,5 @@
 -- Weather: the current conditions for one city, from Open-Meteo, with a
--- small animation of the sky.
+-- small animation of the sky. A click opens today's forecast hour by hour.
 
 wiregram.plugin {
   title = "Weather",
@@ -103,29 +103,39 @@ end
 -- wrote to it; both run in this plugin's VM, so they share shown.
 local shown
 
-local fields = { "place", "temp", "code", "is_day", "wind", "high", "low" }
+local fields = { "place", "temp", "code", "is_day", "wind", "high", "low", "hourly", "offset" }
 
 local function update()
   local city = cfg.city
   if city == "" then error("set a city in Settings", 0) end
   local wanted = city .. "|" .. cfg.units
   local age = wiregram.now() - (tonumber(kv.get("fetched_at")) or 0)
-  if kv.get("for") == wanted and age < tonumber(cfg.refresh) * 60 then return end
+  if kv.get("for") == wanted and kv.get("hourly") and age < tonumber(cfg.refresh) * 60 then
+    return
+  end
 
   local name, lat, lon = place(city)
   local url = "https://api.open-meteo.com/v1/forecast?latitude=" .. lat .. "&longitude=" .. lon ..
     "&current=temperature_2m,weather_code,is_day,wind_speed_10m" ..
+    "&hourly=temperature_2m,weather_code,precipitation_probability,wind_speed_10m" ..
     "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto"
   if cfg.units == "fahrenheit" then
     url = url .. "&temperature_unit=fahrenheit&wind_speed_unit=mph"
   end
   local data = fetch(url)
-  local now, daily = data.current, data.daily
-  if not now or not daily then error("Open-Meteo sent no forecast", 0) end
+  local now, daily, hourly = data.current, data.daily, data.hourly
+  if not now or not daily or not hourly then error("Open-Meteo sent no forecast", 0) end
+  -- One "temp,code,rain,wind" entry per hour from midnight, joined by ";".
+  local hours = {}
+  for i = 1, #hourly.temperature_2m do
+    hours[i] = table.concat({ tostring(hourly.temperature_2m[i]), tostring(hourly.weather_code[i]),
+      tostring(hourly.precipitation_probability[i]), tostring(hourly.wind_speed_10m[i]) }, ",")
+  end
   local values = {
     place = name, temp = now.temperature_2m, code = now.weather_code, is_day = now.is_day,
     wind = now.wind_speed_10m, high = daily.temperature_2m_max[1],
-    low = daily.temperature_2m_min[1],
+    low = daily.temperature_2m_min[1], hourly = table.concat(hours, ";"),
+    offset = data.utc_offset_seconds or 0,
   }
   for _, f in ipairs(fields) do kv.set(f, tostring(values[f])) end
   kv.set("for", wanted)
@@ -135,7 +145,11 @@ end
 
 local function round(n) return string.format("%d", math.floor((tonumber(n) or 0) + 0.5)) end
 
-local function pad(s, n) return s .. string.rep(" ", n - #s) end
+-- pad counts characters, not bytes, so ° and ▇ take one cell each.
+local function pad(s, n)
+  local _, chars = s:gsub("[^\128-\191]", "")
+  return s .. string.rep(" ", n - chars)
+end
 
 local function current()
   if not shown then
@@ -167,7 +181,7 @@ local function render(width, frame)
     w.place,
     round(w.temp) .. unit .. "  " .. cond[1],
     "H " .. round(w.high) .. "°  L " .. round(w.low) .. "°  wind " .. round(w.wind) .. " " .. speed,
-    ago,
+    ago .. " · click for hourly",
   }
   local lines = {}
   for i = 1, 4 do
@@ -180,4 +194,57 @@ local function render(width, frame)
   return lines
 end
 
-wiregram.widget { height = 4, refresh = 60, update = update, render = render }
+local function hours(w)
+  local out = {}
+  for entry in (w.hourly or ""):gmatch("[^;]+") do
+    local temp, code, rain, wind = entry:match("^(.-),(.-),(.-),(.-)$")
+    if temp then
+      out[#out + 1] = { temp = tonumber(temp) or 0, code = tonumber(code), rain = tonumber(rain),
+        wind = tonumber(wind) }
+    end
+  end
+  return out
+end
+
+-- forecast draws today hour by hour: a temperature bar, the sky, the chance of
+-- rain and the wind, the current hour marked, scrolled to keep it in view.
+local function forecast(width, height)
+  local w = current()
+  local list = hours(w)
+  if #list == 0 then return { "", "  Fetching the forecast for " .. cfg.city .. "…" } end
+  local fahrenheit = w["for"] and w["for"]:match("|fahrenheit$")
+  local speed = fahrenheit and "mph" or "km/h"
+  local lo, hi = math.huge, -math.huge
+  for _, h in ipairs(list) do
+    lo, hi = math.min(lo, h.temp), math.max(hi, h.temp)
+  end
+  local now = math.floor(((wiregram.now() + (tonumber(w.offset) or 0)) % 86400) / 3600)
+  local showSky = width >= 56
+  local fixed = 2 + 5 + 2 + 4 + 2 + 2 + 4 + 3 + 7 + (showSky and 18 or 0)
+  local barW = math.max(3, math.min(16, width - fixed))
+
+  local lines = {
+    pad("  hour   temp", 17 + barW) .. (showSky and pad("sky", 18) or "") .. "rain   wind",
+  }
+  local rows = height - #lines
+  local first = math.max(0, math.min(now - 1, #list - rows))
+  for i = first + 1, math.min(#list, first + rows) do
+    local h = list[i]
+    local cond = conditions[h.code or -1] or { "Unknown" }
+    local fill = hi > lo and math.floor((h.temp - lo) / (hi - lo) * (barW - 1) + 1.5) or barW
+    local mark = (i - 1 == now) and "› " or "  "
+    local line = mark .. string.format("%02d:00", i - 1) .. "  " .. pad(round(h.temp) .. "°", 4) ..
+      "  " .. pad(string.rep("▇", fill), barW) .. "  "
+    if showSky then line = line .. pad(cond[1], 18) end
+    line = line .. pad(round(h.rain) .. "%", 4) .. "   " .. round(h.wind) .. " " .. speed
+    lines[#lines + 1] = line
+  end
+  return lines
+end
+
+local function click()
+  wiregram.modal { title = "Today in " .. cfg.city, width = 70, height = 25,
+    render = forecast }
+end
+
+wiregram.widget { height = 4, refresh = 60, update = update, render = render, click = click }

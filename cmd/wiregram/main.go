@@ -49,7 +49,8 @@ account list) and Settings.
 The account list shows an unread digest below it: one card per connected
 account, with its busiest chats. Settings can leave an account out.
 Plugins are Lua scripts; enabled ones may add widget cards under the
-digest, such as the built-in Weather (on by default) and Hacker News.
+digest, such as the built-in Weather (on by default; click it for today's
+hourly forecast) and Hacker News.
 Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 

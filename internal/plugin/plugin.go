@@ -46,6 +46,15 @@ type widget struct {
 	refresh time.Duration
 	update  *lua.LFunction
 	render  *lua.LFunction
+	click   *lua.LFunction
+}
+
+// Modal is an overlay a widget's click opened, Width×Height cells inside its border.
+type Modal struct {
+	Title  string
+	Width  int
+	Height int
+	render *lua.LFunction
 }
 
 // Plugin is one loaded script with its own Lua VM. mu serialises every call
@@ -66,6 +75,10 @@ type Plugin struct {
 	mu     sync.Mutex
 	L      *lua.LState
 	widget *widget
+	// clicking is set while click runs, the only time wiregram.modal may
+	// open one; modal is what it opened.
+	clicking bool
+	modal    *Modal
 
 	vmu     sync.Mutex
 	enabled bool
@@ -251,13 +264,24 @@ func (p *Plugin) Refresh() time.Duration { return p.widget.refresh }
 // Render draws the widget's lines for one animation frame. It gives up when
 // an update holds the VM, and ok is false so the caller keeps the last frame.
 func (p *Plugin) Render(width, frame int) (lines []string, ok bool, err error) {
+	return p.render(p.widget.render, p.widget.height, lua.LNumber(width), lua.LNumber(frame))
+}
+
+// RenderModal draws a modal's lines for one frame at the size it is shown,
+// the way Render draws the widget.
+func (p *Plugin) RenderModal(m *Modal, width, height, frame int) ([]string, bool, error) {
+	return p.render(m.render, height, lua.LNumber(width), lua.LNumber(height), lua.LNumber(frame))
+}
+
+func (p *Plugin) render(fn *lua.LFunction, height int, args ...lua.LValue) (lines []string,
+	ok bool, err error) {
 	if !p.mu.TryLock() {
 		return nil, false, nil
 	}
 	defer p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), renderTimeout)
 	defer cancel()
-	ret, err := p.call(ctx, p.widget.render, 1, lua.LNumber(width), lua.LNumber(frame))
+	ret, err := p.call(ctx, fn, 1, args...)
 	if err != nil {
 		return nil, true, err
 	}
@@ -265,10 +289,32 @@ func (p *Plugin) Render(width, frame int) (lines []string, ok bool, err error) {
 	if !isTable {
 		return nil, true, errors.New("render must return a list of lines")
 	}
-	for i := 1; i <= t.Len() && i <= p.widget.height; i++ {
+	for i := 1; i <= t.Len() && i <= height; i++ {
 		lines = append(lines, textfmt.Plain(lua.LVAsString(t.RawGetInt(i))))
 	}
 	return lines, true, nil
+}
+
+// Clickable reports whether the widget has a click handler.
+func (p *Plugin) Clickable() bool { return p.widget.click != nil }
+
+// Click runs the widget's click handler, and returns the modal it opened, if any.
+// It waits for an update that holds the VM.
+func (p *Plugin) Click(ctx context.Context) (*Modal, error) {
+	if p.widget.click == nil {
+		return nil, nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+	p.clicking, p.modal = true, nil
+	_, err := p.call(ctx, p.widget.click, 0)
+	p.clicking = false
+	if err != nil {
+		return nil, err
+	}
+	return p.modal, nil
 }
 
 // Update runs the widget's update, which may fetch over the network.

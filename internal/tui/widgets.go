@@ -24,10 +24,25 @@ type widgetUpdated struct {
 	err error
 }
 
+type widgetClicked struct {
+	p     *plugin.Plugin
+	modal *plugin.Modal
+	err   error
+}
+
+// widgetModal is the overlay a widget's click opened, with its last frame.
+type widgetModal struct {
+	p     *plugin.Plugin
+	m     *plugin.Modal
+	lines []string
+	err   error
+}
+
 type widgetState struct {
 	lines     []string
 	renderErr error
 	updateErr error
+	clickErr  error
 	updating  bool
 	due       time.Time
 	changes   uint64 // the plugin's setting changes the last update saw
@@ -41,6 +56,7 @@ type widgetsModel struct {
 	mgr    *plugin.Manager
 	frame  int
 	states map[*plugin.Plugin]*widgetState
+	modal  *widgetModal
 }
 
 func newWidgets(ctx context.Context, st *styles, mgr *plugin.Manager) widgetsModel {
@@ -65,17 +81,17 @@ func widgetTickCmd() tea.Cmd {
 }
 
 // start draws the first frame; with no widgets there is nothing to tick.
-func (m widgetsModel) start(width int) (widgetsModel, tea.Cmd) {
+func (m widgetsModel) start(width, screenW, screenH int) (widgetsModel, tea.Cmd) {
 	if len(m.order()) == 0 {
 		return m, nil
 	}
-	return m.tick(width)
+	return m.tick(width, screenW, screenH)
 }
 
-// tick draws the next frame of every widget at this width and starts the
-// updates that are due: on first show, after the plugin's refresh, or when
-// one of its settings changed.
-func (m widgetsModel) tick(width int) (widgetsModel, tea.Cmd) {
+// tick draws the next frame of every widget at this width, and of the open
+// modal on a screen this size, and starts the updates that are due: on first
+// show, after the plugin's refresh, or when one of its settings changed.
+func (m widgetsModel) tick(width, screenW, screenH int) (widgetsModel, tea.Cmd) {
 	m.frame++
 	cmds := []tea.Cmd{widgetTickCmd()}
 	widgets := m.order()
@@ -94,7 +110,75 @@ func (m widgetsModel) tick(width int) (widgetsModel, tea.Cmd) {
 			s.lines, s.renderErr = lines, err
 		}
 	}
+	if md := m.modal; md != nil {
+		w, h := md.size(screenW, screenH)
+		if lines, ok, err := md.p.RenderModal(md.m, w, h, m.frame); ok {
+			md.lines, md.err = lines, err
+		}
+	}
 	return m, tea.Batch(cmds...)
+}
+
+// click runs the clicked widget's handler in the background, since it may
+// wait for an update to finish.
+func (m widgetsModel) click(p *plugin.Plugin) tea.Cmd {
+	if !p.Clickable() {
+		return nil
+	}
+	return func() tea.Msg {
+		modal, err := p.Click(m.ctx)
+		return widgetClicked{p: p, modal: modal, err: err}
+	}
+}
+
+func (m widgetsModel) clicked(msg widgetClicked) widgetsModel {
+	if s, ok := m.states[msg.p]; ok {
+		s.clickErr = msg.err
+	}
+	if msg.modal != nil {
+		m.modal = &widgetModal{p: msg.p, m: msg.modal}
+	}
+	return m
+}
+
+// size is the cells inside the modal's border: what the plugin asked for,
+// cut to a screen this size.
+func (md *widgetModal) size(screenW, screenH int) (w, h int) {
+	return max(1, min(md.m.Width, screenW-6)), max(1, min(md.m.Height, screenH-2))
+}
+
+// box draws the modal with its last frame.
+func (md *widgetModal) box(st *styles, screenW, screenH int) string {
+	w, h := md.size(screenW, screenH)
+	lines := md.lines
+	if lines == nil && md.err == nil {
+		lines = []string{st.subtle.Render("Loading…")}
+	}
+	if md.err != nil {
+		lines = append(slices.Clone(lines[:min(len(lines), h-1)]),
+			styleError.Render(textfmt.CleanError(md.err)))
+	}
+	return renderBox(md.m.Title, lines, w+4, h+2, st.accentColor)
+}
+
+// widgetAt maps a click at x, y inside the widgets to its plugin.
+func (m widgetsModel) widgetAt(x, y, width int) (*plugin.Plugin, bool) {
+	if x < 0 || y < 0 || width < 1 {
+		return nil, false
+	}
+	rows, heights := m.rows(width)
+	cols := m.columns(width)
+	col := min(cols-1, x/(width/cols))
+	for i, row := range rows {
+		if y < heights[i] {
+			if col < len(row) {
+				return row[col], true
+			}
+			return nil, false
+		}
+		y -= heights[i]
+	}
+	return nil, false
 }
 
 func (m widgetsModel) updated(msg widgetUpdated) widgetsModel {
@@ -165,6 +249,9 @@ func (m widgetsModel) card(p *plugin.Plugin, width, height int) string {
 		lines, err = s.lines, s.renderErr
 		if err == nil {
 			err = s.updateErr
+		}
+		if err == nil {
+			err = s.clickErr
 		}
 	}
 	if lines == nil && err == nil {
