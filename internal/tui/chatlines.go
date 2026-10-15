@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -13,62 +12,29 @@ import (
 	"wiregram/internal/textfmt"
 )
 
-// Generic read reporter for any backend.
-type genericReadReporter struct {
-	b      backend.Backend
-	entry  backend.ChatEntry
-	target string
-	timer  *time.Timer
-	done   <-chan error
-	cancel context.CancelFunc
+// readReporter tracks how far the server knows the open chat is read. Only
+// Update touches it; MarkRead runs as a command and reports back with
+// chatMarkedRead.
+type readReporter struct {
+	marked   string // the newest message ID the server has been told about
+	inFlight bool
 }
 
-func newGenericReadReporter(b backend.Backend, entry backend.ChatEntry) *genericReadReporter {
-	timer := time.NewTimer(time.Hour)
-	timer.Stop()
-	return &genericReadReporter{b: b, entry: entry, target: b.InboxPosition(entry), timer: timer}
+type chatMarkedRead struct {
+	chatTag
+	id  string
+	err error
 }
 
-func (r *genericReadReporter) observe(id string) {
-	if id != "" && id > r.target {
-		r.target = id
-		r.timer.Reset(3 * time.Second)
+// newestIncoming is the ID of the newest message from someone else. Messages
+// are in chronological order; their IDs do not sort on every backend.
+func newestIncoming(msgs []backend.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if !msgs[i].Outgoing {
+			return msgs[i].ID
+		}
 	}
-}
-
-func (r *genericReadReporter) Start(ctx context.Context) {
-	if r.done != nil {
-		return
-	}
-	current := r.b.InboxPosition(r.entry)
-	if r.target == "" || r.target <= current {
-		return
-	}
-	ctx, r.cancel = context.WithCancel(ctx)
-	done := make(chan error, 1)
-	r.done = done
-	id := r.target
-	go func() { done <- r.b.MarkRead(ctx, r.entry, id) }()
-}
-
-func (r *genericReadReporter) complete() {
-	r.cancel()
-	r.done, r.cancel = nil, nil
-	current := r.b.InboxPosition(r.entry)
-	if r.target != "" && r.target > current {
-		r.timer.Reset(3 * time.Second)
-	}
-}
-
-func (r *genericReadReporter) Close(ctx context.Context) error {
-	r.timer.Stop()
-	if r.done != nil {
-		r.cancel()
-		<-r.done
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	return r.b.MarkRead(ctx, r.entry, r.target)
+	return ""
 }
 
 // Generic search result lines.

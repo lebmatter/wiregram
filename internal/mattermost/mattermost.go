@@ -495,9 +495,16 @@ func (mb *MmBackend) resolveUser(ctx context.Context, userID string) mmUser {
 	}
 	mb.mu.Unlock()
 
+	if userID == "" {
+		return mmUser{}
+	}
+	short := userID
+	if len(short) > 8 {
+		short = short[:8]
+	}
 	var u mmUser
-	if err := mb.apiJSON(ctx, "GET", "/users/"+userID, nil, &u); err != nil {
-		return mmUser{ID: userID, Username: userID[:8]}
+	if err := mb.apiJSON(ctx, "GET", "/users/"+url.PathEscape(userID), nil, &u); err != nil {
+		return mmUser{ID: userID, Username: short}
 	}
 	mb.mu.Lock()
 	mb.userCache[userID] = u
@@ -993,9 +1000,12 @@ func (mb *MmBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID 
 }
 
 func (mb *MmBackend) SetTyping(ctx context.Context, ch backend.ChatEntry) {
-	mb.api(ctx, "POST", "/users/"+mb.UserID+"/typing", map[string]string{
+	resp, err := mb.api(ctx, "POST", "/users/"+mb.UserID+"/typing", map[string]string{
 		"channel_id": ch.ID.Id,
 	})
+	if err == nil {
+		resp.Body.Close()
+	}
 }
 
 func (mb *MmBackend) React(ctx context.Context, ch backend.ChatEntry, msg backend.Message, emoji string) ([]backend.MessageReaction, error) {

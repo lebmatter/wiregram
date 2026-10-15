@@ -589,6 +589,16 @@ func cmdReset(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Remove disables each account's registered bots only through the agent
+	// runtime; the wipe below deletes their tokens, the only way to reach them.
+	agents, err := agent.OpenAgentDB(s.db.SQL(), s.dir)
+	if err != nil {
+		s.Close()
+		return err
+	}
+	rt := account.NewAgentRuntime(ctx, agents, s.mgr)
+	rt.Reload()
+	s.mgr.Agents = rt
 	accounts := s.mgr.List()
 	for _, a := range accounts {
 		if !a.Snapshot().NeedsLogin && !a.NeverAuthenticated() {
@@ -616,6 +626,7 @@ func cmdReset(ctx context.Context, args []string) error {
 	for _, a := range accounts {
 		s.mgr.Remove(ctx, a) // a failed server logout must not stop the reset
 	}
+	rt.Stop()
 	s.Close()
 	if err := config.Wipe(s.dir); err != nil {
 		return err

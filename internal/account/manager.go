@@ -489,6 +489,12 @@ func (m *AccountManager) Discard(a *Account) {
 			break
 		}
 	}
+	// Frees the Telegram number for an account added in its place.
+	for id, owner := range m.owners {
+		if owner == a {
+			delete(m.owners, id)
+		}
+	}
 	m.mu.Unlock()
 	if a.Key != "" {
 		if a.BackendType == "whatsapp" {

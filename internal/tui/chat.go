@@ -67,7 +67,7 @@ type chatViewModel struct {
 	sends chan chatOutgoing
 	queue []chatOutgoing
 
-	reads    *genericReadReporter
+	reads    *readReporter
 	replying *backend.Message
 	typing   bool
 	early    []backend.Event  // arrived while the first history page was loading
@@ -344,15 +344,18 @@ func (m chatViewModel) startReadTimer() tea.Cmd {
 	})
 }
 
-func (m chatViewModel) doMarkRead() tea.Cmd {
+// markRead tells the server the chat is read up to its newest incoming
+// message, unless it already knows or is being told.
+func (m chatViewModel) markRead() tea.Cmd {
 	r := m.reads
-	if r == nil {
+	id := newestIncoming(m.messages)
+	if r == nil || r.inFlight || id == "" || id == r.marked {
 		return nil
 	}
-	ctx := m.ctx
+	r.inFlight = true
+	ctx, b, entry := m.ctx, m.b, m.entry
 	return func() tea.Msg {
-		r.Start(ctx)
-		return nil
+		return chatMarkedRead{chatTag{entry.ID}, id, b.MarkRead(ctx, entry, id)}
 	}
 }
 
@@ -522,19 +525,20 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.b.ClearTyping()
 
 	case chatReadTick:
-		if m.reads != nil {
-			if m.selected >= 0 && m.selected < len(m.messages) {
-				delete(m.changedMessages, m.messages[m.selected].ID)
-			}
-			var readID string
-			for _, msg := range m.messages {
-				if !msg.Outgoing && msg.ID > readID {
-					readID = msg.ID
-				}
-			}
-			m.reads.observe(readID)
+		if m.reads != nil && m.selected >= 0 && m.selected < len(m.messages) {
+			delete(m.changedMessages, m.messages[m.selected].ID)
 		}
-		return m, tea.Batch(m.doMarkRead(), m.startReadTimer())
+		return m, tea.Batch(m.markRead(), m.startReadTimer())
+
+	case chatMarkedRead:
+		// A failure is retried on the next tick.
+		if m.reads != nil {
+			m.reads.inFlight = false
+			if msg.err == nil {
+				m.reads.marked = msg.id
+			}
+		}
+		return m, nil
 
 	case chatSendResult:
 		if msg.err != nil {
@@ -791,7 +795,7 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 	for _, msg := range msg.messages {
 		m.seen[msg.ID] = true
 	}
-	m.reads = newGenericReadReporter(m.b, m.entry)
+	m.reads = &readReporter{marked: m.b.InboxPosition(m.entry)}
 	cmds := []tea.Cmd{m.startReadTimer()}
 	for _, ev := range m.early {
 		var cmd tea.Cmd
@@ -1940,10 +1944,11 @@ func (m chatViewModel) cleanup() {
 		m.cancel()
 	}
 	m.b.SetActive(backend.ChatEntry{})
-	if m.reads != nil {
+	// Sent before returning, so it is not lost when the app quits.
+	if id := newestIncoming(m.messages); m.reads != nil && id != "" && id != m.reads.marked {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = m.reads.Close(ctx)
+		_ = m.b.MarkRead(ctx, m.entry, id)
 	}
 }
 

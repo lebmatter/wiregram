@@ -35,7 +35,7 @@ type MxBackend struct {
 	Store    *store.DB
 	StoreKey string
 
-	syncToken string
+	syncToken string // guarded by mu; runSync keeps its own copy
 	// synced is set once the first sync response has filled the rooms.
 	synced atomic.Bool
 
@@ -367,11 +367,11 @@ func (mx *MxBackend) StartSync(ctx context.Context) {
 }
 
 func (mx *MxBackend) runSync(ctx context.Context) error {
-	mx.loadSyncToken()
+	token := mx.loadSyncToken()
 	for ctx.Err() == nil {
 		params := url.Values{}
-		if mx.syncToken != "" {
-			params.Set("since", mx.syncToken)
+		if token != "" {
+			params.Set("since", token)
 			params.Set("timeout", "30000")
 		} else {
 			params.Set("timeout", "0")
@@ -408,8 +408,11 @@ func (mx *MxBackend) runSync(ctx context.Context) error {
 			return fmt.Errorf("decode sync: %w", err)
 		}
 		mx.processSyncResponse(ctx, &syncResp)
-		mx.syncToken = syncResp.NextBatch
-		mx.saveSyncToken()
+		token = syncResp.NextBatch
+		mx.mu.Lock()
+		mx.syncToken = token
+		mx.mu.Unlock()
+		mx.saveSyncToken(token)
 		if !mx.synced.Swap(true) {
 			mx.events.Publish(backend.Event{Kind: backend.EventUnread})
 		}
@@ -759,22 +762,28 @@ func (mx *MxBackend) processTypingEvent(roomID string, ev mxTimelineEvent, subsc
 	})
 }
 
-func (mx *MxBackend) loadSyncToken() {
+// loadSyncToken restores the saved sync position, also publishing it for
+// UnreadMessages.
+func (mx *MxBackend) loadSyncToken() string {
 	if mx.Store == nil {
-		return
+		return ""
 	}
 	data, err := mx.Store.Get(mx.StoreKey, store.SyncToken)
 	if err != nil {
-		return
+		return ""
 	}
-	mx.syncToken = strings.TrimSpace(string(data))
+	token := strings.TrimSpace(string(data))
+	mx.mu.Lock()
+	mx.syncToken = token
+	mx.mu.Unlock()
+	return token
 }
 
-func (mx *MxBackend) saveSyncToken() {
+func (mx *MxBackend) saveSyncToken(token string) {
 	if mx.Store == nil {
 		return
 	}
-	mx.Store.Put(mx.StoreKey, store.SyncToken, []byte(mx.syncToken))
+	mx.Store.Put(mx.StoreKey, store.SyncToken, []byte(token))
 }
 
 // Room display helpers.
@@ -840,19 +849,20 @@ func (mx *MxBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 	if archived {
 		return nil, 0, nil
 	}
+	// The sync goroutine updates rooms under mx.mu, so sort on a snapshot.
 	mx.mu.Lock()
 	type roomEntry struct {
-		Id   string
-		Room *mxRoom
+		id     string
+		lastAt time.Time
 	}
 	var entries []roomEntry
 	for id, room := range mx.rooms {
-		entries = append(entries, roomEntry{id, room})
+		entries = append(entries, roomEntry{id, room.lastAt})
 	}
 	mx.mu.Unlock()
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Room.lastAt.After(entries[j].Room.lastAt)
+		return entries[i].lastAt.After(entries[j].lastAt)
 	})
 	if len(entries) > 20 {
 		entries = entries[:20]
@@ -860,25 +870,34 @@ func (mx *MxBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 
 	result := make([]backend.ChatEntry, 0, len(entries))
 	for _, e := range entries {
-		result = append(result, mx.roomEntry(e.Id, e.Room))
+		if entry, ok := mx.roomEntry(e.id); ok {
+			result = append(result, entry)
+		}
 	}
 	return result, 0, nil
 }
 
-func (mx *MxBackend) roomEntry(id string, room *mxRoom) backend.ChatEntry {
+// roomEntry describes room id, reporting false once the room is gone.
+func (mx *MxBackend) roomEntry(id string) (backend.ChatEntry, bool) {
 	mx.mu.Lock()
+	room := mx.rooms[id]
+	if room == nil {
+		mx.mu.Unlock()
+		return backend.ChatEntry{}, false
+	}
 	isDM := mx.dmRooms[id]
 	unread := mx.unreads[id]
-	mx.mu.Unlock()
 	memberCount := len(room.members)
+	lastAt := room.lastAt
+	mx.mu.Unlock()
 	return backend.ChatEntry{
 		ID:      backend.ChatID{Backend: "matrix", Id: id},
 		Title:   mx.roomDisplayName(id),
 		Unread:  unread,
-		LastAt:  room.lastAt,
+		LastAt:  lastAt,
 		IsDM:    isDM && memberCount <= 2,
 		IsGroup: !isDM || memberCount > 2,
-	}
+	}, true
 }
 
 // History.
@@ -958,7 +977,10 @@ func (mx *MxBackend) markDirect(ctx context.Context, userID, roomID string) erro
 // UnreadMessages pages back from the latest sync. Reactions and state events
 // share the timeline, so it reads a full page rather than just limit events.
 func (mx *MxBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
-	msgs, _, err := mx.fetchMessages(ctx, ch.ID.Id, mx.syncToken, 25)
+	mx.mu.Lock()
+	token := mx.syncToken
+	mx.mu.Unlock()
+	msgs, _, err := mx.fetchMessages(ctx, ch.ID.Id, token, 25)
 	if err != nil {
 		return nil, err
 	}
@@ -1572,14 +1594,8 @@ func (mx *MxBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention
 		if n.Event.Type != "m.room.message" || n.Event.Sender == mx.UserID {
 			continue
 		}
-		mx.mu.Lock()
-		room := mx.rooms[n.RoomID]
-		mx.mu.Unlock()
-		if room == nil {
-			continue
-		}
-		entry := mx.roomEntry(n.RoomID, room)
-		if entry.IsDM {
+		entry, ok := mx.roomEntry(n.RoomID)
+		if !ok || entry.IsDM {
 			continue
 		}
 		msg := mx.eventToMessage(n.RoomID, n.Event)

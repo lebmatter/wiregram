@@ -183,6 +183,13 @@ func (u *uploadPanel) acceptMatch() bool {
 
 func (u *uploadPanel) completePath() {
 	value := u.input.Value()
+	if value == "~" {
+		// Completing the home folder itself would match its siblings by
+		// name, which the typed "~" cannot be extended into.
+		value = "~/"
+		u.input.SetValue(value)
+		u.input.CursorEnd()
+	}
 	line := []rune(value)
 	candidates, _ := backend.PathCompleter{}.Do(line, len(line))
 	u.matches, u.matchIdx = nil, 0

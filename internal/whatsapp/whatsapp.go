@@ -184,7 +184,10 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 		wa.Client.Disconnect()
 		return fmt.Errorf("request pairing code: %w", err)
 	}
-	report(fmt.Errorf("Enter this code on your phone: %s-%s", code[:4], code[4:]))
+	if len(code) > 4 {
+		code = code[:4] + "-" + code[4:]
+	}
+	report(fmt.Errorf("Enter this code on your phone: %s", code))
 
 	for item := range qrChan {
 		switch item.Event {
