@@ -343,7 +343,8 @@ func (m tuiModel) openFolder(mb backend.Mailbox, entry backend.ChatEntry) (tuiMo
 func (m tuiModel) openInbox(bot inboxBot) (tuiModel, tea.Cmd) {
 	b := m.mgr.Agents.BotBackend(bot.id)
 	if b == nil {
-		m.notice = "@" + bot.handle + " is not connected: turn the bot on, with its account online"
+		m.alert = newAlertModal(m.st, "Bot not connected",
+			"@"+bot.handle+" is not connected: turn the bot on, with its account online.")
 		return m, nil
 	}
 	m = m.closeChat()

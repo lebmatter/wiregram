@@ -269,8 +269,9 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		m.rec.Enabled = !m.rec.Enabled
 	case fieldProvider:
 		if len(m.providers) == 0 {
-			m.notice = "Add an AI provider in Settings first"
-			return m, nil
+			alert := agentBotAlert{title: "No AI provider",
+				text: "Add an AI provider in Settings > AI providers first."}
+			return m, func() tea.Msg { return alert }
 		}
 		old, next := m.provider(), m.providers[0]
 		for i, p := range m.providers {
