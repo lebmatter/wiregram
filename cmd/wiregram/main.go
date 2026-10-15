@@ -31,7 +31,10 @@ https://my.telegram.org/apps (unless embedded with -ldflags), then your
 phone number, login code, and optional 2FA password.
 Email accounts ask for an IMAP server (imap.gmail.com by default), the
 address, and an app password, or Google sign-in in the browser when the build
-embeds a Google OAuth client. Each correspondent is one chat. Mail is cached in
+embeds a Google OAuth client. Each correspondent is one chat. Under Search…,
+a Labels section holds the Gmail labels (other servers' folders) picked in
+its Labels… row (Space shows or hides one, Enter goes to it); Enter on a
+label expands it to the people with mail under it. Mail is cached in
 wiregram.db for the window set in an email account's Settings (90 days by default); mail
 on the server is never deleted by it.
 A new account opens with an Account connected card listing the keys to get

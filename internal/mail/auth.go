@@ -126,6 +126,13 @@ func (b *MailBackend) Authenticate(ctx context.Context, prompt config.PromptFunc
 	if err != nil {
 		return err
 	}
+	// The labels are listed now, so Labels… has them before the first sync.
+	b.connMu.Lock()
+	err = b.findMailboxes(c)
+	b.connMu.Unlock()
+	if err != nil && report != nil {
+		report(err)
+	}
 	c.Logout().Wait()
 	c.Close()
 	return nil

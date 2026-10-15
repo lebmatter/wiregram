@@ -24,7 +24,8 @@ Terminals 100 columns wide or wider show the chat list as a sidebar beside the o
 
 The sidebar is an account tree. Every account is a row with an arrow, a status glyph,
 a tag such as `TG1` (backend and position) and its label. The active account is expanded
-to its chats, Unread, Mentions and Search…, and, except for email, its
+to its chats, Unread, Mentions and Search…, on email its [labels](/features/email#labels),
+and, except for email, its
 [bot](/features/chat-bots) rows. <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
 
 Chat text wraps at 120 columns or the terminal width, whichever is smaller.

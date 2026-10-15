@@ -9,6 +9,8 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -108,7 +110,8 @@ func (b *MailBackend) selectBox(c *imapclient.Client, mailbox string) (uint32, e
 	return data.UIDValidity, nil
 }
 
-// findMailboxes locates the Sent and Trash folders by their special-use flags.
+// findMailboxes locates the Sent and Trash folders by their special-use
+// flags and saves the labels. The caller holds connMu.
 func (b *MailBackend) findMailboxes(c *imapclient.Client) error {
 	boxes, err := c.List("", "*", nil).Collect()
 	if err != nil {
@@ -124,7 +127,46 @@ func (b *MailBackend) findMailboxes(c *imapclient.Client) error {
 			}
 		}
 	}
-	return nil
+	return b.db.saveLabels(labelNames(boxes))
+}
+
+// listLabels saves the labels the server has now.
+func (b *MailBackend) listLabels(c *imapclient.Client) error {
+	boxes, err := c.List("", "*", nil).Collect()
+	if err != nil {
+		return fmt.Errorf("list labels: %w", err)
+	}
+	return b.db.saveLabels(labelNames(boxes))
+}
+
+func labelNames(boxes []*imap.ListData) []string {
+	var names []string
+	for _, box := range boxes {
+		if isLabel(box) {
+			names = append(names, box.Mailbox)
+		}
+	}
+	return names
+}
+
+// isLabel reports whether a mailbox is one of the user's labels: Gmail
+// lists each as a folder, and other servers' own folders count too. The
+// inbox and the special folders (Sent, Trash, Gmail's All Mail…) do not.
+func isLabel(box *imap.ListData) bool {
+	if strings.EqualFold(box.Mailbox, inbox) {
+		return false
+	}
+	for _, attr := range box.Attrs {
+		for _, skip := range []imap.MailboxAttr{imap.MailboxAttrNoSelect,
+			imap.MailboxAttrNonExistent, imap.MailboxAttrAll, imap.MailboxAttrDrafts,
+			imap.MailboxAttrFlagged, imap.MailboxAttrJunk, imap.MailboxAttrSent,
+			imap.MailboxAttrTrash, imap.MailboxAttrImportant} {
+			if strings.EqualFold(string(attr), string(skip)) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // runSync keeps the cache current: at start, when IDLE reports a change,
@@ -134,6 +176,7 @@ func (b *MailBackend) runSync(ctx context.Context) {
 	defer ticker.Stop()
 	var pruned time.Time
 	prunedDays := -1
+	labels := true
 	for {
 		// A shorter window chosen in Settings applies on the next pass.
 		if days := RetentionDays(b.Store); time.Since(pruned) > pruneEvery || days != prunedDays {
@@ -142,14 +185,25 @@ func (b *MailBackend) runSync(ctx context.Context) {
 			}
 			pruned, prunedDays = time.Now(), days
 		}
+		// Labels sync beside the inbox, on connections of their own.
+		var wg sync.WaitGroup
+		if labels {
+			wg.Go(func() { b.syncLabels(ctx) })
+		}
 		if err := b.syncAll(ctx); err != nil && ctx.Err() == nil {
 			b.report(err)
 		}
+		wg.Wait()
+		// IDLE watches the inbox only, so its nudges leave the labels be.
 		select {
 		case <-ctx.Done():
 			return
 		case <-b.nudge:
+			labels = false
+		case <-b.labelNudge:
+			labels = true
 		case <-ticker.C:
+			labels = true
 		}
 	}
 }
@@ -213,7 +267,7 @@ func (b *MailBackend) syncMailbox(ctx context.Context, mailbox string) error {
 		if last == 0 && len(uids) > initialSyncLimit {
 			uids = uids[len(uids)-initialSyncLimit:]
 		}
-		rows, err := b.fetchRows(c, mailbox, uv, uids)
+		rows, err := b.fetchRows(c, mailbox, uv, uids, mailbox != inbox)
 		if err != nil {
 			return err
 		}
@@ -263,8 +317,10 @@ func (b *MailBackend) syncMailbox(ctx context.Context, mailbox string) error {
 	return err
 }
 
-// fetchRows downloads the envelope, structure and readable text of uids.
-func (b *MailBackend) fetchRows(c *imapclient.Client, mailbox string, uv uint32, uids []imap.UID) ([]row, error) {
+// fetchRows downloads the envelope, structure and readable text of uids;
+// sent marks a folder of mail the user sent, whoever it is from.
+func (b *MailBackend) fetchRows(c *imapclient.Client, mailbox string, uv uint32, uids []imap.UID,
+	sent bool) ([]row, error) {
 	var rows []row
 	for start := 0; start < len(uids); start += fetchBatch {
 		batch := uids[start:min(len(uids), start+fetchBatch)]
@@ -287,7 +343,7 @@ func (b *MailBackend) fetchRows(c *imapclient.Client, mailbox string, uv uint32,
 			if m.Envelope == nil {
 				continue
 			}
-			p := pending{row: b.envelopeRow(m, mailbox, uv)}
+			p := pending{row: b.envelopeRow(m, mailbox, uv, sent)}
 			if m.BodyStructure != nil {
 				p.text, p.row.Parts = layout(m.BodyStructure)
 			}
@@ -316,7 +372,8 @@ func (b *MailBackend) fetchRows(c *imapclient.Client, mailbox string, uv uint32,
 	return rows, nil
 }
 
-func (b *MailBackend) envelopeRow(m *imapclient.FetchMessageBuffer, mailbox string, uv uint32) row {
+func (b *MailBackend) envelopeRow(m *imapclient.FetchMessageBuffer, mailbox string, uv uint32,
+	sent bool) row {
 	env := m.Envelope
 	me := strings.ToLower(b.Account.Email)
 	r := row{
@@ -342,7 +399,7 @@ func (b *MailBackend) envelopeRow(m *imapclient.FetchMessageBuffer, mailbox stri
 			r.Seen = true
 		}
 	}
-	r.Outgoing = mailbox != inbox || r.FromAddr == me
+	r.Outgoing = sent || r.FromAddr == me
 	r.Peer = r.FromAddr
 	if r.Outgoing {
 		r.Peer = me
@@ -403,7 +460,7 @@ func (b *MailBackend) fetchPeer(ctx context.Context, peer string, before time.Ti
 					uids = append(uids, all[i])
 				}
 			}
-			rows, err := b.fetchRows(c, box.name, uv, uids)
+			rows, err := b.fetchRows(c, box.name, uv, uids, box.name != inbox)
 			if err != nil {
 				return err
 			}
@@ -481,6 +538,220 @@ func (b *MailBackend) idleOnce(ctx context.Context) error {
 		if err := <-done; err != nil {
 			return fmt.Errorf("watch inbox: %w", err)
 		}
+	}
+}
+
+// labelWorkers caps the connections a label sync opens at once: Gmail allows
+// 15 for an account, and the inbox already holds two.
+const labelWorkers = 4
+
+// syncLabels refreshes the list of labels, so those made, renamed or deleted
+// elsewhere show, then brings the labels shown in the sidebar up to date,
+// several at once, each worker on a connection of its own.
+func (b *MailBackend) syncLabels(ctx context.Context) {
+	// Ending ctx closes every connection the pass opened.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c, err := b.dial(ctx, nil)
+	if err != nil {
+		if ctx.Err() == nil {
+			b.report(err)
+		}
+		return
+	}
+	if err := b.listLabels(c); err != nil {
+		b.report(err)
+		return
+	}
+	labels, err := b.db.shownLabels()
+	if err != nil {
+		b.report(err)
+		return
+	}
+	if len(labels) == 0 {
+		c.Logout().Wait()
+		return
+	}
+	queue := make(chan string, len(labels))
+	for _, l := range labels {
+		queue <- l
+	}
+	close(queue)
+	var changed atomic.Bool
+	var wg sync.WaitGroup
+	for i := range min(labelWorkers, len(labels)) {
+		first := c // the first worker takes the connection that listed them
+		if i > 0 {
+			first = nil
+		}
+		wg.Go(func() {
+			if b.labelWorker(ctx, first, queue) {
+				changed.Store(true)
+			}
+		})
+	}
+	wg.Wait()
+	if changed.Load() {
+		b.events.Publish(backend.Event{Kind: backend.EventUnread})
+	}
+}
+
+// labelWorker syncs labels from queue on c, or a connection of its own when
+// c is nil, until the queue is empty, and reports whether any of them
+// changed. A connection that breaks is replaced for the next label.
+func (b *MailBackend) labelWorker(ctx context.Context, c *imapclient.Client,
+	queue <-chan string) (changed bool) {
+	for label := range queue {
+		if ctx.Err() != nil {
+			return changed
+		}
+		if c == nil {
+			var err error
+			if c, err = b.dial(ctx, nil); err != nil {
+				b.report(err)
+				return changed
+			}
+		}
+		ok, err := b.syncLabel(ctx, c, label)
+		changed = changed || ok
+		var imapErr *imap.Error
+		if err != nil && ctx.Err() == nil {
+			b.report(err)
+			if !errors.As(err, &imapErr) {
+				c.Close()
+				c = nil
+			}
+		}
+	}
+	if c != nil {
+		c.Logout().Wait()
+	}
+	return changed
+}
+
+// syncLabel records which mails are under label, caching any not cached
+// yet, and refreshes the read state of those cached from its folder. It
+// reports whether anything changed.
+func (b *MailBackend) syncLabel(ctx context.Context, c *imapclient.Client, label string) (bool, error) {
+	data, err := c.Select(label, nil).Wait()
+	if err != nil {
+		return false, fmt.Errorf("open label %s: %w", label, err)
+	}
+	uv := data.UIDValidity
+	savedUV, _, err := b.db.syncState(label)
+	if err != nil {
+		return false, err
+	}
+	if savedUV != 0 && savedUV != uv {
+		if err := b.db.resetMailbox(label); err != nil {
+			return false, err
+		}
+	}
+	criteria := &imap.SearchCriteria{}
+	if days := RetentionDays(b.Store); days > 0 {
+		criteria.Since = time.Now().AddDate(0, 0, -days)
+	}
+	found, err := c.UIDSearch(criteria, nil).Wait()
+	if err != nil {
+		return false, fmt.Errorf("search label %s: %w", label, err)
+	}
+	all := found.AllUIDs()
+	all = all[max(0, len(all)-initialSyncLimit):]
+	known, err := b.db.labelUIDs(label, uv)
+	if err != nil {
+		return false, err
+	}
+	present := make(map[uint32]bool, len(all))
+	var fresh []imap.UID
+	newest := uint32(0)
+	for _, uid := range all {
+		present[uint32(uid)] = true
+		newest = max(newest, uint32(uid))
+		if !known[uint32(uid)] {
+			fresh = append(fresh, uid)
+		}
+	}
+	added, members, err := b.labelMail(c, label, uv, fresh)
+	if err != nil {
+		return false, err
+	}
+	if err := b.db.setLabelMembers(label, uv, present, members); err != nil {
+		return false, err
+	}
+	changed := len(fresh) > 0 || len(known) > len(present)
+	if err := b.db.saveSyncState(label, uv, newest); err != nil {
+		return changed, err
+	}
+	unseen := &imap.SearchCriteria{NotFlag: []imap.Flag{imap.FlagSeen}, Since: criteria.Since}
+	found, err = c.UIDSearch(unseen, nil).Wait()
+	if err != nil {
+		return changed, fmt.Errorf("search unread mail in %s: %w", label, err)
+	}
+	set := make(map[uint32]bool)
+	for _, uid := range found.AllUIDs() {
+		set[uint32(uid)] = true
+	}
+	read, err := b.db.setUnseen(label, uv, set)
+	if savedUV == uv {
+		// Mail new to a label synced before is news, as in the inbox.
+		for _, r := range added {
+			msg := b.toMessage(r)
+			b.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chatID(r.Peer),
+				Message: &msg})
+		}
+	}
+	return changed || read, err
+}
+
+// labelMail reads the Message-IDs of uids in label's folder and caches the
+// mails not cached yet. It returns those it cached and every mail it could
+// name; a mail without a Message-ID cannot be told apart from its copies
+// and is left out.
+func (b *MailBackend) labelMail(c *imapclient.Client, label string, uv uint32, uids []imap.UID) (
+	added []row, members []labelMember, err error) {
+	var missing []imap.UID
+	for start := 0; start < len(uids); start += fetchBatch {
+		batch := uids[start:min(len(uids), start+fetchBatch)]
+		msgs, err := c.Fetch(imap.UIDSetNum(batch...), &imap.FetchOptions{
+			UID: true, Envelope: true}).Collect()
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch mail from %s: %w", label, err)
+		}
+		for _, m := range msgs {
+			if m.Envelope == nil {
+				continue
+			}
+			id := strings.Trim(m.Envelope.MessageID, "<>")
+			if id == "" {
+				continue
+			}
+			members = append(members, labelMember{uid: uint32(m.UID), messageID: id})
+			if !b.db.hasMessageID(id) {
+				missing = append(missing, m.UID)
+			}
+		}
+	}
+	rows, err := b.fetchRows(c, label, uv, missing, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range rows {
+		ok, err := b.db.insert(&rows[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			added = append(added, rows[i])
+		}
+	}
+	return added, members, nil
+}
+
+// wakeLabels asks the sync loop for a pass over the labels too.
+func (b *MailBackend) wakeLabels() {
+	select {
+	case b.labelNudge <- struct{}{}:
+	default:
 	}
 }
 

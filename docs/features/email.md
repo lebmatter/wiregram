@@ -9,6 +9,28 @@ Each person you exchange mail with is one chat. A mail's bold subject leads its 
 and the chat shows the first few lines of its text. Quoted originals are trimmed in the
 chat and kept in the reader.
 
+## Labels
+
+Gmail labels (on other servers, folders) can group your correspondents in the sidebar.
+The labels are read when you sign in and again every few minutes.
+
+Under **Search…** sits a **Labels** section. Its **Labels…** row opens a list of every
+label, each ticked when its section is in the sidebar:
+
+| Key | Action |
+|-----|--------|
+| <kbd>Space</kbd>, click | Show or hide the label in the sidebar |
+| <kbd>Enter</kbd> | Go to the label: shows it, expanded and selected |
+| Type | Filter the labels |
+| <kbd>Esc</kbd> | Close |
+
+Each shown label is a collapsed row with its unread count; <kbd>Enter</kbd> expands it to
+the people with mail under it, and opening one opens their whole conversation. A
+correspondent appears under every label their mail carries.
+
+Only shown labels are synced, several at once, each on its own connection. Labels are
+read-only here: wiregram never adds or removes them.
+
 ## Reading
 
 Select a mail and press <kbd>Enter</kbd> to open its actions; **Read** opens the reader

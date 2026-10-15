@@ -74,11 +74,18 @@ type tuiModel struct {
 	height         int
 	// botEvents is the open bot chat's subscription to the bot's connection.
 	botEvents *backend.Subscription
+	// labels is the Labels modal, over the screen.
+	labels *labelPicker
+	// labelOpen names the expanded label sections in the sidebar.
+	labelOpen map[string]bool
+	// goToLabel is the label section to select once the list reloads.
+	goToLabel string
 }
 
 type tuiDialogsLoaded struct {
 	entries       []backend.ChatEntry
 	archiveUnread int
+	labels        []labelSection
 	err           error
 }
 
@@ -130,8 +137,36 @@ func listenBotEvents(sub *backend.Subscription) tea.Cmd {
 func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
 	return func() tea.Msg {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
-		return tuiDialogsLoaded{entries, archiveUnread, err}
+		if err != nil {
+			return tuiDialogsLoaded{err: err}
+		}
+		labels, err := loadLabels(ctx, b)
+		return tuiDialogsLoaded{entries, archiveUnread, labels, err}
 	}
+}
+
+// loadLabels reads the label sections shown in the sidebar with their chats.
+func loadLabels(ctx context.Context, b backend.Backend) ([]labelSection, error) {
+	lb, ok := b.(backend.Labeler)
+	if !ok {
+		return nil, nil
+	}
+	labels, err := lb.Labels()
+	if err != nil {
+		return nil, err
+	}
+	var out []labelSection
+	for _, l := range labels {
+		if !l.Shown {
+			continue
+		}
+		entries, err := lb.LabelChats(ctx, l.Name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, labelSection{name: l.Name, unread: l.Unread, entries: entries})
+	}
+	return out, nil
 }
 
 // chipsTick refreshes the account chips; mgr.changed already has a consumer.
@@ -152,6 +187,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		entries:       entries,
 		archiveUnread: archiveUnread,
 		agentsCtx:     ctx,
+		labelOpen:     make(map[string]bool),
 		width:         w,
 		height:        h,
 	}
@@ -159,6 +195,7 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 		m.kitty = &kittyImages{}
 	}
 	m.list = newChatListModel(ctx, m.st, mgr, active, b, entries, false, archiveUnread)
+	m.list.labelOpen = m.labelOpen
 	return m.sized()
 }
 
@@ -168,6 +205,10 @@ func (m tuiModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{listenEvents(m.events), chipsTick(), pruneMediaCache, openUnread}
 	if m.mgr != nil && m.mgr.Agents != nil {
 		cmds = append(cmds, listenAgents(m.agentsCtx, m.mgr))
+	}
+	if _, ok := m.b.(backend.Labeler); ok {
+		// The screen opens with the chats alone; this adds the label sections.
+		cmds = append(cmds, loadDialogs(m.ctx, m.b, m.archived))
 	}
 	return tea.Batch(cmds...)
 }
@@ -211,6 +252,9 @@ func (m tuiModel) sized() tuiModel {
 	}
 	if m.agentOpen {
 		m.agentPane = m.agentPane.resized(paneWidth, bodyHeight)
+	}
+	if m.labels != nil {
+		m.labels.resized(m.width, bodyHeight)
 	}
 	m.chat.embedded = m.twoPane()
 	m.chat.focused = m.focus == focusChat
@@ -556,6 +600,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			m.wiz = &wiz
 			return m, cmd
 		}
+		if m.labels != nil {
+			return m, m.labels.paste(msg)
+		}
 		if m.searchOpen {
 			m.search, cmd = m.search.Update(msg)
 			return m, cmd
@@ -627,6 +674,16 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		wiz, cmd := m.wiz.modalClick(mouse.X, mouse.Y, 0, m.width, m.bodyHeight())
 		m.wiz = &wiz
 		return m, cmd
+	}
+	if m.labels != nil {
+		if right {
+			return m, nil
+		}
+		x, y := m.labelsAt()
+		if m.labels.click(mouse.X-x, mouse.Y-y) {
+			return m.closeLabels("")
+		}
+		return m, nil
 	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		if right {
@@ -712,7 +769,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	if !ok || mouse.Y >= m.bodyHeight() || (m.chatOpen && m.chat.locked) {
 		return m, nil
 	}
-	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil {
+	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil || m.labels != nil {
 		return m.handleKey(k)
 	}
 	var cmd tea.Cmd
@@ -751,7 +808,8 @@ func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
 		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListAccounts, chatListSettings, chatListSwitch,
-		chatListDeleteDone, chatListAgent, chatListInbox:
+		chatListDeleteDone, chatListAgent, chatListInbox, chatListLabel, chatListLabels,
+		chatListOpen:
 		return true
 	}
 	return false
@@ -770,6 +828,13 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	if m.wiz != nil {
 		wiz, cmd := m.wiz.Update(msg)
 		m.wiz = &wiz
+		return m, cmd
+	}
+	if m.labels != nil {
+		open, done, cmd := m.labels.key(msg)
+		if done {
+			return m.closeLabels(open)
+		}
 		return m, cmd
 	}
 	if m.searchOpen {
@@ -839,8 +904,14 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.entries = msg.entries
 		m.archiveUnread = msg.archiveUnread
 		m.list = newChatListModel(m.ctx, m.st, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
+		m.list.labels, m.list.labelOpen = msg.labels, m.labelOpen
 		m.list.selected = min(selected, m.list.maxIndex())
 		m.list.offset = offset
+		if i, ok := m.list.labelIndex(m.goToLabel); ok {
+			m.list.selected = i
+			m.focus = focusList
+		}
+		m.goToLabel = ""
 		return m, nil
 
 	case tuiRetryDialogs:
@@ -896,6 +967,26 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case chatListAgent:
 		return m.agentRow(msg.id)
+
+	case chatListLabel:
+		m.labelOpen[msg.name] = !m.labelOpen[msg.name]
+		return m, nil
+
+	case chatListLabels:
+		lb, ok := m.b.(backend.Labeler)
+		if !ok {
+			return m, nil
+		}
+		picker, err := newLabelPicker(m.st, lb)
+		if err != nil {
+			m.notice = textfmt.CleanError(err)
+			return m, nil
+		}
+		m.labels = picker
+		return m.sized(), nil
+
+	case chatListOpen:
+		return m.openChat(msg.entry)
 	}
 
 	var cmd tea.Cmd
@@ -920,6 +1011,8 @@ func (m tuiModel) footer() string {
 	switch {
 	case m.wiz != nil:
 		keys = m.wiz.helpKeys()
+	case m.labels != nil:
+		keys = m.labels.helpKeys()
 	case m.searchOpen:
 		keys = m.search.helpKeys()
 	case m.unreadOpen && m.focus == focusChat:
@@ -1022,6 +1115,10 @@ func (m tuiModel) render() string {
 		x, y := m.pickerAt()
 		body = m.st.fadeUnder(body, m.agentPane.picker.View(), x, y)
 	}
+	if m.labels != nil {
+		x, y := m.labelsAt()
+		body = m.st.fadeUnder(body, m.labels.View(), x, y)
+	}
 	if m.wiz != nil {
 		box, _ := m.wiz.modal(m.width, bodyHeight)
 		body = m.st.overlay(body, box, m.width, bodyHeight)
@@ -1065,6 +1162,23 @@ func (m tuiModel) confirmShown() (c *confirmModal, x, y int, ok bool) {
 	w, h := c.size()
 	x, y = modalRect(width, m.bodyHeight(), w, h)
 	return c, left + x, y, true
+}
+
+// labelsAt is the top-left corner of the Labels modal: centred over the screen.
+func (m tuiModel) labelsAt() (x, y int) {
+	w, h := m.labels.size()
+	return modalRect(m.width, m.bodyHeight(), w, h)
+}
+
+// closeLabels closes the Labels modal and reloads the list for the sections
+// it changed, then selects label's section when one was picked, expanded.
+func (m tuiModel) closeLabels(label string) (tuiModel, tea.Cmd) {
+	m.labels = nil
+	if label != "" {
+		m.labelOpen[label] = true
+		m.goToLabel = label
+	}
+	return m, loadDialogs(m.ctx, m.b, m.archived)
 }
 
 // pickerAt is the top-left corner of the bot's chat picker: centred over its pane.

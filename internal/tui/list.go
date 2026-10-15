@@ -15,8 +15,9 @@ import (
 // chatListModel is the sidebar tree: every account as a header, with the
 // active account expanded to its chats and the others collapsed above and
 // below it. Selection indexes run over the selectable rows in display order:
-// accounts above, chats, the action rows (Unread, Mentions, archive, search
-// and the account's agent), accounts below, then "Settings…".
+// accounts above, chats, the action rows (Unread, Mentions, archive, search,
+// the label sections and the account's agent), accounts below, then
+// "Settings…".
 type chatListModel struct {
 	st            *styles
 	ctx           context.Context
@@ -29,6 +30,11 @@ type chatListModel struct {
 	archiveUnread int
 	caps          backend.Capabilities
 	mentions      bool // the backend can list mentions
+	labeler       bool // the backend groups chats under labels
+	labels        []labelSection
+	// labelOpen names the expanded label sections; the screen owns it, so
+	// it outlasts reloads of the list.
+	labelOpen     map[string]bool
 	confirm       *chatListConfirm
 	offset        int
 	width, height int
@@ -53,6 +59,16 @@ type chatListArchiveToggle struct{}
 type chatListAgent struct{ id int64 } // 0 creates a bot
 type chatListInbox struct{ bot inboxBot }
 type chatListDeleteDone struct{ err error }
+type chatListLabel struct{ name string } // expands or collapses a label section
+type chatListLabels struct{}
+type chatListOpen struct{ entry backend.ChatEntry }
+
+// labelSection is a label shown in the sidebar, with its chats.
+type labelSection struct {
+	name    string
+	unread  int
+	entries []backend.ChatEntry
+}
 
 func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManager, active *account.Account, b backend.Backend, entries []backend.ChatEntry, archived bool, archiveUnread int) chatListModel {
 	w, h := termSize()
@@ -70,6 +86,7 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 		height:        h,
 	}
 	_, m.mentions = b.(backend.MentionFetcher)
+	_, m.labeler = b.(backend.Labeler)
 	m.selected = m.before()
 	return m
 }
@@ -79,7 +96,12 @@ type listAction struct {
 	entry backend.ChatEntry
 	mark  string
 	msg   tea.Msg
-	bot   bool // listed in the Bots section
+	// section is the heading ruled above the row, which starts a section.
+	section string
+	// chat is a chat inside a label section, drawn as a chat, indented.
+	chat bool
+	// label is the label section header's name.
+	label string
 }
 
 func (m chatListModel) actions() []listAction {
@@ -100,11 +122,15 @@ func (m chatListModel) actions() []listAction {
 		acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}})
 	}
 	acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
+	if m.labeler && !m.archived {
+		acts = append(acts, m.labelActions()...)
+	}
 	if agentsAllowed(m.mgr, m.active) {
+		first := len(acts)
 		for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
 			acts = append(acts, listAction{
 				entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
-				mark:  m.st.agentMark(rec.Enabled), msg: chatListAgent{id: rec.ID}, bot: true,
+				mark:  m.st.agentMark(rec.Enabled), msg: chatListAgent{id: rec.ID},
 			})
 			if reg, ok := m.mgr.Agents.Registration(rec.ID); ok {
 				// The registered username, which on Telegram ends in bot.
@@ -112,14 +138,48 @@ func (m chatListModel) actions() []listAction {
 					entry: backend.ChatEntry{Title: "  Inbox",
 						Unread: m.mgr.Agents.InboxWaiting(rec.ID)},
 					msg: chatListInbox{inboxBot{id: rec.ID, name: rec.Name, handle: reg.Username}},
-					bot: true,
 				})
 			}
 		}
 		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "New bot…"},
-			msg: chatListAgent{}, bot: true})
+			msg: chatListAgent{}})
+		acts[first].section = "Bots"
 	}
 	return acts
+}
+
+// labelActions is the Labels section: a header per label shown in the
+// sidebar, its chats under it while expanded, then "Labels…".
+func (m chatListModel) labelActions() []listAction {
+	var acts []listAction
+	for _, l := range m.labels {
+		arrow := "▸ "
+		if m.labelOpen[l.name] {
+			arrow = "▾ "
+		}
+		acts = append(acts, listAction{entry: backend.ChatEntry{Title: arrow + l.name,
+			Unread: l.unread}, msg: chatListLabel{l.name}, label: l.name})
+		if !m.labelOpen[l.name] {
+			continue
+		}
+		for _, e := range l.entries {
+			acts = append(acts, listAction{entry: e, msg: chatListOpen{e}, chat: true})
+		}
+	}
+	acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Labels…"},
+		msg: chatListLabels{}})
+	acts[0].section = "Labels"
+	return acts
+}
+
+// labelIndex is the selection index of label's section header, if shown.
+func (m chatListModel) labelIndex(label string) (int, bool) {
+	for i, a := range m.actions() {
+		if label != "" && a.label == label {
+			return m.before() + len(m.entries) + i, true
+		}
+	}
+	return 0, false
 }
 
 // agentsAllowed reports whether the account can have bots (Chat Agents): they
@@ -164,23 +224,17 @@ func (m chatListModel) refreshUnread() chatListModel {
 	for i := range m.entries {
 		m.entries[i].Unread = m.b.CachedUnread(m.entries[i])
 	}
+	for _, l := range m.labels {
+		for i := range l.entries {
+			l.entries[i].Unread = m.b.CachedUnread(l.entries[i])
+		}
+	}
 	return m
 }
 
-// firstBot is the selection index of the Bots section's first row, or -1
-// when the account has none.
-func (m chatListModel) firstBot() int {
-	for i, a := range m.actions() {
-		if a.bot {
-			return m.before() + len(m.entries) + i
-		}
-	}
-	return -1
-}
-
 // row maps a selection index to its display row. The active account's
-// header sits above its chats, a separator below them, and the Bots
-// heading above its bots.
+// header sits above its chats, a separator below them, and each section's
+// heading (Labels, Bots) above its first row.
 func (m chatListModel) row(index int) int {
 	before := m.before()
 	if index < before {
@@ -190,8 +244,10 @@ func (m chatListModel) row(index int) int {
 		return index + 1
 	}
 	r := index + 2 + max(0, 1-len(m.entries)) // "No chats here" placeholder
-	if first := m.firstBot(); first >= 0 && index >= first {
-		r++
+	for i, a := range m.actions() {
+		if a.section != "" && before+len(m.entries)+i <= index {
+			r++
+		}
 	}
 	return r
 }
@@ -391,16 +447,21 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	}
 	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
 
-	firstBot := m.firstBot()
 	for _, a := range m.actions() {
-		if index == firstBot {
-			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── Bots ", max(1, width-4))))
+		if a.section != "" {
+			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── "+a.section+" ",
+				max(1, width-4))))
 		}
-		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused, max(1, width-4))
-		if index != m.selected {
+		indent := "    "
+		if a.chat {
+			indent = "      "
+		}
+		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused,
+			max(1, width-len(indent)))
+		if index != m.selected && !a.chat && a.label == "" {
 			line = m.st.subtle.Render(line)
 		}
-		rows = append(rows, "    "+line)
+		rows = append(rows, indent+line)
 		index++
 	}
 	for _, a := range below {

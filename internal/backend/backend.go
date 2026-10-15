@@ -305,6 +305,25 @@ type FullMessager interface {
 	FullMessage(msg Message) (headers []string, body string)
 }
 
+// Labeler is implemented by backends that group chats under labels: Gmail
+// labels, or another mail server's folders. The sidebar shows a section for
+// each label the user chose.
+type Labeler interface {
+	// Labels returns every label by name, shown in the sidebar or not.
+	Labels() ([]Label, error)
+	// ShowLabel puts a label's section in the sidebar or takes it out.
+	ShowLabel(name string, shown bool) error
+	// LabelChats returns the chats with something under the label.
+	LabelChats(ctx context.Context, name string) ([]ChatEntry, error)
+}
+
+// Label is one of a Labeler's labels.
+type Label struct {
+	Name   string
+	Shown  bool
+	Unread int
+}
+
 // NewestIncoming keeps the last limit messages the user did not send.
 func NewestIncoming(msgs []Message, limit int) []Message {
 	var in []Message

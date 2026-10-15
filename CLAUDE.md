@@ -96,7 +96,10 @@ These are project constraints, not suggestions:
 - The sidebar is an account tree (`internal/tui/list.go`): every
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
   has a bot), the active one expanded to its chats, archive (Telegram only), search and,
-  except on email, a `── Bots` section: a `NAME @handle` row per bot, then `New bot…`. Enter on
+  on email a `── Labels` section (`backend.Labeler`: a collapsible row per label the user
+  shows, its correspondents under it, then `Labels…`, the modal in `internal/tui/labels.go`
+  that shows or hides each), and except on email, a `── Bots` section: a `NAME @handle` row
+  per bot, then `New bot…`. Enter on
   another account switches to it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
@@ -203,7 +206,10 @@ These are project constraints, not suggestions:
   originals are trimmed in the chat, kept in the reader. HTML mail is reduced
   to text and nothing it references is fetched. Mail is cached in
   `wiregram.db` for the Keep mail cached setting of an email account's Settings (`mail_retention_days`,
-  default 90); pruning never touches the server, and deleting moves to Trash.
+  default 90); pruning never touches the server, and deleting moves to Trash. Labels are
+  the server's folders (`isLabel`), listed at sign-in and on each label pass; only shown
+  ones sync, in parallel on their own connections (`syncLabels`), with membership by
+  Message-ID in `mail_label_members`.
 - Themes live in `internal/tui/theme.go`: a fixed `themes` table (Zest, the
   default, from the website's lime and purples, then Copper), one entry per theme.
   The accent, subtle, dim, selection and badge colours come from a `*styles`

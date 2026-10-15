@@ -36,6 +36,7 @@ expanded to:
 - its chats, newest first, with unread badges
 - **Unread** and **Mentions** (see [Unread & Mentions](/features/unread-mentions))
 - **Search…**, which opens the user search
+- on email, a **Labels** section (see [Email](/features/email#labels))
 
 <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
 

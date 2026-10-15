@@ -52,8 +52,9 @@ type MailBackend struct {
 	sentBox     string
 	trashBox    string
 
-	nudge  chan struct{}
-	events backend.Bus
+	nudge      chan struct{}
+	labelNudge chan struct{}
+	events     backend.Bus
 }
 
 // NewMailBackend prepares an account on imapHost whose cache is keyed by key.
@@ -64,11 +65,12 @@ func NewMailBackend(imapHost string, st *store.DB, key string) (*MailBackend, er
 	}
 	imapHost = strings.ToLower(strings.TrimSpace(imapHost))
 	return &MailBackend{
-		Account: Identity{IMAPHost: imapHost, SMTPHost: smtpHostFor(imapHost)},
-		Store:   st,
-		db:      db,
-		fetched: make(map[string]bool),
-		nudge:   make(chan struct{}, 1),
+		Account:    Identity{IMAPHost: imapHost, SMTPHost: smtpHostFor(imapHost)},
+		Store:      st,
+		db:         db,
+		fetched:    make(map[string]bool),
+		nudge:      make(chan struct{}, 1),
+		labelNudge: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -144,6 +146,31 @@ func (b *MailBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Cha
 		entries = append(entries, c.entry())
 	}
 	return entries, 0, nil
+}
+
+func (b *MailBackend) Labels() ([]backend.Label, error) { return b.db.labels() }
+
+// ShowLabel saves the choice; a label put in the sidebar syncs at once.
+func (b *MailBackend) ShowLabel(name string, shown bool) error {
+	if err := b.db.showLabel(name, shown); err != nil {
+		return err
+	}
+	if shown {
+		b.wakeLabels()
+	}
+	return nil
+}
+
+func (b *MailBackend) LabelChats(ctx context.Context, name string) ([]backend.ChatEntry, error) {
+	cs, err := b.db.correspondentsIn(name, 200)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]backend.ChatEntry, 0, len(cs))
+	for _, c := range cs {
+		entries = append(entries, c.entry())
+	}
+	return entries, nil
 }
 
 func (c correspondent) entry() backend.ChatEntry {
@@ -556,7 +583,7 @@ func (b *MailBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, 
 					missing = append(missing, uid)
 				}
 			}
-			rows, err := b.fetchRows(c, box.name, uv, missing)
+			rows, err := b.fetchRows(c, box.name, uv, missing, box.name != inbox)
 			if err != nil {
 				return err
 			}
