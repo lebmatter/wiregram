@@ -354,7 +354,7 @@ func (m tuiModel) openInbox(bot inboxBot) (tuiModel, tea.Cmd) {
 	m = m.closeChat()
 	var cmd tea.Cmd
 	m.unread, cmd = newInbox(m.ctx, m.st, b, bot,
-		m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active)))
+		m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active), bot.id))
 	m.unreadOpen = true
 	m.focus = focusChat
 	return m.sized(), cmd
@@ -423,7 +423,8 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		var reload tea.Cmd
 		if m.unreadOpen && m.unread.bot != nil {
 			// A reply may have started or stopped waiting in the open inbox.
-			m.unread.waiting = m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active))
+			m.unread.waiting = m.mgr.Agents.PendingChats(m.mgr.AccountKey(m.active),
+				m.unread.bot.id)
 			m.unread, reload = m.unread.load()
 		}
 		return m.withAgentSent(), tea.Batch(reload, listenAgents(m.agentsCtx, m.mgr))
@@ -1481,7 +1482,8 @@ func (m tuiModel) withSuggestion() tuiModel {
 	if !m.chatOpen || m.mgr == nil || m.mgr.Agents == nil {
 		return m
 	}
-	_, sug, _ := m.mgr.Agents.PendingFor(m.mgr.AccountKey(m.active), m.chat.entry.ID)
+	_, sug, _ := m.mgr.Agents.PendingFor(m.mgr.AccountKey(m.active), m.chat.entry.ID,
+		m.chat.bot != nil)
 	m.chat.suggestion = sug.Text
 	return m
 }
@@ -1491,7 +1493,8 @@ func (m tuiModel) withAgentSent() tuiModel {
 	if !m.chatOpen || m.mgr == nil || m.mgr.Agents == nil {
 		return m
 	}
-	sent, err := m.mgr.Agents.Db.SentBy(m.mgr.AccountKey(m.active), m.chat.entry.ID.Id)
+	sent, err := m.mgr.Agents.Db.SentBy(m.mgr.AccountKey(m.active),
+		account.LogChatID(m.chat.entry.ID, m.chat.bot != nil))
 	if err != nil {
 		return m
 	}
@@ -1507,7 +1510,7 @@ func (m tuiModel) suggestionAct(act string) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	rt := m.mgr.Agents
-	key, sug, ok := rt.PendingFor(m.mgr.AccountKey(m.active), m.chat.entry.ID)
+	key, sug, ok := rt.PendingFor(m.mgr.AccountKey(m.active), m.chat.entry.ID, m.chat.bot != nil)
 	if !ok {
 		return m, nil
 	}

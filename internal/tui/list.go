@@ -445,7 +445,7 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	answers := func(backend.ChatEntry) bool { return false }
 	if m.mgr != nil && m.mgr.Agents != nil && m.active != nil {
 		key := m.mgr.AccountKey(m.active)
-		pending = m.mgr.Agents.PendingChats(key)
+		pending = m.mgr.Agents.PendingChats(key, 0)
 		answers = func(e backend.ChatEntry) bool { return m.mgr.Agents.Answers(key, e) }
 	}
 	for _, entry := range m.entries {

@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"wiregram/internal/backend"
 )
@@ -62,16 +63,40 @@ func (rt *agentRuntime) syncBots() {
 	}
 }
 
-// runBot signs in as the bot and answers its DMs until ctx ends.
+// botRetryDelay is how long a bot whose connection failed waits to try again.
+const botRetryDelay = 30 * time.Second
+
+// runBot answers the bot's DMs until ctx ends. A failed or lost connection
+// is reported and, after botRetryDelay, replaced by syncBots.
 func (rt *agentRuntime) runBot(ctx context.Context, acct *Account, key string, agentID int64,
 	reg backend.BotRegistrar, bot backend.BotAccount, c *botConn) {
 	defer rt.wg.Done()
+	err := rt.serveBot(ctx, acct, key, agentID, reg, bot, c)
+	if ctx.Err() != nil {
+		return
+	}
+	rt.mu.Lock()
+	c.b = nil // the Inbox must not open chats on a dead connection
+	rt.mu.Unlock()
+	rt.fail(agentID, err)
+	if backend.WaitFor(ctx, botRetryDelay) != nil {
+		return
+	}
+	c.cancel() // ends whatever the failed connection still holds
+	rt.mu.Lock()
+	if rt.bots[agentID] == c {
+		delete(rt.bots, agentID)
+	}
+	rt.mu.Unlock()
+	rt.syncBots()
+}
+
+// serveBot signs in as the bot and answers its DMs, returning why it stopped.
+func (rt *agentRuntime) serveBot(ctx context.Context, acct *Account, key string, agentID int64,
+	reg backend.BotRegistrar, bot backend.BotAccount, c *botConn) error {
 	b, err := reg.ConnectBot(ctx, bot)
 	if err != nil {
-		if ctx.Err() == nil {
-			rt.fail(agentID, err)
-		}
-		return
+		return err
 	}
 	sub := b.Events().Subscribe(backend.Filter{
 		Kinds:    backend.EventMessage,
@@ -81,20 +106,32 @@ func (rt *agentRuntime) runBot(ctx context.Context, acct *Account, key string, a
 	defer sub.Close()
 	rt.mu.Lock()
 	c.b = b
+	delete(rt.problems, agentID) // signed in again after a failure
 	rt.mu.Unlock()
-	done := make(chan struct{})
-	go func() {
-		b.Run(ctx)
-		close(done)
+	rt.notify()
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- b.Run(runCtx) }()
+	running := true
+	defer func() {
+		stop()
+		if running {
+			<-done
+		}
 	}()
-	defer func() { <-done }()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
+		case err := <-done:
+			running = false
+			if err == nil {
+				err = fmt.Errorf("bot connection closed")
+			}
+			return fmt.Errorf("bot connection lost: %w", err)
 		case ev, ok := <-sub.C:
 			if !ok {
-				return
+				return fmt.Errorf("bot connection closed")
 			}
 			msg, text, ok := dmText(ev)
 			if !ok {

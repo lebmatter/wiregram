@@ -58,6 +58,16 @@ type ConvKey struct {
 	Bot        bool // a DM to the registered bot, answered as the bot
 }
 
+// LogChatID is the chat's ID in the agent tables. A DM to the bot and the
+// user's DM with the same person can share an ID (Telegram's u<user>) and
+// message IDs, so the bot's own chats are kept apart.
+func LogChatID(chat backend.ChatID, bot bool) string {
+	if bot {
+		return "bot:" + chat.Id
+	}
+	return chat.Id
+}
+
 // Suggestion is a reply drafted in suggest mode, waiting for approval.
 type Suggestion struct {
 	ChatTitle string
@@ -372,6 +382,25 @@ func (rt *agentRuntime) handle(acct *Account, accountKey string, ev backend.Even
 		ag, msg, text)
 }
 
+// fromOwnBot reports whether msg comes from one of the user's own bots or the
+// account's manager bot. Bots never answer them: backends do not always mark
+// a bot sender, and two bots answering each other would never stop.
+func (rt *agentRuntime) fromOwnBot(accountKey string, msg backend.Message) bool {
+	if msg.Outgoing || msg.SenderID == "" {
+		return false
+	}
+	rt.mu.Lock()
+	for _, reg := range rt.regs {
+		if reg.UserID == msg.SenderID {
+			rt.mu.Unlock()
+			return true
+		}
+	}
+	rt.mu.Unlock()
+	mgr, ok, err := rt.Db.Manager(accountKey)
+	return err == nil && ok && mgr.UserID == msg.SenderID
+}
+
 // enqueue logs a DM message for the agent and, when it is incoming, wakes
 // the conversation's worker to answer it.
 func (rt *agentRuntime) enqueue(acct *Account, key ConvKey, ag *runningAgent,
@@ -379,12 +408,15 @@ func (rt *agentRuntime) enqueue(acct *Account, key ConvKey, ag *runningAgent,
 	if ag.record.TextOnly() && msg.MediaLabel != "" {
 		return
 	}
+	if rt.fromOwnBot(key.AccountKey, msg) {
+		return
+	}
 	title := ""
 	if !msg.Outgoing {
 		title = msg.Sender
 	}
-	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id,
-		title, msg, text, false); err != nil {
+	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey,
+		LogChatID(key.Chat, key.Bot), title, msg, text, false); err != nil {
 		rt.fail(key.AgentID, err)
 		return
 	}
@@ -467,7 +499,8 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 	if ag == nil {
 		return
 	}
-	history, err := rt.Db.ChatHistory(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id, agentContext)
+	history, err := rt.Db.ChatHistory(key.AgentID, key.Chat.Backend, key.AccountKey,
+		LogChatID(key.Chat, key.Bot), agentContext)
 	if err != nil {
 		rt.fail(key.AgentID, err)
 		return
@@ -634,10 +667,12 @@ func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key Con
 	if sent.Text == "" {
 		sent.Text = text
 	}
-	if err := rt.Db.RecordSent(key.AccountKey, key.Chat.Id, sent.ID, name); err != nil {
+	logChat := LogChatID(key.Chat, key.Bot)
+	if err := rt.Db.RecordSent(key.AccountKey, logChat, sent.ID, name); err != nil {
 		return err
 	}
-	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, key.Chat.Id, "", sent, sent.Text, true); err != nil {
+	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, logChat, "", sent,
+		sent.Text, true); err != nil {
 		return err
 	}
 	// Telegram never echoes a session's own sends, so the open chat would miss
@@ -835,24 +870,27 @@ func (rt *agentRuntime) Problem(agentID int64) string {
 }
 
 // PendingFor returns the suggestion waiting in the account's chat, if any.
-func (rt *agentRuntime) PendingFor(accountKey string, chat backend.ChatID) (ConvKey, Suggestion, bool) {
+func (rt *agentRuntime) PendingFor(accountKey string, chat backend.ChatID, bot bool) (
+	ConvKey, Suggestion, bool) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	for key, s := range rt.pending {
-		if key.AccountKey == accountKey && key.Chat == chat {
+		if key.AccountKey == accountKey && key.Chat == chat && key.Bot == bot {
 			return key, s, true
 		}
 	}
 	return ConvKey{}, Suggestion{}, false
 }
 
-// PendingChats is the set of the account's chats with a suggestion waiting.
-func (rt *agentRuntime) PendingChats(accountKey string) map[backend.ChatID]bool {
+// PendingChats is the set of the account's chats with a suggestion waiting:
+// with botID 0 the user's own chats, else the chats to that registered bot.
+func (rt *agentRuntime) PendingChats(accountKey string, botID int64) map[backend.ChatID]bool {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	out := make(map[backend.ChatID]bool)
 	for key := range rt.pending {
-		if key.AccountKey == accountKey {
+		if key.AccountKey == accountKey && key.Bot == (botID != 0) &&
+			(botID == 0 || key.AgentID == botID) {
 			out[key.Chat] = true
 		}
 	}
