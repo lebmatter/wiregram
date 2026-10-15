@@ -44,7 +44,7 @@ While a WhatsApp or Matrix account is still fetching its chats for the first tim
 after connecting, it shows a spinner and `Loading chats…` in place of them and these
 rows. An email folder shows `Loading emails…` until the first sync fills it.
 
-<kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
+<kbd>Enter</kbd> on another account switches to it. The last two rows open Home (the account chooser) and Settings.
 
 ## Adding an account
 

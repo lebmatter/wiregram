@@ -17,7 +17,7 @@ import (
 // others collapsed above and below it. Selection indexes run over the
 // selectable rows in display order: accounts above, the top action rows
 // (Unread, Mentions, archive and search; on email, Compose and Labels), chats,
-// the account's bots, accounts below, then "Settings…".
+// the account's bots, accounts below, then "Home" and "Settings…".
 type chatListModel struct {
 	st            *styles
 	ctx           context.Context
@@ -186,7 +186,7 @@ func (m chatListModel) firstChat() int {
 
 func (m chatListModel) maxIndex() int {
 	above, below := m.others()
-	return len(above) + len(m.top()) + len(m.entries) + len(m.bottom()) + len(below)
+	return len(above) + len(m.top()) + len(m.entries) + len(m.bottom()) + len(below) + 1
 }
 
 // chatIndex maps the selection to an entry, if a chat is selected.
@@ -350,6 +350,8 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			case idx-len(m.entries)-len(acts) < len(below):
 				to := below[idx-len(m.entries)-len(acts)]
 				return m, func() tea.Msg { return chatListSwitch{to} }
+			case idx-len(m.entries)-len(acts) == len(below):
+				return m, func() tea.Msg { return chatListAccounts{} }
 			default:
 				return m, func() tea.Msg { return chatListSettings{} }
 			}
@@ -465,12 +467,15 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
 		index++
 	}
-	manage := m.st.chatListLine(backend.ChatEntry{Title: "Settings…"}, false, "", index == m.selected,
-		focused, width)
-	if index != m.selected {
-		manage = m.st.dim.Render(manage)
+	for _, title := range []string{"Home", "Settings…"} {
+		line := m.st.chatListLine(backend.ChatEntry{Title: title}, false, "", index == m.selected,
+			focused, width)
+		if index != m.selected {
+			line = m.st.dim.Render(line)
+		}
+		rows = append(rows, line)
+		index++
 	}
-	rows = append(rows, manage)
 	if m.offset < len(rows) {
 		rows = rows[m.offset:]
 	}

@@ -26,7 +26,7 @@ The sidebar is an account tree. Every account is a row with an arrow, a status g
 a tag such as `TG1` (backend and position) and its label. The active account is expanded
 to Unread, Mentions, Search… (and Archived chats on Telegram), then its chats, then its
 [bot](/features/chat-bots) rows; an email account to Compose… and Labels…, then its
-[folders](/features/email#folders). <kbd>Enter</kbd> on another account switches to it. The last row opens Settings.
+[folders](/features/email#folders). <kbd>Enter</kbd> on another account switches to it. The last two rows open Home (the account chooser) and Settings.
 
 Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 

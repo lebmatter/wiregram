@@ -44,7 +44,8 @@ Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
-Enter on another account switches to it; the last row opens Settings.
+Enter on another account switches to it; the last two rows open Home (the
+account list) and Settings.
 The account list shows an unread digest below it: one card per connected
 account, with its busiest chats. Settings can leave an account out.
 Plugins are Lua scripts; enabled ones may add widget cards under the
