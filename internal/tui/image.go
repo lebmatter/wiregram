@@ -45,6 +45,7 @@ type chatImage struct {
 }
 
 type chatImageLoaded struct {
+	chatTag
 	id  string
 	img image.Image
 	err error
@@ -281,7 +282,7 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 		if err != nil {
 			continue
 		}
-		ctx, b, keep := m.ctx, m.b, imageKeepWidth
+		ctx, b, keep, tag := m.ctx, m.b, imageKeepWidth, chatTag{m.entry.ID}
 		if m.kitty != nil {
 			keep = kittyKeepWidth
 		}
@@ -290,10 +291,10 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 			defer cancel()
 			path, err := fetchMedia(ctx, b, msg, dir, filename)
 			if err != nil {
-				return chatImageLoaded{id: msg.ID, err: err}
+				return chatImageLoaded{chatTag: tag, id: msg.ID, err: err}
 			}
 			img, err := halfblock.Load(path, keep)
-			return chatImageLoaded{id: msg.ID, img: img, err: err}
+			return chatImageLoaded{chatTag: tag, id: msg.ID, img: img, err: err}
 		})
 	}
 	return tea.Batch(cmds...)
@@ -314,6 +315,10 @@ func mediaDir(b backend.Backend, entry backend.ChatEntry, msg backend.Message) (
 // unless an earlier fetch already did.
 func fetchMedia(ctx context.Context, b backend.Backend, msg backend.Message, dir,
 	filename string) (string, error) {
+	// The name comes from the sender, so it must not reach outside dir.
+	if !filepath.IsLocal(filename) || filepath.Base(filename) != filename {
+		return "", fmt.Errorf("attachment has an unsafe file name")
+	}
 	if err := ensureMediaCache(filepath.Dir(dir)); err != nil {
 		return "", err
 	}

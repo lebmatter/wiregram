@@ -133,12 +133,21 @@ type chatOutgoing struct {
 	replyTo string
 }
 
+// chatTag names the chat a background result was started for, so a result
+// that arrives after switching chats is dropped rather than applied to the
+// new one.
+type chatTag struct{ chat backend.ChatID }
+
+func (t chatTag) forChat() backend.ChatID { return t.chat }
+
 type chatSendResult struct {
+	chatTag
 	msg backend.Message
 	err error
 }
 
 type chatHistoryLoaded struct {
+	chatTag
 	messages []backend.Message
 	err      error
 	older    bool
@@ -206,14 +215,19 @@ type reactionFlashTick struct{ seq int }
 const flashSteps = 6
 
 type chatReactionResult struct {
+	chatTag
 	messageID string
 	emoticon  string
 	reactions []backend.MessageReaction
 	err       error
 }
 
-type chatEditResult struct{ err error }
+type chatEditResult struct {
+	chatTag
+	err error
+}
 type chatUploadResult struct {
+	chatTag
 	path string
 	msg  backend.Message
 	err  error
@@ -225,6 +239,7 @@ type chatSuggestion struct{ act string }
 type chatDeleteChatResult struct{ err error }
 type chatDeleteMsgResult struct{ err error }
 type chatPinResult struct {
+	chatTag
 	index int
 	unpin bool
 	err   error
@@ -234,6 +249,7 @@ type chatSaveResult struct {
 	err      error
 }
 type chatSearchResult struct {
+	chatTag
 	messages []backend.Message
 	err      error
 }
@@ -284,7 +300,7 @@ func (m chatViewModel) loadHistory() tea.Cmd {
 		if err := b.RefreshReadState(ctx, entry); err != nil && ctx.Err() == nil {
 		}
 		msgs, err := b.History(ctx, entry)
-		return chatHistoryLoaded{msgs, err, false}
+		return chatHistoryLoaded{chatTag{entry.ID}, msgs, err, false}
 	}
 }
 
@@ -298,7 +314,7 @@ func (m chatViewModel) loadOlderHistory() tea.Cmd {
 	beforeID := m.messages[0].ID
 	return func() tea.Msg {
 		msgs, err := b.OlderHistory(ctx, entry, beforeID)
-		return chatHistoryLoaded{msgs, err, true}
+		return chatHistoryLoaded{chatTag{entry.ID}, msgs, err, true}
 	}
 }
 
@@ -315,10 +331,10 @@ func (m chatViewModel) sendMessage(outgoing chatOutgoing) tea.Cmd {
 	return func() tea.Msg {
 		if outgoing.path != "" {
 			msg, err := b.SendUpload(ctx, entry, outgoing.path, outgoing.text, outgoing.replyTo)
-			return chatUploadResult{outgoing.path, msg, err}
+			return chatUploadResult{chatTag{entry.ID}, outgoing.path, msg, err}
 		}
 		msg, err := b.Send(ctx, entry, outgoing.text, outgoing.replyTo)
-		return chatSendResult{msg, err}
+		return chatSendResult{chatTag{entry.ID}, msg, err}
 	}
 }
 
@@ -447,6 +463,9 @@ func imagesMoved(msg tea.Msg) bool {
 }
 
 func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
+	if r, ok := msg.(interface{ forChat() backend.ChatID }); ok && r.forChat() != m.entry.ID {
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -1363,7 +1382,7 @@ func (m chatViewModel) doReact(target backend.Message, emoticon string) tea.Cmd 
 	entry := m.entry
 	return func() tea.Msg {
 		reactions, err := b.React(ctx, entry, target, emoticon)
-		return chatReactionResult{target.ID, emoticon, reactions, err}
+		return chatReactionResult{chatTag{entry.ID}, target.ID, emoticon, reactions, err}
 	}
 }
 
@@ -1374,7 +1393,7 @@ func (m chatViewModel) doEdit(text string) tea.Cmd {
 	editing := *m.editing
 	return func() tea.Msg {
 		err := b.Edit(ctx, entry, editing, text)
-		return chatEditResult{err}
+		return chatEditResult{chatTag{entry.ID}, err}
 	}
 }
 
@@ -1402,7 +1421,7 @@ func (m chatViewModel) doPin(sel backend.Message, idx int, unpin bool) tea.Cmd {
 	entry := m.entry
 	return func() tea.Msg {
 		err := b.Pin(ctx, entry, sel, unpin)
-		return chatPinResult{idx, unpin, err}
+		return chatPinResult{chatTag{entry.ID}, idx, unpin, err}
 	}
 }
 
@@ -1434,7 +1453,7 @@ func (m chatViewModel) doSearch() tea.Cmd {
 	query := m.searchQuery
 	return func() tea.Msg {
 		msgs, err := b.SearchMessages(ctx, entry, query)
-		return chatSearchResult{msgs, err}
+		return chatSearchResult{chatTag{entry.ID}, msgs, err}
 	}
 }
 

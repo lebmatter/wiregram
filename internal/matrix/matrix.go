@@ -1666,17 +1666,14 @@ func (mx *MxBackend) MediaExec(ctx context.Context, msg backend.Message, player 
 	if mxcURL == "" {
 		return nil, nil, fmt.Errorf("this message has no playable media")
 	}
-	body := mxFilename(ev.Content)
-	if body == "" {
-		body = "media"
-	}
+	name := backend.SafeFilename(mxFilename(ev.Content), "media")
 	tmpDir, err := os.MkdirTemp("", "wiregram-mx-*")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	cleanup := func() { os.RemoveAll(tmpDir) }
-	dest := filepath.Join(tmpDir, filepath.Base(body))
-	if err := mx.downloadMXC(ctx, mxcURL, dest); err != nil {
+	dest := filepath.Join(tmpDir, name)
+	if err := mx.downloadMXC(ctx, mxcURL, tmpDir, name); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
@@ -1694,11 +1691,7 @@ func (mx *MxBackend) MediaSaveable(msg backend.Message) (string, bool) {
 	if mxcURL == "" {
 		return "", false
 	}
-	body := filepath.Base(mxFilename(ev.Content))
-	if body == "" || body == "." || body == "/" {
-		body = "attachment"
-	}
-	return body, true
+	return backend.SafeFilename(mxFilename(ev.Content), "attachment"), true
 }
 
 func (mx *MxBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir string) error {
@@ -1711,22 +1704,23 @@ func (mx *MxBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 		return fmt.Errorf("this message has no downloadable attachment")
 	}
 	name, _ := mx.MediaSaveable(msg)
-	return mx.downloadMXC(ctx, mxcURL, filepath.Join(destDir, name))
+	return mx.downloadMXC(ctx, mxcURL, destDir, name)
 }
 
-func (mx *MxBackend) downloadMXC(ctx context.Context, mxcURL, dest string) error {
+func (mx *MxBackend) downloadMXC(ctx context.Context, mxcURL, dir, name string) error {
 	body, err := mx.openMXC(ctx, mxcURL)
 	if err != nil {
 		return err
 	}
 	defer body.Close()
-	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := backend.CreateUnique(dir, name)
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return err
 	}
 	_, copyErr := io.Copy(f, body)
 	closeErr := f.Close()
 	if err := backend.FirstError(copyErr, closeErr); err != nil {
+		os.Remove(f.Name())
 		return fmt.Errorf("save file: %w", err)
 	}
 	return nil

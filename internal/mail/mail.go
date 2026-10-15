@@ -7,9 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -519,11 +517,7 @@ func (b *MailBackend) MediaSaveable(msg backend.Message) (string, bool) {
 
 // safeName keeps an attachment's name from leaving the folder it is saved in.
 func safeName(name string) string {
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
-	if name == "." || name == ".." || name == "/" || name == "" {
-		return "attachment"
-	}
-	return name
+	return backend.SafeFilename(name, "attachment")
 }
 
 func (b *MailBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir string) error {
@@ -535,8 +529,7 @@ func (b *MailBackend) SaveMedia(ctx context.Context, msg backend.Message, destDi
 	if err != nil {
 		return err
 	}
-	dest := filepath.Join(destDir, safeName(r.Parts[0].Name))
-	if err := os.WriteFile(dest, data, 0600); err != nil {
+	if err := backend.WriteUnique(destDir, safeName(r.Parts[0].Name), data); err != nil {
 		return fmt.Errorf("save attachment: %w", err)
 	}
 	return nil

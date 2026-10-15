@@ -94,7 +94,6 @@ func (wa *WaBackend) Name() string { return "whatsapp" }
 func (wa *WaBackend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
 		Forward:       true,
-		DeleteForMe:   true,
 		OutboxReceipt: true,
 		ViewOnce:      true,
 		Reactions:     true,
@@ -509,6 +508,7 @@ func (wa *WaBackend) touchChat(chatJID types.JID, ts time.Time) {
 	})
 }
 
+// contactName names jid from the push names seen so far. The caller holds wa.mu.
 func (wa *WaBackend) contactName(jid types.JID) string {
 	nonAD := jid.ToNonAD()
 	if name, ok := wa.userCache[nonAD]; ok && name != "" {
@@ -518,6 +518,13 @@ func (wa *WaBackend) contactName(jid types.JID) string {
 		return jid.User
 	}
 	return "+" + jid.User
+}
+
+// lookupName is contactName for callers that do not hold wa.mu.
+func (wa *WaBackend) lookupName(jid types.JID) string {
+	wa.mu.Lock()
+	defer wa.mu.Unlock()
+	return wa.contactName(jid)
 }
 
 // Chat list.
@@ -548,7 +555,7 @@ func (wa *WaBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 func (wa *WaBackend) chatEntry(c waChatEntry) backend.ChatEntry {
 	title := c.name
 	if title == "" {
-		title = wa.contactName(c.jid)
+		title = wa.lookupName(c.jid)
 	}
 	return backend.ChatEntry{
 		ID:      backend.ChatID{Backend: "whatsapp", Id: c.jid.String()},
@@ -841,27 +848,14 @@ func (wa *WaBackend) DeleteMessages(ctx context.Context, ch backend.ChatEntry, i
 	if err != nil {
 		return err
 	}
+	// Deleting only for yourself is an app-state patch whatsmeow cannot build;
+	// a revoke would delete the message for everyone.
+	if !forEveryone {
+		return fmt.Errorf("WhatsApp can only delete messages for everyone")
+	}
 	for _, id := range ids {
-		if forEveryone {
-			_, err := wa.Client.RevokeMessage(ctx, jid, id)
-			if err != nil {
-				return fmt.Errorf("revoke message: %w", err)
-			}
-		} else {
-			delMsg := &waE2E.Message{
-				ProtocolMessage: &waE2E.ProtocolMessage{
-					Key: &waCommon.MessageKey{
-						RemoteJID: proto.String(jid.String()),
-						FromMe:    proto.Bool(true),
-						ID:        proto.String(id),
-					},
-					Type: waE2E.ProtocolMessage_REVOKE.Enum(),
-				},
-			}
-			_, err := wa.Client.SendMessage(ctx, jid, delMsg)
-			if err != nil {
-				return fmt.Errorf("delete message: %w", err)
-			}
+		if _, err := wa.Client.RevokeMessage(ctx, jid, id); err != nil {
+			return fmt.Errorf("revoke message: %w", err)
 		}
 	}
 	return nil
@@ -1142,11 +1136,7 @@ func (wa *WaBackend) MediaSaveable(msg backend.Message) (string, bool) {
 	case m.GetAudioMessage() != nil:
 		return "audio.ogg", true
 	case m.GetDocumentMessage() != nil:
-		name := m.GetDocumentMessage().GetFileName()
-		if name == "" {
-			name = "document"
-		}
-		return name, true
+		return backend.SafeFilename(m.GetDocumentMessage().GetFileName(), "document"), true
 	case m.GetStickerMessage() != nil:
 		return "sticker.webp", true
 	}
@@ -1173,10 +1163,7 @@ func (wa *WaBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 		filename = "audio.ogg"
 	case m.GetDocumentMessage() != nil:
 		dl = m.GetDocumentMessage()
-		filename = m.GetDocumentMessage().GetFileName()
-		if filename == "" {
-			filename = "document"
-		}
+		filename = backend.SafeFilename(m.GetDocumentMessage().GetFileName(), "document")
 	case m.GetStickerMessage() != nil:
 		dl = m.GetStickerMessage()
 		filename = "sticker.webp"
@@ -1187,8 +1174,7 @@ func (wa *WaBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 	if err != nil {
 		return fmt.Errorf("download media: %w", err)
 	}
-	dest := filepath.Join(destDir, filename)
-	if err := os.WriteFile(dest, data, 0600); err != nil {
+	if err := backend.WriteUnique(destDir, filename, data); err != nil {
 		return fmt.Errorf("save media: %w", err)
 	}
 	return nil
@@ -1388,7 +1374,7 @@ func (wa *WaBackend) eventMessageToMessage(evt *events.Message) backend.Message 
 		Image:      waInlineImage(evt.Message),
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(evt.Message),
-		Quote:      wa.quoteOf(evt.Message),
+		Quote:      wa.quoteOf(evt.Message, wa.lookupName),
 		Forwarded:  isForwarded(evt.Message),
 		Preview:    waPreview(evt.Message),
 		Spans:      spans,
@@ -1436,7 +1422,7 @@ func (wa *WaBackend) webMessageToMessage(chatJID types.JID, wmi *waWeb.WebMessag
 		MediaLabel: mediaLabel,
 		Multiline:  multiline,
 		ReplyToID:  extractReplyID(m),
-		Quote:      wa.quoteOf(m),
+		Quote:      wa.quoteOf(m, wa.contactName),
 		Forwarded:  isForwarded(m),
 		Preview:    waPreview(m),
 		Spans:      spans,
@@ -1551,7 +1537,7 @@ func replyContext(m *waE2E.Message) *waE2E.ContextInfo {
 
 // quoteOf is the copy of the original a reply carries. WhatsApp cannot fetch
 // a message by ID, and history holds only what the phone synced.
-func (wa *WaBackend) quoteOf(m *waE2E.Message) *backend.Message {
+func (wa *WaBackend) quoteOf(m *waE2E.Message, name func(types.JID) string) *backend.Message {
 	ci := replyContext(m)
 	if ci.GetStanzaID() == "" || ci.GetQuotedMessage() == nil {
 		return nil
@@ -1566,7 +1552,7 @@ func (wa *WaBackend) quoteOf(m *waE2E.Message) *backend.Message {
 		return nil
 	}
 	return &backend.Message{
-		ID: ci.GetStanzaID(), Sender: wa.contactName(sender), Text: text, MediaLabel: mediaLabel,
+		ID: ci.GetStanzaID(), Sender: name(sender), Text: text, MediaLabel: mediaLabel,
 		Outgoing: sender.User == wa.Jid.User,
 	}
 }
@@ -1596,7 +1582,7 @@ func (wa *WaBackend) Profile(ctx context.Context, userID string) (backend.Profil
 		return backend.Profile{}, fmt.Errorf("load contact: %w", err)
 	}
 	p := backend.Profile{Name: cmp.Or(contact.FullName, contact.PushName,
-		contact.BusinessName, wa.contactName(jid))}
+		contact.BusinessName, wa.lookupName(jid))}
 	if contact.PushName != p.Name {
 		p.Add("Profile name", contact.PushName)
 	}

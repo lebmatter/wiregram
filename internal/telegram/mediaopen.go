@@ -121,9 +121,7 @@ func mediaDownloadable(message *tg.Message) (downloadable, error) {
 		for _, attr := range d.Attributes {
 			// The sender picks this name, so keep only its last element.
 			if f, ok := attr.(*tg.DocumentAttributeFilename); ok {
-				if base := filepath.Base(f.FileName); base != "." && base != ".." && base != "/" {
-					name = base
-				}
+				name = backend.SafeFilename(f.FileName, name)
 			}
 		}
 		return downloadable{
@@ -136,32 +134,16 @@ func mediaDownloadable(message *tg.Message) (downloadable, error) {
 	}
 }
 
-func uniquePath(path string) string {
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return path
-	}
-	ext := filepath.Ext(path)
-	base := strings.TrimSuffix(path, ext)
-	for i := 1; i < 1000; i++ {
-		candidate := fmt.Sprintf("%s_%d%s", base, i, ext)
-		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
-			return candidate
-		}
-	}
-	return path
-}
-
 func (c *Client) saveMedia(ctx context.Context, dl downloadable, path string) error {
-	path = uniquePath(path)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := backend.CreateUnique(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return err
 	}
 	a := attachment{location: dl.location, dc: dl.dc}
 	err = c.downloadMedia(ctx, a, file)
 	closeErr := file.Close()
 	if err := errors.Join(err, closeErr); err != nil {
-		os.Remove(path)
+		os.Remove(file.Name())
 		return fmt.Errorf("download: %w", err)
 	}
 	return nil

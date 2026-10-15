@@ -1214,7 +1214,7 @@ func (mb *MmBackend) MediaSaveable(msg backend.Message) (string, bool) {
 		return "", false
 	}
 	if p.Metadata != nil && len(p.Metadata.Files) > 0 {
-		return p.Metadata.Files[0].Name, true
+		return backend.SafeFilename(p.Metadata.Files[0].Name, "attachment"), true
 	}
 	if len(p.FileIDs) > 0 {
 		return "attachment", true
@@ -1230,7 +1230,7 @@ func (mb *MmBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 	var fileID, filename string
 	if p.Metadata != nil && len(p.Metadata.Files) > 0 {
 		fileID = p.Metadata.Files[0].ID
-		filename = p.Metadata.Files[0].Name
+		filename = backend.SafeFilename(p.Metadata.Files[0].Name, "attachment")
 	} else if len(p.FileIDs) > 0 {
 		fileID = p.FileIDs[0]
 		filename = "attachment"
@@ -1246,14 +1246,14 @@ func (mb *MmBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("download file: HTTP %d", resp.StatusCode)
 	}
-	dest := filepath.Join(destDir, filename)
-	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := backend.CreateUnique(destDir, filename)
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return err
 	}
 	_, copyErr := io.Copy(f, resp.Body)
 	closeErr := f.Close()
 	if err := backend.FirstError(copyErr, closeErr); err != nil {
+		os.Remove(f.Name())
 		return fmt.Errorf("save file: %w", err)
 	}
 	return nil
@@ -1556,6 +1556,9 @@ func (mb *MmBackend) runWebSocket(ctx context.Context) error {
 		return fmt.Errorf("websocket connect: %w", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	// A long post with its metadata easily passes the library's 32 KiB default,
+	// and going over it drops the connection.
+	conn.SetReadLimit(4 << 20)
 	mb.wsConn = conn
 
 	auth := map[string]any{
