@@ -47,6 +47,29 @@ func loadTheme(db *store.DB) theme {
 
 func saveTheme(db *store.DB, t theme) error { return db.SetSetting(themeSetting, t.name) }
 
+// nickStyleSetting picks how a message names its sender: "nick:" (the
+// default) puts the text right after the name, "<nick>" pads every name to
+// one column so the text lines up.
+const (
+	nickStyleSetting = "nick_style"
+	nickStyleColon   = "nick:"
+	nickStyleColumn  = "<nick>"
+)
+
+func loadNickStyle(db *store.DB) string {
+	if v, err := db.Setting(nickStyleSetting); err == nil && v == nickStyleColumn {
+		return v
+	}
+	return nickStyleColon
+}
+
+// loadStyles is the chosen theme with the chosen nick style.
+func loadStyles(db *store.DB) *styles {
+	st := newStyles(loadTheme(db))
+	st.nickColumn = loadNickStyle(db) == nickStyleColumn
+	return st
+}
+
 // styles is a theme turned into the styles every screen draws with. Models
 // carry one and pass it down, so a theme change needs no global state.
 type styles struct {
@@ -67,6 +90,9 @@ type styles struct {
 	// raw SGRs, re-applied after resets by shadeLine.
 	selBgSGR     string
 	mentionBgSGR string
+
+	// nickColumn draws senders as a fixed-width <nick> column.
+	nickColumn bool
 }
 
 func newStyles(t theme) *styles {

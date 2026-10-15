@@ -1628,7 +1628,7 @@ func (m chatViewModel) messageAt(x, y int) (int, msgHit, bool) {
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
 		return 0, msgHit{}, false
 	}
-	return owners[row], msgHit{kinds[row], x - 2 - textIndent(m.entry)}, true
+	return owners[row], msgHit{kinds[row], x - 2 - m.st.textIndent(m.entry)}, true
 }
 
 // chatOwners maps each message row of a chat box width columns wide, below

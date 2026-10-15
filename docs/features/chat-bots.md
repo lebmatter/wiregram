@@ -222,7 +222,7 @@ only, so quitting loses them.
 ## Which messages came from a bot
 
 Every message a bot sends is recorded, and the chat shows `✦ NAME` in violet in its
-nick column instead of `you`, including after a restart.
+sender's place instead of `you`, including after a restart.
 
 ## Testing with dry-run
 

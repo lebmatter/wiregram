@@ -17,11 +17,12 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Themes…", "Plugins…", "AI providers…", "Reset…", "Quit"}
+var settingsActions = []string{"+ Add account…", "Themes…", "Chat…", "Plugins…", "AI providers…", "Reset…", "Quit"}
 
 const (
 	actionAdd = iota
 	actionThemes
+	actionChat
 	actionPlugins
 	actionProviders
 	actionReset
@@ -122,6 +123,10 @@ func (m settingsModel) selected() *account.Account {
 // onThemes reports whether the Themes row is chosen, whose pane lists themes.
 func (m settingsModel) onThemes() bool { return m.left == len(m.accounts)+actionThemes }
 
+// onChat reports whether the Chat row is chosen, whose pane holds the
+// app-wide chat settings.
+func (m settingsModel) onChat() bool { return m.left == len(m.accounts)+actionChat }
+
 // onPlugins reports whether the Plugins row is chosen, whose pane lists plugins.
 func (m settingsModel) onPlugins() bool { return m.left == len(m.accounts)+actionPlugins }
 
@@ -141,6 +146,9 @@ func (m settingsModel) rightRows() int {
 	}
 	if m.onProviders() {
 		return len(m.providerRows())
+	}
+	if m.onChat() {
+		return 1
 	}
 	return len(m.items())
 }
@@ -165,7 +173,8 @@ func (m *settingsModel) reload() {
 	m.accounts = m.mgr.List()
 	m.left = clampIndex(m.left, m.leftRows())
 	m.sel = clampIndex(m.sel, m.rightRows())
-	if m.selected() == nil && !m.onThemes() && !m.onPlugins() && !m.onProviders() {
+	if m.selected() == nil && !m.onThemes() && !m.onChat() && !m.onPlugins() &&
+		!m.onProviders() {
 		m.focus = paneAccounts
 	}
 }
@@ -272,7 +281,7 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if m.selected() != nil || m.onThemes() {
+		if m.selected() != nil || m.onThemes() || m.onChat() {
 			m.focus = paneItems
 			return m, nil
 		}
@@ -309,6 +318,9 @@ func (m settingsModel) itemsKey(k string) (tea.Model, tea.Cmd) {
 	}
 	if m.onProviders() {
 		return m.providersKey(k)
+	}
+	if m.onChat() {
+		return m.chatKey(k)
 	}
 	items := m.items()
 	switch k {
@@ -347,6 +359,25 @@ func (m settingsModel) themesKey(k string) (tea.Model, tea.Cmd) {
 		}
 		m.st = newStyles(t)
 		m.notice = "Theme: " + t.name
+	}
+	return m, nil
+}
+
+// chatKey handles the Chat pane, whose one row switches the nick style.
+func (m settingsModel) chatKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case "esc", "ctrl+c", "tab", "left", "h":
+		m.focus = paneAccounts
+	case "enter", "space", " ", "right", "l":
+		next := nickStyleColumn
+		if loadNickStyle(m.mgr.Store) == nickStyleColumn {
+			next = nickStyleColon
+		}
+		if err := m.mgr.Store.SetSetting(nickStyleSetting, next); err != nil {
+			m.notice = textfmt.CleanError(err)
+			return m, nil
+		}
+		m.notice = "Nick style: " + next
 	}
 	return m, nil
 }
@@ -543,6 +574,8 @@ func (m settingsModel) frame() string {
 		title = textfmt.Plain(a.Label())
 	} else if m.onThemes() {
 		title = "Themes"
+	} else if m.onChat() {
+		title = "Chat"
 	} else if m.onPlugins() {
 		title = "Plugins"
 	} else if m.onProviders() {
@@ -601,12 +634,18 @@ func (m settingsModel) itemLines(width, height int) []string {
 	a := m.selected()
 	if a == nil {
 		desc := [...]string{"Add a Telegram, WhatsApp, Matrix, Mattermost or email account.",
-			"The colours of the whole app.", "Lua scripts that add widgets to the account list.",
+			"The colours of the whole app.", "How every chat draws its messages.",
+			"Lua scripts that add widgets to the account list.",
 			"Where bots get their replies: any OpenAI-compatible API.",
 			"Delete every account and all local data, as on a fresh install.", "Leave wiregram."}
 		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
 		if m.onThemes() {
 			lines = append(append(lines, ""), m.themeLines(width)...)
+		}
+		if m.onChat() {
+			lines = append(lines, "", m.st.formRow("Nick style",
+				m.st.subtle.Render(loadNickStyle(m.mgr.Store)), 10, true, m.focus == paneItems,
+				width))
 		}
 		if m.onPlugins() {
 			lines = append(append(lines, ""), m.pluginLines(width, height-itemsTop)...)

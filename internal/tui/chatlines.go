@@ -289,7 +289,7 @@ func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry back
 	if edited {
 		gutter = "* "
 	}
-	indent := textIndent(entry)
+	indent := s.textIndent(entry)
 	body, below := s.imageText(msg, img, indent, lineWidth, maxImageRows)
 	prefix := gutter + s.messageHeader(msg, entry, unread) + " "
 	var lines []string
@@ -365,20 +365,20 @@ func mediaTag(label string) string {
 func (s *styles) paragraphLines(msg backend.Message, body, prefix string, quoted *backend.Message,
 	entry backend.ChatEntry, lineWidth, indent int) []string {
 	pad := strings.Repeat(" ", indent)
+	reply := msg.ReplyToID != ""
 	var text []string
-	for _, para := range bodyParagraphs(msg, body) {
+	for i, para := range bodyParagraphs(msg, body) {
 		para = styleLinks(s.dimTag(para))
+		if i == 0 && !reply {
+			text = textfmt.WrapMessage(prefix, para, lineWidth, indent)
+			continue
+		}
 		text = append(text, textfmt.WrapLineIndent(pad+para, lineWidth, indent)...)
 	}
-	if msg.ReplyToID != "" {
+	if reply {
 		quote := textfmt.ClipLine(prefix+s.quote(quoted), lineWidth)
 		return append([]string{quote}, text...)
 	}
-	first := strings.TrimPrefix(text[0], pad)
-	if indent >= lineWidth-4 || first == text[0] {
-		first = strings.TrimLeft(text[0], " ")
-	}
-	text[0] = textfmt.ClipLine(prefix+first, lineWidth)
 	return text
 }
 

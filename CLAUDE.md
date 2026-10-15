@@ -103,7 +103,7 @@ These are project constraints, not suggestions:
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Themes, Plugins, AI providers, Reset, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Chat, Plugins, AI providers, Reset, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and bots
@@ -142,9 +142,10 @@ These are project constraints, not suggestions:
   never moves a column.
 - Every backend's messages share one block (`messageBlock`,
   `internal/tui/chatlines.go`), in the chat and the thread pane: a 2-cell
-  gutter (`*` when edited live), `[HH:MM] <sender>` with a fixed-width nick
-  column, then the text; the user is always `you`. Channels drop the nick
-  column. A reply puts `┃ sender: excerpt` on the header row with its text
+  gutter (`*` when edited live), `[HH:MM] sender: text` with later lines under the time,
+  or with the `<nick>` style (Settings' Chat…, `nick_style`, `styles.nickColumn`)
+  `[HH:MM] <sender>` in a fixed-width nick column, then the text; the user is always
+  `you`. Channels drop the nick. A reply puts `┃ sender: excerpt` on the header row with its text
   below; an original older than the loaded history is fetched by ID
   (`backend.QuoteFetcher`) or, on WhatsApp, taken from the copy the reply
   carries (`Message.Quote`), else it reads `earlier message`. Under the text come any image or preview card, then a dim meta row:

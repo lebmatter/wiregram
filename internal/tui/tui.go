@@ -157,7 +157,7 @@ func chipsTick() tea.Cmd {
 func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, b backend.Backend, events *backend.Subscription, histories map[backend.ChatID][]string, entries []backend.ChatEntry, archiveUnread int) tuiModel {
 	w, h := termSize()
 	m := tuiModel{
-		st:            newStyles(loadTheme(mgr.Store)),
+		st:            loadStyles(mgr.Store),
 		ctx:           ctx,
 		mgr:           mgr,
 		active:        active,

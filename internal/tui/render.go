@@ -304,9 +304,10 @@ func (s *styles) quote(orig *backend.Message) string {
 }
 
 // textIndent is the column message text starts at: after the 2-cell gutter,
-// the timestamp and, outside channels, the nick column.
-func textIndent(entry backend.ChatEntry) int {
-	if kind, _ := kindOf(entry); kind == kindChannel {
+// the timestamp and, with the <nick> style outside channels, the nick column.
+// With the nick: style only a message's first line follows its nick.
+func (s *styles) textIndent(entry backend.ChatEntry) int {
+	if kind, _ := kindOf(entry); kind == kindChannel || !s.nickColumn {
 		return 2 + 8
 	}
 	return 2 + 8 + textfmt.NickWidth + 3
@@ -325,6 +326,13 @@ func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry, unr
 	}
 	if kind, _ := kindOf(entry); kind == kindChannel {
 		return stamp
+	}
+	if !s.nickColumn {
+		if msg.Outgoing && msg.Agent != "" {
+			return stamp + " " + s.agent.Render(agentIcon+" "+textfmt.Plain(msg.Agent)+":")
+		}
+		return stamp + " " + backend.MessageNickColor(msg, entry) +
+			backend.GenericMessageSender(msg) + ":\x1b[0m"
 	}
 	if msg.Outgoing && msg.Agent != "" {
 		return stamp + " " + s.agent.Render("<"+textfmt.FormatNick(agentIcon+" "+

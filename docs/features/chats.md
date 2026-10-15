@@ -24,15 +24,21 @@ Email has folders of conversations instead of chats; see [Email](/features/email
 Each message is one block:
 
 ```
-  [14:02] alice    are you coming tonight?
-* [14:03] you      ┃ alice: are you coming tonight?
-                   on my way
-                   👍 2 · ✓✓
+  [14:02] alice: are you coming tonight?
+* [14:03] you: ┃ alice: are you coming tonight?
+          on my way
+          👍 2 · ✓✓
 ```
 
 - A 2-cell gutter, with `*` when the message was edited while you watched.
-- `[HH:MM]` and the sender in a fixed-width column; your own messages are `you`.
-  Channels drop the sender column.
+- `[HH:MM]` and the sender; your own messages are `you`. Channels drop the sender.
+- The nick style, in **Settings → Chat…**, sets how the sender is drawn. `nick:` (the
+  default) starts the text right after the name and wraps it under the time. `<nick>`
+  pads every name to one column so all text lines up:
+
+  ```
+    [14:02] <alice       > are you coming tonight?
+  ```
 - The text, keeping its line breaks. Bold, italic, strikethrough, code and links are
   drawn from each network's own formatting; links are underlined.
 - Under the text: an image or link preview card, then a dim meta row with reactions

@@ -43,13 +43,14 @@ func FormatNick(name string) string {
 
 const MaxChatLineWidth = 120
 
-// wrapMessage wraps body under a fixed-width prefix. Wrapping the prefix too
-// would collapse the padding that keeps the nick column aligned.
+// WrapMessage wraps body after prefix, continuing at indent. Wrapping the
+// prefix too would collapse the padding that keeps the nick column aligned.
 func WrapMessage(prefix, body string, width, indent int) []string {
-	pad := strings.Repeat(" ", indent)
+	lead := DisplayWidth(prefix)
+	pad := strings.Repeat(" ", lead)
 	lines := WrapLineIndent(pad+body, width, indent)
-	if indent < width-4 && strings.HasPrefix(lines[0], pad) {
-		lines[0] = prefix + lines[0][indent:]
+	if lead < width-4 && strings.HasPrefix(lines[0], pad) {
+		lines[0] = prefix + lines[0][lead:]
 	} else {
 		lines[0] = ClipLine(prefix+strings.TrimLeft(lines[0], " "), width)
 	}

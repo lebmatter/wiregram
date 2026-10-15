@@ -426,16 +426,21 @@ func GenericMessageLine(msg Message, ch ChatEntry, byID map[string]*Message) str
 
 // genericMessagePrefix is the fixed-width "[HH:MM] <nick>" column.
 func GenericMessagePrefix(msg Message, ch ChatEntry) string {
-	sender := GenericMessageSender(msg)
-	color := textfmt.NickColor(sender)
-	if !ch.IsGroup {
-		color = textfmt.DMPeerColor
-		if msg.Outgoing {
-			color = textfmt.DMSelfColor
-		}
-	}
-	nickPart := color + "<" + textfmt.FormatNick(sender) + ">\033[0m"
+	nickPart := MessageNickColor(msg, ch) + "<" + textfmt.FormatNick(GenericMessageSender(msg)) +
+		">\033[0m"
 	return genericMessageTimestamp(msg.Timestamp) + " " + nickPart
+}
+
+// MessageNickColor is the SGR a message's sender is drawn in: per nick in
+// groups, one colour each side in private chats.
+func MessageNickColor(msg Message, ch ChatEntry) string {
+	if ch.IsGroup {
+		return textfmt.NickColor(GenericMessageSender(msg))
+	}
+	if msg.Outgoing {
+		return textfmt.DMSelfColor
+	}
+	return textfmt.DMPeerColor
 }
 
 func GenericReplySummary(msg Message, ch ChatEntry) string {

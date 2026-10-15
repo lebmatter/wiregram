@@ -339,5 +339,5 @@ func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, msgHit, bool)
 		return backend.Message{}, msgHit{}, false
 	}
 	return m.threadMessages(m.threadRoot)[owners[row]],
-		msgHit{kinds[row], x - left - 2 - textIndent(m.entry)}, true
+		msgHit{kinds[row], x - left - 2 - m.st.textIndent(m.entry)}, true
 }

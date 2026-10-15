@@ -32,6 +32,8 @@ Accounts are listed on the left, followed by:
 
 - **+ Add account…**: pick a network and sign in.
 - **Themes…**: pick a [theme](/features/themes).
+- **Chat…**: the nick style, `nick:` (default) or `<nick>` in a fixed-width column; see
+  [Messages](/features/chats#messages). Saved as the `nick_style` setting.
 - **Plugins…**: switch [plugins](/features/plugins) on and off and edit their settings.
 - **AI providers…**: add, edit and delete the providers
   [AI powered chat bots](/features/chat-bots#ai-providers) use.
