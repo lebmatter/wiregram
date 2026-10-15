@@ -49,7 +49,6 @@ Select an account to see its settings on the right. Each is a row; <kbd>Enter</k
 |---------|--------|
 | Open / Sign in | Opens the account, or signs it in |
 | Reconnect | Drops and re-opens the connection |
-| Unread digest | `shown` or `hidden` on the account chooser |
 | Keep mail cached | Email only: 30 days, 90 days (default), 1 year or all |
 | Remove account… | Logs out on the server when online, then deletes the account's local data |
 

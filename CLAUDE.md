@@ -111,22 +111,21 @@ These are project constraints, not suggestions:
   (`backend.LogoutBackend`) when online, then deletes its local data and bots
   (with their `agent_sent` rows): its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
   and cache directories (`config.Wipe`) and starts again as a fresh install.
-- Inside the account chooser's box, under Quit, sits an unread digest (`internal/tui/digest.go`):
-  a grid of cards, one per online account, each fetched once when the account comes
-  online, showing its unread total and busiest chats. An account's Unread digest
-  setting leaves it out (`store.DigestSkip` in `account_data`). Clicking a card opens the account.
 - Lua plugins (`internal/plugin`, `docs/features/plugins.md`) each run in their own
   sandboxed VM: no `os`/`io`/`debug`/`require`, every call under a deadline,
   HTTPS only to the hosts the plugin declares. Built-ins are embedded from
-  `internal/plugin/builtin` and start off; user plugins in
+  `internal/plugin/builtin` and start off unless they declare `on`; user plugins in
   `~/.config/wiregram/plugins/` start on. Enabled plugins with a widget draw
-  a card in the chooser's `── Widgets` section under the digest, which
-  gives way to the digest when space is short (`internal/tui/widgets.go`). A widget's
-  `click` may open a plugin modal (`wiregram.modal`, its own width and height) centred
-  over the chooser, faded behind it.
+  a card in the chooser's `── Widgets` section under Quit (`internal/tui/widgets.go`);
+  `render` may name the card's border colour. A widget's `click` may open a plugin
+  modal (`wiregram.modal`, its own width and height, scrolling when render returns more
+  lines) centred over the chooser, faded behind it. A plugin that declares the
+  `messages` permission may call `wiregram.accounts()` and `wiregram.unread()`, served by
+  `pluginHost` (`internal/tui/pluginhost.go`) through `plugin.Host`.
   Settings' Plugins… row switches them and edits their settings
-  (`internal/tui/plugins.go`). The built-ins are Weather (Open-Meteo; a click shows today hour by hour) and Hacker News
-  (the Algolia HN API).
+  (`internal/tui/plugins.go`). The built-ins are Unread (unread private chats per account; a
+  click shows their newest messages), Weather (Open-Meteo; a click shows today hour by
+  hour) and Hacker News (the Algolia HN API).
 - Each expanded account but email has an Unread row (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
@@ -304,7 +303,7 @@ internal/
   mail/              IMAP/SMTP email backend: folders, threading, its mail cache tables
   agent/             SQLite store for providers, per-account agents (bots), the DMs
                      each answers, message history and the record of what they sent
-  plugin/            Lua plugin VMs, their API (settings, kv, http, widgets)
+  plugin/            Lua plugin VMs, their API (settings, kv, http, widgets, modals)
                      and the embedded built-in plugins
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime (and its dry runs)

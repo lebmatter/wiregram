@@ -36,8 +36,8 @@ type accountListModel struct {
 	selected int
 	notice   string
 	result   *accountChoice
-	digest   digestModel
 	widgets  widgetsModel
+	online   string // the keys of the online accounts, to update widgets when it changes
 	quitting *confirmModal
 	width    int
 	height   int
@@ -69,7 +69,6 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 		accounts: mgr.Accounts,
 		active:   active,
 		selected: selected,
-		digest:   newDigest(ctx, st, mgr),
 		widgets:  newWidgets(ctx, st, mgr.Plugins),
 		width:    w,
 		height:   h,
@@ -80,7 +79,7 @@ func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
 
 func (m accountListModel) Init() tea.Cmd {
 	_, widgets := m.widgets.start(m.width-4, m.width, m.bodyHeight()+1)
-	return tea.Batch(listenAccounts(m.mgr), func() tea.Msg { return digestSync{} }, widgets)
+	return tea.Batch(listenAccounts(m.mgr), widgets)
 }
 
 func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -93,17 +92,11 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selected > m.maxIndex() {
 			m.selected = m.maxIndex()
 		}
-		var sync tea.Cmd
-		m.digest, sync = m.digest.sync()
-		return m, tea.Batch(listenAccounts(m.mgr), sync)
-
-	case digestSync:
-		var sync tea.Cmd
-		m.digest, sync = m.digest.sync()
-		return m, sync
-
-	case digestLoaded:
-		m.digest = m.digest.loaded(msg)
+		if online := onlineKeys(m.mgr); online != m.online {
+			m.online = online
+			m.widgets = m.widgets.poke()
+		}
+		return m, listenAccounts(m.mgr)
 
 	case widgetTick:
 		var cmd tea.Cmd
@@ -140,20 +133,8 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = i
 			return m.Update(keyPress(tea.KeyEnter))
 		}
-		_, shift, digest, widgets := m.layout()
-		top := 2 + shift + len(m.accounts) + 4 + digestGap // the cards' first screen row
-		if a, ok := m.digest.cardAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < digest {
-			if i := slices.Index(m.accounts, a); i >= 0 {
-				m.selected = i
-				return m.Update(keyPress(tea.KeyEnter))
-			}
-		}
-		if digest > 0 {
-			top += digest / digestCardH * digestCardH
-		} else {
-			top -= digestGap
-		}
-		top += widgetsGap
+		_, shift, widgets := m.layout()
+		top := 2 + shift + len(m.accounts) + 4 + widgetsGap // the cards' first screen row
 		if p, ok := m.widgets.widgetAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < widgets {
 			return m, m.widgets.click(p)
 		}
@@ -162,10 +143,24 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quitting != nil {
 			return m.quitAnswered(m.quitting.key(msg.String()))
 		}
-		if m.widgets.modal != nil {
+		if md := m.widgets.modal; md != nil {
+			_, _, _, h := m.widgetModalRect()
+			page := max(1, h-3)
 			switch msg.String() {
 			case "esc", "q", "enter", "ctrl+c":
 				m.widgets.modal = nil
+			case "up", "k":
+				md.scroll(-1, m.width, m.bodyHeight()+1)
+			case "down", "j":
+				md.scroll(1, m.width, m.bodyHeight()+1)
+			case "pgup", "b":
+				md.scroll(-page, m.width, m.bodyHeight()+1)
+			case "pgdown", "space", " ", "f":
+				md.scroll(page, m.width, m.bodyHeight()+1)
+			case "home", "g":
+				md.scroll(-maxModalScroll, m.width, m.bodyHeight()+1)
+			case "end", "G":
+				md.scroll(maxModalScroll, m.width, m.bodyHeight()+1)
 			}
 			return m, nil
 		}
@@ -211,55 +206,52 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m accountListModel) bodyHeight() int { return max(4, m.height-2) }
 
-// digestGap is the blank line above the digest's cards; widgetsGap adds
-// the widgets' small label.
-const (
-	digestGap  = 1
-	widgetsGap = 2
-)
+// widgetsGap is the blank row and the small label above the widgets.
+const widgetsGap = 2
 
-// layout returns the logo when it fits above the rows, the digest and the
-// widgets, and how far the rows are moved down to make room for it, or up to
-// keep the selection in view; digest and widgets are the heights left for
-// their cards under the rows. The widgets give way to the digest.
-func (m accountListModel) layout() (logo []string, shift, digest, widgets int) {
+// layout returns the logo when it fits above the rows and the widgets, and
+// how far the rows are moved down to make room for it, or up to keep the
+// selection in view; widgets is the height left for their cards under the rows.
+func (m accountListModel) layout() (logo []string, shift, widgets int) {
 	rows := len(m.accounts) + 4 // the accounts, a blank row and three actions
 	limit := m.bodyHeight() - 2
-	cards := m.digest.height(m.width - 4)
 	wants := m.widgets.height(m.width - 4)
 	logo = strings.Split(m.st.logo(m.width-4), "\n")
 	section := 0
-	if cards > 0 {
-		section = digestGap + cards
-	}
 	if wants > 0 {
-		section += widgetsGap + wants
+		section = widgetsGap + wants
 	}
 	if rows+len(logo)+2+section <= limit {
-		return logo, len(logo) + 2, cards, wants
+		return logo, len(logo) + 2, wants
 	}
 	selRow := m.selected
 	if m.selected >= len(m.accounts) {
 		selRow++
 	}
 	if shift = -max(0, selRow-limit+1); shift < 0 {
-		return nil, shift, 0, 0
+		return nil, shift, 0
 	}
-	left := limit - rows
-	if cards > 0 && left-digestGap >= digestCardH {
-		digest = min(cards, left-digestGap)
-		left -= digestGap + digest
-	}
-	if wants > 0 && left-widgetsGap >= wants {
+	if wants > 0 && limit-rows-widgetsGap >= wants {
 		widgets = wants
 	}
-	return nil, 0, digest, widgets
+	return nil, 0, widgets
+}
+
+// onlineKeys names the online accounts, so a change shows as a new string.
+func onlineKeys(mgr *account.AccountManager) string {
+	var keys []string
+	for _, a := range mgr.List() {
+		if s := a.Snapshot(); s.Backend != nil && s.Status == "online" {
+			keys = append(keys, mgr.AccountKey(a))
+		}
+	}
+	return strings.Join(keys, " ")
 }
 
 // itemAt maps a screen row to an account or action; the blank row between
 // them is none.
 func (m accountListModel) itemAt(y int) (int, bool) {
-	_, shift, _, _ := m.layout()
+	_, shift, _ := m.layout()
 	r := y - 2 - shift // under the header and the box's top edge
 	switch {
 	case r < 0 || y >= m.bodyHeight():
@@ -289,7 +281,7 @@ func (m accountListModel) View() tea.View {
 	} else if md := m.widgets.modal; md != nil {
 		x, y, _, _ := m.widgetModalRect()
 		body = m.st.fadeUnder(body, md.box(m.st, m.width, m.bodyHeight()+1), x, y)
-		keys, notice = []helpKey{{"esc", "close"}}, ""
+		keys, notice = []helpKey{{"↑↓", "scroll"}, {"esc", "close"}}, ""
 	}
 	content := body + "\n" + m.st.footer(keys, notice, m.width)
 	v := tea.NewView(content)
@@ -339,11 +331,7 @@ func (m accountListModel) frame() string {
 			rows = append(rows, m.st.subtle.Render("  "+label))
 		}
 	}
-	logo, shift, digest, widgets := m.layout()
-	if digest > 0 {
-		rows = append(rows, "")
-		rows = append(rows, strings.Split(m.digest.view(inner, digest), "\n")...)
-	}
+	logo, shift, widgets := m.layout()
 	if widgets > 0 {
 		rows = append(rows, "", m.st.dim.Render("── Widgets"))
 		rows = append(rows, strings.Split(m.widgets.view(inner, widgets), "\n")...)

@@ -42,7 +42,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		defer m.Agents.Stop()
 	}
 
-	m.Plugins = plugin.Load(m.Store, filepath.Join(m.Dir, "plugins"))
+	m.Plugins = plugin.Load(m.Store, pluginHost{m}, filepath.Join(m.Dir, "plugins"))
 	defer m.Plugins.Close()
 
 	inboxCtx, stopInbox := context.WithCancel(ctx)

@@ -121,7 +121,7 @@ func (m unreadModel) load() (unreadModel, tea.Cmd) {
 		var wg sync.WaitGroup
 		for i, e := range entries {
 			wg.Go(func() {
-				msgs, err := unreadMessages(ctx, b, e)
+				msgs, err := unreadMessages(ctx, b, e, unreadCardLines)
 				cards[i] = unreadCard{entry: e, msgs: msgs, count: e.Unread, err: err}
 			})
 		}
@@ -130,14 +130,16 @@ func (m unreadModel) load() (unreadModel, tea.Cmd) {
 	}
 }
 
-// unreadMessages uses the backend's unread API when it has one, else keeps
-// the newest incoming messages among the unread tail of a History page.
-func unreadMessages(ctx context.Context, b backend.Backend, e backend.ChatEntry) ([]backend.Message, error) {
+// unreadMessages returns up to n of the chat's newest unread messages, from
+// the backend's unread API when it has one, else from the unread tail of a
+// History page.
+func unreadMessages(ctx context.Context, b backend.Backend, e backend.ChatEntry,
+	n int) ([]backend.Message, error) {
 	if f, ok := b.(backend.UnreadFetcher); ok {
-		return f.UnreadMessages(ctx, e, min(e.Unread, unreadCardLines))
+		return f.UnreadMessages(ctx, e, min(e.Unread, n))
 	}
 	msgs, err := b.History(ctx, e)
-	return backend.NewestIncoming(msgs[max(0, len(msgs)-e.Unread):], unreadCardLines), err
+	return backend.NewestIncoming(msgs[max(0, len(msgs)-e.Unread):], n), err
 }
 
 func (m unreadModel) resized(width, height int) unreadModel {

@@ -16,17 +16,12 @@ it has any, then:
 <kbd>Enter</kbd> opens an account, <kbd>r</kbd> reconnects the selected one. An account
 that needs signing in again shows it here; open it to sign in.
 
-### Unread digest
+### Widgets
 
-Inside the chooser's box, under Quit, sits a grid of cards, one per online account.
-Each shows the account's unread total and its busiest chats, fetched once when the
-account comes online. Clicking a card opens the account.
-
-To leave an account out, set its **Unread digest** setting to `hidden` in Settings.
-
-Under the digest, enabled [plugins](/features/plugins) can draw widget cards. When the
-screen is short, widgets give way to the digest. Clicking a widget may open a modal with
-more detail, such as the Weather widget's hourly forecast.
+Inside the chooser's box, under Quit, enabled [plugins](/features/plugins) draw widget
+cards. The built-in **Unread** widget shows, per online account, how many private chats
+have unread messages; clicking it opens their newest messages. Clicking a widget may open
+a modal with more detail, such as the Weather widget's hourly forecast.
 
 ## Account tree
 

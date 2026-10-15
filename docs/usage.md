@@ -9,8 +9,8 @@ for the current screen; [Keybinds](/keybinds) and `wiregram -h` list all of them
 
 1. **Splash.** The logo shows for about a second.
 2. **Account chooser.** Every account with its status (and its bots, if it has
-   any), then Settings…, Add account and Quit. Under them sits the [unread digest](/features/accounts#unread-digest)
-   and any [plugin widgets](/features/plugins).
+   any), then Settings…, Add account and Quit. Under them sit the
+   [plugin widgets](/features/plugins), such as Unread and Weather.
 3. **Chat mode.** The chat list and the open chat. Inside an account the screen is
    the body and a footer with the keys for what has focus; notices show on the right
    of the footer.

@@ -145,6 +145,9 @@ func (m settingsModel) pluginLines(width, height int) []string {
 			if !r.p.HasWidget() {
 				value += m.st.dim.Render(" (no widget)")
 			}
+			if r.p.ReadsMessages() {
+				value += m.st.dim.Render(" · reads messages")
+			}
 			lines = append(lines, m.st.formRow(r.p.Title, value, labelW, selected,
 				focused, width))
 			continue

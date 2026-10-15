@@ -44,7 +44,6 @@ type settingsItem int
 const (
 	itemOpen settingsItem = iota
 	itemReconnect
-	itemDigest
 	itemRetention
 	itemRemove
 )
@@ -161,7 +160,7 @@ func (m settingsModel) items() []settingsItem {
 	if a == nil {
 		return nil
 	}
-	items := []settingsItem{itemOpen, itemReconnect, itemDigest}
+	items := []settingsItem{itemOpen, itemReconnect}
 	if a.BackendType == "email" {
 		items = append(items, itemRetention)
 	}
@@ -398,15 +397,6 @@ func (m settingsModel) apply(item settingsItem) (tea.Model, tea.Cmd) {
 	case itemReconnect:
 		m.mgr.Start(m.ctx, a, nil)
 		m.notice = "Reconnecting " + short
-	case itemDigest:
-		skip := !digestSkipped(m.mgr, a)
-		m.notice = short + " shown in the unread digest"
-		if skip {
-			m.notice = short + " hidden from the unread digest"
-		}
-		if err := setDigestSkipped(m.mgr, a, skip); err != nil {
-			m.notice = textfmt.CleanError(err)
-		}
 	case itemRetention:
 		days := mail.RetentionDays(m.mgr.Store)
 		next := mail.RetentionChoices[0]
@@ -700,11 +690,6 @@ func (m settingsModel) itemText(a *account.Account, item settingsItem) (string, 
 		return "Open", ""
 	case itemReconnect:
 		return "Reconnect", ""
-	case itemDigest:
-		if digestSkipped(m.mgr, a) {
-			return "Unread digest", "hidden"
-		}
-		return "Unread digest", "shown"
 	case itemRetention:
 		return "Keep mail cached", retentionLabel(mail.RetentionDays(m.mgr.Store)) +
 			" (all email accounts)"

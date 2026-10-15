@@ -30,6 +30,8 @@ func (p *Plugin) registerAPI() {
 		"settings": p.luaSettings,
 		"widget":   p.luaWidget,
 		"modal":    p.luaModal,
+		"accounts": p.luaAccounts,
+		"unread":   p.luaUnread,
 		"now":      func(L *lua.LState) int { L.Push(lua.LNumber(time.Now().Unix())); return 1 },
 	})
 	kv := L.NewTable()
@@ -55,8 +57,9 @@ func (p *Plugin) requireLoading(L *lua.LState, fn string) {
 	}
 }
 
-// wiregram.plugin{title=, hosts={…}, on=}: the name Settings shows, the hosts
-// http.get may reach, and whether a built-in starts on.
+// wiregram.plugin{title=, hosts={…}, permissions={…}, on=}: the name Settings
+// shows, the hosts http.get may reach, what else it may read ("messages") and
+// whether a built-in starts on.
 func (p *Plugin) luaPlugin(L *lua.LState) int {
 	p.requireLoading(L, "plugin")
 	t := L.CheckTable(1)
@@ -71,7 +74,81 @@ func (p *Plugin) luaPlugin(L *lua.LState) int {
 			}
 		})
 	}
+	if perms, ok := t.RawGetString("permissions").(*lua.LTable); ok {
+		perms.ForEach(func(_, v lua.LValue) {
+			switch lua.LVAsString(v) {
+			case "messages":
+				p.messages = true
+			default:
+				L.ArgError(1, "unknown permission "+lua.LVAsString(v))
+			}
+		})
+	}
 	return 0
+}
+
+func (p *Plugin) requireMessages(L *lua.LState, fn string) {
+	switch {
+	case !p.messages:
+		L.RaiseError("wiregram.%s needs permissions = { \"messages\" } in wiregram.plugin", fn)
+	case p.host == nil:
+		L.RaiseError("wiregram.%s is not available here", fn)
+	}
+}
+
+// wiregram.accounts() lists the online accounts: {key=, tag=, label=, backend=}.
+func (p *Plugin) luaAccounts(L *lua.LState) int {
+	p.requireMessages(L, "accounts")
+	out := L.NewTable()
+	for _, a := range p.host.Accounts() {
+		t := L.NewTable()
+		t.RawSetString("key", lua.LString(a.Key))
+		t.RawSetString("tag", lua.LString(a.Tag))
+		t.RawSetString("label", lua.LString(a.Label))
+		t.RawSetString("backend", lua.LString(a.Backend))
+		out.Append(t)
+	}
+	L.Push(out)
+	return 1
+}
+
+// wiregram.unread(key, n) lists the account's private chats with unread
+// messages, {title=, count=, last=, messages={{sender=, text=, time=, clock=}, …}},
+// with up to n messages each; or nil and an error. It reaches the network,
+// so only update and click may call it.
+func (p *Plugin) luaUnread(L *lua.LState) int {
+	p.requireMessages(L, "unread")
+	key, n := L.CheckString(1), max(0, min(50, L.OptInt(2, 0)))
+	if !p.background {
+		L.RaiseError("wiregram.unread can only be called from update or click")
+	}
+	chats, err := p.host.UnreadDMs(L.Context(), key, n)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	now := time.Now()
+	out := L.NewTable()
+	for _, c := range chats {
+		t := L.NewTable()
+		t.RawSetString("title", lua.LString(c.Title))
+		t.RawSetString("count", lua.LNumber(c.Count))
+		t.RawSetString("last", lua.LNumber(c.Last.Unix()))
+		msgs := L.NewTable()
+		for _, m := range c.Messages {
+			mt := L.NewTable()
+			mt.RawSetString("sender", lua.LString(m.Sender))
+			mt.RawSetString("text", lua.LString(m.Text))
+			mt.RawSetString("time", lua.LNumber(m.Time.Unix()))
+			mt.RawSetString("clock", lua.LString(m.clock(now)))
+			msgs.Append(mt)
+		}
+		t.RawSetString("messages", msgs)
+		out.Append(t)
+	}
+	L.Push(out)
+	return 1
 }
 
 // wiregram.settings{{key=, label=, type="string"|"choice", default=, options={…}}, …}
@@ -125,7 +202,8 @@ func (p *Plugin) luaSettings(L *lua.LState) int {
 }
 
 // wiregram.widget{height=, refresh=, update=fn, render=fn(width, frame), click=fn}:
-// a card on the account chooser. render returns up to height lines and runs
+// a card on the account chooser. render returns up to height lines, and may
+// name a border colour after them; it runs
 // about four times a second; update runs every refresh seconds and when a
 // setting changes; click runs when the card is clicked.
 func (p *Plugin) luaWidget(L *lua.LState) int {
@@ -152,7 +230,8 @@ func (p *Plugin) luaWidget(L *lua.LState) int {
 // wiregram.modal{title=, width=, height=, render=fn(width, height, frame)}:
 // opens a modal over the account chooser once the click that called it
 // returns. width and height are the cells inside its border, cut to the
-// screen; render gets the size it really has.
+// screen; render gets the size it really has and may return more lines,
+// which the modal scrolls through.
 func (p *Plugin) luaModal(L *lua.LState) int {
 	if !p.clicking {
 		L.RaiseError("wiregram.modal can only be called from a widget's click")

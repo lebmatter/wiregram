@@ -41,6 +41,52 @@ type Setting struct {
 	Options []string // the values a choice cycles through
 }
 
+// Host gives plugins that declared the "messages" permission the user's
+// accounts and their unread private chats.
+type Host interface {
+	Accounts() []HostAccount
+	// UnreadDMs lists the account's private chats with unread messages, each
+	// with up to n of its newest unread messages.
+	UnreadDMs(ctx context.Context, key string, n int) ([]UnreadChat, error)
+}
+
+// HostAccount is one online account, as wiregram.accounts() returns it.
+type HostAccount struct {
+	Key     string
+	Tag     string // such as TG1
+	Label   string
+	Backend string
+}
+
+type UnreadChat struct {
+	Title    string
+	Count    int
+	Last     time.Time
+	Messages []UnreadMessage
+}
+
+type UnreadMessage struct {
+	Sender string
+	Text   string
+	Time   time.Time
+}
+
+// clock is when a message came, in local time: the time today, else the date.
+func (m UnreadMessage) clock(now time.Time) string {
+	t := m.Time.Local()
+	if y, mo, d := t.Date(); y == now.Year() && mo == now.Month() && d == now.Day() {
+		return t.Format("15:04")
+	}
+	return t.Format("Jan 2")
+}
+
+// Frame is what one render returned: the lines and, when the plugin chose
+// one, the border colour.
+type Frame struct {
+	Lines  []string
+	Border string
+}
+
 type widget struct {
 	height  int
 	refresh time.Duration
@@ -66,11 +112,16 @@ type Plugin struct {
 	Builtin  bool
 	Settings []Setting
 
-	db      *store.DB
-	client  *http.Client
-	hosts   []string
-	startOn bool
-	loading bool
+	db       *store.DB
+	host     Host
+	client   *http.Client
+	hosts    []string
+	messages bool // declared the "messages" permission
+	startOn  bool
+	loading  bool
+	// background is set while update or click runs, the only calls that may
+	// wait on the network.
+	background bool
 
 	mu     sync.Mutex
 	L      *lua.LState
@@ -96,7 +147,7 @@ type Manager struct {
 // Load reads the built-in plugins, then those in dir, where a file of the
 // same name replaces a built-in. A plugin that fails to load is left out and
 // reported in Errors; the rest still load.
-func Load(db *store.DB, dir string) *Manager {
+func Load(db *store.DB, host Host, dir string) *Manager {
 	sources := map[string]string{}
 	builtins := map[string]bool{}
 	var names []string
@@ -139,7 +190,7 @@ func Load(db *store.DB, dir string) *Manager {
 	client := &http.Client{Timeout: 10 * time.Second}
 	m := &Manager{}
 	for _, name := range names {
-		p := &Plugin{Name: name, Title: name, Builtin: builtins[name], db: db, client: client,
+		p := &Plugin{Name: name, Title: name, Builtin: builtins[name], db: db, host: host, client: client,
 			values: map[string]string{}}
 		if err := p.load(sources[name]); err != nil {
 			p.L.Close()
@@ -252,6 +303,9 @@ func (p *Plugin) Changes() uint64 {
 	return p.changes
 }
 
+// ReadsMessages reports whether the plugin declared the "messages" permission.
+func (p *Plugin) ReadsMessages() bool { return p.messages }
+
 // HasWidget reports whether the plugin draws a widget.
 func (p *Plugin) HasWidget() bool { return p.widget != nil }
 
@@ -261,38 +315,47 @@ func (p *Plugin) WidgetHeight() int { return p.widget.height }
 // Refresh is how often the widget's update runs.
 func (p *Plugin) Refresh() time.Duration { return p.widget.refresh }
 
-// Render draws the widget's lines for one animation frame. It gives up when
-// an update holds the VM, and ok is false so the caller keeps the last frame.
-func (p *Plugin) Render(width, frame int) (lines []string, ok bool, err error) {
+// maxModalLines bounds what a modal's render may return; the modal scrolls
+// through them.
+const maxModalLines = 2000
+
+// Render draws the widget for one animation frame. It gives up when an
+// update holds the VM, and ok is false so the caller keeps the last frame.
+func (p *Plugin) Render(width, frame int) (f Frame, ok bool, err error) {
 	return p.render(p.widget.render, p.widget.height, lua.LNumber(width), lua.LNumber(frame))
 }
 
-// RenderModal draws a modal's lines for one frame at the size it is shown,
-// the way Render draws the widget.
-func (p *Plugin) RenderModal(m *Modal, width, height, frame int) ([]string, bool, error) {
-	return p.render(m.render, height, lua.LNumber(width), lua.LNumber(height), lua.LNumber(frame))
+// RenderModal draws a modal for one frame at the size it is shown, the way
+// Render draws the widget. It may return more lines than fit, to scroll.
+func (p *Plugin) RenderModal(m *Modal, width, height, frame int) (Frame, bool, error) {
+	return p.render(m.render, maxModalLines, lua.LNumber(width), lua.LNumber(height),
+		lua.LNumber(frame))
 }
 
-func (p *Plugin) render(fn *lua.LFunction, height int, args ...lua.LValue) (lines []string,
-	ok bool, err error) {
+// render calls fn, which returns a list of lines and, optionally, a border colour.
+func (p *Plugin) render(fn *lua.LFunction, limit int, args ...lua.LValue) (f Frame, ok bool,
+	err error) {
 	if !p.mu.TryLock() {
-		return nil, false, nil
+		return f, false, nil
 	}
 	defer p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), renderTimeout)
 	defer cancel()
-	ret, err := p.call(ctx, fn, 1, args...)
+	ret, err := p.call(ctx, fn, 2, args...)
 	if err != nil {
-		return nil, true, err
+		return f, true, err
 	}
 	t, isTable := ret[0].(*lua.LTable)
 	if !isTable {
-		return nil, true, errors.New("render must return a list of lines")
+		return f, true, errors.New("render must return a list of lines")
 	}
-	for i := 1; i <= t.Len() && i <= height; i++ {
-		lines = append(lines, textfmt.Plain(lua.LVAsString(t.RawGetInt(i))))
+	for i := 1; i <= t.Len() && i <= limit; i++ {
+		f.Lines = append(f.Lines, textfmt.Plain(lua.LVAsString(t.RawGetInt(i))))
 	}
-	return lines, true, nil
+	if s, ok := ret[1].(lua.LString); ok {
+		f.Border = string(s)
+	}
+	return f, true, nil
 }
 
 // Clickable reports whether the widget has a click handler.
@@ -308,9 +371,9 @@ func (p *Plugin) Click(ctx context.Context) (*Modal, error) {
 	defer p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
-	p.clicking, p.modal = true, nil
+	p.clicking, p.background, p.modal = true, true, nil
 	_, err := p.call(ctx, p.widget.click, 0)
-	p.clicking = false
+	p.clicking, p.background = false, false
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +389,9 @@ func (p *Plugin) Update(ctx context.Context) error {
 	defer p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
+	p.background = true
 	_, err := p.call(ctx, p.widget.update, 0)
+	p.background = false
 	return err
 }
 

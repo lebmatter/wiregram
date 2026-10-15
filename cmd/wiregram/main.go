@@ -46,11 +46,10 @@ Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to its chats;
 Enter on another account switches to it; the last two rows open Home (the
 account list) and Settings.
-The account list shows an unread digest below it: one card per connected
-account, with its busiest chats. Settings can leave an account out.
 Plugins are Lua scripts; enabled ones may add widget cards under the
-digest, such as the built-in Weather (on by default; click it for today's
-hourly forecast) and Hacker News.
+account list, such as the built-in Unread (unread private chats per account;
+click it to read them), Weather (click it for today's hourly forecast) and
+Hacker News. Unread and Weather are on by default.
 Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 
@@ -166,7 +165,7 @@ Keyboard shortcuts:
   Settings
     Up/k, Down/j      Select an account on the left, or a setting on the right
     Enter             Show the account's settings, or change the selected one:
-                      open or sign in, reconnect, unread digest shown/hidden,
+                      open or sign in, reconnect,
                       how long mail stays cached (email), remove account
     Tab, Right/l      Move to the account's settings
     Space             Change the selected setting

@@ -29,7 +29,7 @@ format may change between releases. Please report bugs in
 
 ## Core Features
 
-- [Accounts](/features/accounts): every account in one sidebar tree, with an unread digest
+- [Accounts](/features/accounts): every account in one sidebar tree
 - [Chats](/features/chats): replies, threads, reactions, forwarding, mentions and search
 - [Unread & Mentions](/features/unread-mentions): one card per chat that needs you
 - [Media](/features/media): inline images in kitty and Ghostty, half-blocks elsewhere

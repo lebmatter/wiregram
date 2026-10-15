@@ -2,11 +2,14 @@ package tui
 
 import (
 	"context"
+	"image/color"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/plugin"
 	"wiregram/internal/textfmt"
@@ -15,6 +18,7 @@ import (
 const (
 	widgetMinCardW = 44
 	widgetFrame    = 250 * time.Millisecond
+	maxModalScroll = 1 << 20 // scrolls a modal to its top or bottom
 )
 
 type widgetTick struct{}
@@ -32,14 +36,15 @@ type widgetClicked struct {
 
 // widgetModal is the overlay a widget's click opened, with its last frame.
 type widgetModal struct {
-	p     *plugin.Plugin
-	m     *plugin.Modal
-	lines []string
-	err   error
+	p      *plugin.Plugin
+	m      *plugin.Modal
+	frame  plugin.Frame
+	err    error
+	offset int // the first line shown, for a render longer than the modal
 }
 
 type widgetState struct {
-	lines     []string
+	frame     plugin.Frame
 	renderErr error
 	updateErr error
 	clickErr  error
@@ -106,17 +111,25 @@ func (m widgetsModel) tick(width, screenW, screenH int) (widgetsModel, tea.Cmd) 
 			s.updating, s.changes = true, p.Changes()
 			cmds = append(cmds, func() tea.Msg { return widgetUpdated{p: p, err: p.Update(m.ctx)} })
 		}
-		if lines, ok, err := p.Render(cardWidth(width, cols, i%cols)-4, m.frame); ok {
-			s.lines, s.renderErr = lines, err
+		if f, ok, err := p.Render(cardWidth(width, cols, i%cols)-4, m.frame); ok {
+			s.frame, s.renderErr = f, err
 		}
 	}
 	if md := m.modal; md != nil {
 		w, h := md.size(screenW, screenH)
-		if lines, ok, err := md.p.RenderModal(md.m, w, h, m.frame); ok {
-			md.lines, md.err = lines, err
+		if f, ok, err := md.p.RenderModal(md.m, w, h, m.frame); ok {
+			md.frame, md.err = f, err
 		}
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// poke updates every widget at the next frame.
+func (m widgetsModel) poke() widgetsModel {
+	for _, s := range m.states {
+		s.due = time.Time{}
+	}
+	return m
 }
 
 // click runs the clicked widget's handler in the background, since it may
@@ -147,10 +160,20 @@ func (md *widgetModal) size(screenW, screenH int) (w, h int) {
 	return max(1, min(md.m.Width, screenW-6)), max(1, min(md.m.Height, screenH-2))
 }
 
-// box draws the modal with its last frame.
+// scroll moves the modal's lines by delta, within what its last frame has.
+func (md *widgetModal) scroll(delta, screenW, screenH int) {
+	_, h := md.size(screenW, screenH)
+	md.offset = max(0, min(md.offset+delta, len(md.frame.Lines)-h))
+}
+
+// box draws the modal with its last frame, from the scrolled line.
 func (md *widgetModal) box(st *styles, screenW, screenH int) string {
 	w, h := md.size(screenW, screenH)
-	lines := md.lines
+	lines := md.frame.Lines
+	if len(lines) > h {
+		top := max(0, min(md.offset, len(lines)-h))
+		lines = lines[top : top+h]
+	}
 	if lines == nil && md.err == nil {
 		lines = []string{st.subtle.Render("Loading…")}
 	}
@@ -158,7 +181,7 @@ func (md *widgetModal) box(st *styles, screenW, screenH int) string {
 		lines = append(slices.Clone(lines[:min(len(lines), h-1)]),
 			styleError.Render(textfmt.CleanError(md.err)))
 	}
-	return renderBox(md.m.Title, lines, w+4, h+2, st.accentColor)
+	return renderBox(md.m.Title, lines, w+4, h+2, st.pluginBorder(md.frame.Border, st.accentColor))
 }
 
 // widgetAt maps a click at x, y inside the widgets to its plugin.
@@ -246,7 +269,7 @@ func (m widgetsModel) card(p *plugin.Plugin, width, height int) string {
 	var lines []string
 	err := error(nil)
 	if s != nil {
-		lines, err = s.lines, s.renderErr
+		lines, err = s.frame.Lines, s.renderErr
 		if err == nil {
 			err = s.updateErr
 		}
@@ -260,5 +283,44 @@ func (m widgetsModel) card(p *plugin.Plugin, width, height int) string {
 	if err != nil {
 		lines = append(slices.Clone(lines[:min(len(lines), height-3)]), styleError.Render(textfmt.CleanError(err)))
 	}
-	return renderBox(p.Title, lines, width, height, m.st.dimColor)
+	border := m.st.dimColor
+	if s != nil {
+		border = m.st.pluginBorder(s.frame.Border, border)
+	}
+	return renderBox(p.Title, lines, width, height, border)
+}
+
+// pluginBorder is the colour a plugin named for its border: one of the
+// theme's or the fixed colours, or #rrggbb; else def.
+func (s *styles) pluginBorder(name string, def color.Color) color.Color {
+	switch name {
+	case "accent":
+		return s.accentColor
+	case "dim":
+		return s.dimColor
+	case "green":
+		return colorGreen
+	case "yellow":
+		return colorYellow
+	case "red":
+		return colorRed
+	case "blue":
+		return colorGroup
+	case "violet":
+		return s.agent.GetForeground()
+	}
+	if len(name) == 7 && name[0] == '#' {
+		if _, err := strconv.ParseUint(name[1:], 16, 32); err == nil {
+			return lipgloss.Color(name)
+		}
+	}
+	return def
+}
+
+// cardWidth gives the last column whatever the division leaves over.
+func cardWidth(width, cols, col int) int {
+	if col == cols-1 {
+		return width - width/cols*(cols-1)
+	}
+	return width / cols
 }
