@@ -160,18 +160,10 @@ func (c *Client) acknowledgeMedia(ctx context.Context, message *tg.Message) {
 }
 
 func (c *Client) downloadMedia(ctx context.Context, a attachment, file *os.File) error {
-	var pool telegram.CloseInvoker
-	var err error
-	if a.dc == c.Telegram.Config().ThisDC {
-		// Exporting authorization to the current DC is invalid; reuse its session.
-		pool, err = c.Telegram.Pool(1)
-	} else {
-		pool, err = c.Telegram.DC(ctx, a.dc, 1)
-	}
+	pool, err := c.mediaPool(ctx, a.dc)
 	if err != nil {
-		return fmt.Errorf("connect to media server: %w", err)
+		return err
 	}
-	defer pool.Close()
 	rpc := telegram.InvokeFunc(func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
 		for {
 			err := pool.Invoke(ctx, input, output)
@@ -194,5 +186,8 @@ func (c *Client) downloadMedia(ctx context.Context, a attachment, file *os.File)
 		}
 	})
 	_, err = downloader.NewDownloader().Download(tg.NewClient(rpc), a.location).Stream(ctx, file)
+	if err != nil && ctx.Err() == nil {
+		c.dropPool(a.dc, pool)
+	}
 	return err
 }

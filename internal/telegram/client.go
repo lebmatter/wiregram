@@ -58,6 +58,70 @@ type Client struct {
 	peerTyping     bool
 	events         backend.Bus
 	Report         func(error)
+
+	// pools holds a media connection per data centre while Run runs, so
+	// downloads do not each connect, and export authorization, again.
+	poolMu sync.Mutex
+	pools  map[int]telegram.CloseInvoker
+}
+
+// Run runs the MTProto client like Telegram.Run, closing the media
+// connections when it ends.
+func (c *Client) Run(ctx context.Context, f func(context.Context) error) error {
+	return c.Telegram.Run(ctx, func(ctx context.Context) error {
+		defer c.closePools()
+		return f(ctx)
+	})
+}
+
+// mediaConns is how many connections a media pool may open, so the images
+// on screen download side by side.
+const mediaConns = 4
+
+// mediaPool returns the media connection for dc, connecting it if needed.
+func (c *Client) mediaPool(ctx context.Context, dc int) (telegram.CloseInvoker, error) {
+	c.poolMu.Lock()
+	defer c.poolMu.Unlock()
+	if pool := c.pools[dc]; pool != nil {
+		return pool, nil
+	}
+	var pool telegram.CloseInvoker
+	var err error
+	if dc == c.Telegram.Config().ThisDC {
+		// Exporting authorization to the current DC is invalid; reuse its session.
+		pool, err = c.Telegram.Pool(mediaConns)
+	} else {
+		pool, err = c.Telegram.DC(ctx, dc, mediaConns)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("connect to media server: %w", err)
+	}
+	if c.pools == nil {
+		c.pools = make(map[int]telegram.CloseInvoker)
+	}
+	c.pools[dc] = pool
+	return pool, nil
+}
+
+// dropPool closes dc's media connection after it failed, so the next
+// download connects afresh.
+func (c *Client) dropPool(dc int, pool telegram.CloseInvoker) {
+	c.poolMu.Lock()
+	if c.pools[dc] == pool {
+		delete(c.pools, dc)
+	}
+	c.poolMu.Unlock()
+	pool.Close()
+}
+
+func (c *Client) closePools() {
+	c.poolMu.Lock()
+	pools := c.pools
+	c.pools = nil
+	c.poolMu.Unlock()
+	for _, pool := range pools {
+		pool.Close()
+	}
 }
 
 // sessionStorage keeps the MTProto session in wiregram.db.

@@ -267,7 +267,7 @@ func (tb *TelegramBackend) Capabilities() backend.Capabilities {
 }
 
 func (tb *TelegramBackend) Run(ctx context.Context) error {
-	return tb.C.Telegram.Run(ctx, func(runCtx context.Context) error {
+	return tb.C.Run(ctx, func(runCtx context.Context) error {
 		return nil
 	})
 }

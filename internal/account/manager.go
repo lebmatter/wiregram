@@ -641,7 +641,7 @@ func (m *AccountManager) Start(parent context.Context, a *Account, prompt config
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			})
 			if err == nil {
-				err = c.Telegram.Run(attemptCtx, func(connectionCtx context.Context) error {
+				err = c.Run(attemptCtx, func(connectionCtx context.Context) error {
 					if prompt != nil {
 						if err := c.Authenticate(connectionCtx, prompt, c.Report); err != nil {
 							return err

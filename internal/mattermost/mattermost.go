@@ -512,6 +512,17 @@ func (mb *MmBackend) resolveUser(ctx context.Context, userID string) mmUser {
 	return u
 }
 
+// wsLookupTimeout bounds the sender lookup of a websocket event: the socket
+// is read one event at a time, so a slow lookup holds up every later one.
+const wsLookupTimeout = 5 * time.Second
+
+// wsPostToMessage is postToMessage for a websocket event.
+func (mb *MmBackend) wsPostToMessage(p mmPost) backend.Message {
+	ctx, cancel := context.WithTimeout(context.Background(), wsLookupTimeout)
+	defer cancel()
+	return mb.postToMessage(ctx, p)
+}
+
 func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Message {
 	sender := ""
 	senderID := p.UserID
@@ -1673,7 +1684,7 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		dm := wrapper.ChannelType == "D" &&
 			(post.UserID == mb.UserID || post.Props["from_bot"] != "true") &&
 			wrapper.ChannelName != mb.UserID+"__"+mb.UserID
-		msg := mb.postToMessage(context.Background(), post)
+		msg := mb.wsPostToMessage(post)
 		mb.events.Publish(backend.Event{
 			Kind: backend.EventMessage, Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
 			DM: dm, Message: &msg,
@@ -1692,7 +1703,7 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		}
 		// The edit event does not carry the channel type, so it is never
 		// marked DM.
-		msg := mb.postToMessage(context.Background(), post)
+		msg := mb.wsPostToMessage(post)
 		mb.events.Publish(backend.Event{
 			Kind: backend.EventEdit, Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
 			Message: &msg,

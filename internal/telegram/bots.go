@@ -61,7 +61,7 @@ func botError(err error, username string) error {
 func botSession(ctx context.Context, cfg config.Config, token string,
 	fn func(ctx context.Context, c *Client, self *tg.User) error) error {
 	c := newClient(cfg, &session.StorageMemory{}, func(error) {})
-	return c.Telegram.Run(ctx, func(ctx context.Context) error {
+	return c.Run(ctx, func(ctx context.Context) error {
 		if _, err := c.Telegram.Auth().Bot(ctx, token); err != nil {
 			return botError(err, "")
 		}
@@ -261,7 +261,7 @@ func connectBot(ctx context.Context, cfg config.Config, bot backend.BotAccount) 
 	go func() {
 		defer close(bb.done)
 		defer sub.Close()
-		bb.err = c.Telegram.Run(ctx, func(ctx context.Context) error {
+		bb.err = c.Run(ctx, func(ctx context.Context) error {
 			if _, err := c.Telegram.Auth().Bot(ctx, bot.Token); err != nil {
 				return botError(err, bot.Username)
 			}

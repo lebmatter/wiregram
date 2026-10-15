@@ -661,7 +661,9 @@ func (mx *MxBackend) processTimelineEvent(ctx context.Context, roomID string, ev
 // keeps its time, reply and reactions. Without the original, the edit stands
 // in for it.
 func (mx *MxBackend) editedMessage(ctx context.Context, roomID, targetID string, edit mxTimelineEvent) backend.Message {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Short: the sync waits on it, and without the original the edit still
+	// shows, from its own content.
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var orig mxTimelineEvent
 	path := fmt.Sprintf("/rooms/%s/event/%s", url.PathEscape(roomID), url.PathEscape(targetID))
