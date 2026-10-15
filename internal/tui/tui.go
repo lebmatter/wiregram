@@ -1033,7 +1033,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.goToLabel = ""
 		for i, e := range m.entries {
 			if label != "" && e.ID.Id == label {
-				m.list.selected = m.list.before() + i
+				m.list.selected = m.list.firstChat() + i
 				return m.chooseChat(i)
 			}
 		}
@@ -1065,7 +1065,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case chatListArchiveToggle:
 		m = m.closeChat()
 		m.archived = !m.archived
-		m.list.selected, m.list.offset = m.list.before(), 0
+		m.list.selected, m.list.offset = m.list.firstChat(), 0
 		return m, loadDialogs(m.ctx, m.b, m.archived)
 
 	case chatListSearch:

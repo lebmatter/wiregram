@@ -15,9 +15,9 @@ import (
 // chatListModel is the sidebar tree: every account as a header, with the
 // active account expanded to its chats (on email, its folders) and the
 // others collapsed above and below it. Selection indexes run over the
-// selectable rows in display order: accounts above, chats, the action rows
-// (Unread, Mentions, archive, search and the account's bots; on email,
-// Compose and Labels), accounts below, then "Settings…".
+// selectable rows in display order: accounts above, the top action rows
+// (Unread, Mentions, archive and search; on email, Compose and Labels), chats,
+// the account's bots, accounts below, then "Settings…".
 type chatListModel struct {
 	st            *styles
 	ctx           context.Context
@@ -84,7 +84,7 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 	if s, ok := b.(backend.Syncer); ok {
 		m.loading = s.Syncing() && len(entries) == 0 && !archived
 	}
-	m.selected = m.before()
+	m.selected = m.firstChat()
 	return m
 }
 
@@ -97,7 +97,8 @@ type listAction struct {
 	section string
 }
 
-func (m chatListModel) actions() []listAction {
+// top is the action rows above the chats.
+func (m chatListModel) top() []listAction {
 	if m.loading {
 		return nil // nothing to act on until the chats arrive
 	}
@@ -125,9 +126,13 @@ func (m chatListModel) actions() []listAction {
 		}
 		acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}})
 	}
-	acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
-	if agentsAllowed(m.mgr, m.active) {
-		first := len(acts)
+	return append(acts, listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
+}
+
+// bottom is the action rows below the chats: the account's bots.
+func (m chatListModel) bottom() []listAction {
+	var acts []listAction
+	if !m.loading && agentsAllowed(m.mgr, m.active) {
 		for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
 			acts = append(acts, listAction{
 				entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
@@ -144,7 +149,7 @@ func (m chatListModel) actions() []listAction {
 		}
 		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "New bot…"},
 			msg: chatListAgent{}})
-		acts[first].section = "Bots"
+		acts[0].section = "Bots"
 	}
 	return acts
 }
@@ -174,14 +179,19 @@ func (m chatListModel) before() int {
 	return len(above)
 }
 
+// firstChat is the selection index of the first chat.
+func (m chatListModel) firstChat() int {
+	return m.before() + len(m.top())
+}
+
 func (m chatListModel) maxIndex() int {
 	above, below := m.others()
-	return len(above) + len(m.entries) + len(m.actions()) + len(below)
+	return len(above) + len(m.top()) + len(m.entries) + len(m.bottom()) + len(below)
 }
 
 // chatIndex maps the selection to an entry, if a chat is selected.
 func (m chatListModel) chatIndex() (int, bool) {
-	i := m.selected - m.before()
+	i := m.selected - m.firstChat()
 	return i, i >= 0 && i < len(m.entries)
 }
 
@@ -195,19 +205,23 @@ func (m chatListModel) refreshUnread() chatListModel {
 }
 
 // row maps a selection index to its display row. The active account's
-// header sits above its chats, a separator below them, and each section's
-// heading (Labels, Bots) above its first row.
+// header sits above its top actions, a separator between them and the
+// chats, and the Bots heading above the first bot.
 func (m chatListModel) row(index int) int {
 	before := m.before()
 	if index < before {
 		return index
 	}
-	if index < before+len(m.entries) {
+	top := len(m.top())
+	if index < before+top {
 		return index + 1
 	}
+	if index < before+top+len(m.entries) {
+		return index + 2
+	}
 	r := index + 2 + max(0, 1-len(m.entries)) // "No chats here" or loading placeholder
-	for i, a := range m.actions() {
-		if a.section != "" && before+len(m.entries)+i <= index {
+	for i, a := range m.bottom() {
+		if a.section != "" && before+top+len(m.entries)+i <= index {
 			r++
 		}
 	}
@@ -320,7 +334,13 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 				return m, func() tea.Msg { return chatListSwitch{to} }
 			}
 			idx -= len(above)
-			acts := m.actions()
+			top := m.top()
+			if idx < len(top) {
+				act := top[idx].msg
+				return m, func() tea.Msg { return act }
+			}
+			idx -= len(top)
+			acts := m.bottom()
 			switch {
 			case idx < len(m.entries):
 				return m, func() tea.Msg { return chatListChoice{idx} }
@@ -402,6 +422,23 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	if m.active != nil {
 		rows = append(rows, m.accountRow(m.active, true, false, focused, width))
 	}
+	actionRow := func(a listAction) {
+		if a.section != "" {
+			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── "+a.section+" ",
+				max(1, width-4))))
+		}
+		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused,
+			max(1, width-4))
+		if index != m.selected {
+			line = m.st.subtle.Render(line)
+		}
+		rows = append(rows, "    "+line)
+		index++
+	}
+	for _, a := range m.top() {
+		actionRow(a)
+	}
+	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
 	var pending map[backend.ChatID]bool
 	answers := func(backend.ChatEntry) bool { return false }
 	if m.mgr != nil && m.mgr.Agents != nil && m.active != nil {
@@ -421,20 +458,8 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	case len(m.entries) == 0:
 		rows = append(rows, m.st.subtle.Render("      No chats here"))
 	}
-	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
-
-	for _, a := range m.actions() {
-		if a.section != "" {
-			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── "+a.section+" ",
-				max(1, width-4))))
-		}
-		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused,
-			max(1, width-4))
-		if index != m.selected {
-			line = m.st.subtle.Render(line)
-		}
-		rows = append(rows, "    "+line)
-		index++
+	for _, a := range m.bottom() {
+		actionRow(a)
 	}
 	for _, a := range below {
 		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
