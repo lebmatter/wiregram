@@ -20,7 +20,7 @@ const mailSplitWidth = 140
 // mailListModel is an email folder (backend.Mailbox): its conversations in
 // a list, each a row that Space expands into its mails. Enter reads a mail,
 // in the list's place or beside it in a wide pane, and single keys reply,
-// forward, move and mark. The composer replaces the folder while writing.
+// forward, move and mark. The root draws the composer as a modal over the screen.
 type mailListModel struct {
 	st     *styles
 	ctx    context.Context
@@ -729,9 +729,6 @@ func (m mailListModel) title() string {
 
 func (m mailListModel) view(focused bool) string {
 	m.focused = focused
-	if m.composing {
-		return m.composer.view(m.width, m.height)
-	}
 	if m.reading != nil && !m.split() {
 		return renderBox(textfmt.Plain(m.folder.Title), m.readerBody(m.width-4, m.height-2),
 			m.width, m.height, m.st.border(focused))

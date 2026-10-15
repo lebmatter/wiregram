@@ -253,6 +253,17 @@ func (c *mailComposer) attachLine() string {
 	return strings.Join(names, " · ")
 }
 
+// composeModalWidth is the widest the composer modal gets.
+const composeModalWidth = 110
+
+// composeRect is the composer modal's place, centred over a body
+// width×height cells with a margin around it.
+func composeRect(width, height int) (x, y, w, h int) {
+	w, h = min(composeModalWidth, max(20, width-4)), max(8, height-2)
+	x, y = modalRect(width, height, w, h)
+	return x, y, w, h
+}
+
 // view draws the composer in a box width by height.
 func (c *mailComposer) view(width, height int) string {
 	inner := width - 4

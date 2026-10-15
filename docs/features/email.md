@@ -78,8 +78,8 @@ more conversations or mails (`*` marks them, and the title counts them), then
 
 ## Writing
 
-<kbd>c</kbd>, <kbd>r</kbd>, <kbd>R</kbd> and <kbd>f</kbd> open the composer in the folder's
-place: **To**, **Cc**, **Subject** and **Attach** fields over the text. Replies quote the
+<kbd>c</kbd>, <kbd>r</kbd>, <kbd>R</kbd> and <kbd>f</kbd> open the composer, a large
+modal over the screen: **To**, **Cc**, **Subject** and **Attach** fields over the text. Replies quote the
 original below the cursor; replies to all copy the other recipients.
 
 | Key | Action |

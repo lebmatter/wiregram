@@ -751,6 +751,9 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if m.chatOpen && m.chat.locked {
 		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
 	}
+	if m.composing() {
+		return m, nil
+	}
 	if m.wiz != nil {
 		if right {
 			return m, nil
@@ -855,6 +858,9 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	if !ok || mouse.Y >= m.bodyHeight() || (m.chatOpen && m.chat.locked) {
 		return m, nil
 	}
+	if m.composing() {
+		return m, nil
+	}
 	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil || m.labels != nil {
 		return m.handleKey(k)
 	}
@@ -926,6 +932,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	if m.searchOpen {
 		m.search, cmd = m.search.Update(msg)
+		return m, cmd
+	}
+	if m.composing() {
+		m.focus = focusChat
+		m.mail, cmd = m.mail.key(msg)
 		return m, cmd
 	}
 	paneFocused := m.paneOpen() && m.focus == focusChat
@@ -1236,6 +1247,10 @@ func (m tuiModel) render() string {
 		x, y := m.labelsAt()
 		body = m.st.fadeUnder(body, m.labels.View(), x, y)
 	}
+	if m.composing() {
+		x, y, w, h := composeRect(m.width, bodyHeight)
+		body = m.st.fadeUnder(body, m.mail.composer.view(w, h), x, y)
+	}
 	if m.wiz != nil {
 		box, _ := m.wiz.modal(m.width, bodyHeight)
 		body = m.st.overlay(body, box, m.width, bodyHeight)
@@ -1252,6 +1267,9 @@ func (m tuiModel) render() string {
 	}
 	return body + "\n" + m.footer()
 }
+
+// composing reports whether the mail composer modal is up.
+func (m tuiModel) composing() bool { return m.mailOpen && m.mail.composing }
 
 // confirmShown is the delete confirmation that is up, if any, with its
 // top-left corner: centred over the chat for one asked in the chat, else

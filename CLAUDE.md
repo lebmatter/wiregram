@@ -209,8 +209,8 @@ These are project constraints, not suggestions:
   when the pane is `mailSplitWidth` (140) or wider. Email is the exception to "no
   per-message shortcuts": `c` `r` `R` `f` `d` `a` `m` `u` `/` and `v` (visual mode,
   Space picks rows) act on the selected row, the mail read or the picked ones, and
-  Trash asks nothing since it can be undone. The composer (`internal/tui/compose.go`)
-  has To, Cc, Subject and Attach fields, completing addresses (`Mailbox.Addresses`) and
+  Trash asks nothing since it can be undone. The composer (`internal/tui/compose.go`), a large modal the root draws over
+  the screen (`composeRect`), has To, Cc, Subject and Attach fields, completing addresses (`Mailbox.Addresses`) and
   paths. HTML mail is reduced to text and nothing it references is fetched. Mail is
   cached once per Message-ID (a missing one gets `syntheticID`) in `wiregram.db` for the
   Keep mail cached setting of an email account's Settings (`mail_retention_days`, default
