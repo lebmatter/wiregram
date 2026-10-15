@@ -305,6 +305,14 @@ type FullMessager interface {
 	FullMessage(msg Message) (headers []string, body string)
 }
 
+// Syncer is implemented by backends that fill their chat list in the
+// background after connecting. Once the first sync is done they publish an
+// EventUnread without a Chat, so the list reloads.
+type Syncer interface {
+	// Syncing reports whether the first sync since connecting is still running.
+	Syncing() bool
+}
+
 // Labeler is implemented by backends that group chats under labels: Gmail
 // labels, or another mail server's folders. The sidebar shows a section for
 // each label the user chose.

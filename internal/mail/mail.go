@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -55,6 +56,8 @@ type MailBackend struct {
 	nudge      chan struct{}
 	labelNudge chan struct{}
 	events     backend.Bus
+	// synced is set once the first sync of the inbox has finished.
+	synced atomic.Bool
 }
 
 // NewMailBackend prepares an account on imapHost whose cache is keyed by key.
@@ -96,6 +99,8 @@ func (b *MailBackend) Name() string { return backendName }
 func (b *MailBackend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{DeleteForMe: true, Search: true, MultilineCompose: true}
 }
+
+func (b *MailBackend) Syncing() bool { return !b.synced.Load() }
 
 // Start begins syncing and watching the inbox until ctx ends.
 func (b *MailBackend) Start(ctx context.Context) {

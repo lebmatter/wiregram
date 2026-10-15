@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -41,12 +42,15 @@ type tuiModel struct {
 	archived      bool
 	archiveUnread int
 	list          chatListModel
-	chat          chatViewModel
-	chatOpen      bool
-	search        userSearchModel
-	searchOpen    bool
-	unread        unreadModel
-	unreadOpen    bool
+	// spin animates the list's loading row; spinning while its ticks run.
+	spin       spinner.Model
+	spinning   bool
+	chat       chatViewModel
+	chatOpen   bool
+	search     userSearchModel
+	searchOpen bool
+	unread     unreadModel
+	unreadOpen bool
 	// agentPane is one of the account's bots (Chat Agents), open in the chat's place.
 	agentPane agentPaneModel
 	agentOpen bool
@@ -194,8 +198,10 @@ func newTuiModel(ctx context.Context, mgr *account.AccountManager, active *accou
 	if kittyGraphics() {
 		m.kitty = &kittyImages{}
 	}
+	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(m.st.accent))
 	m.list = newChatListModel(ctx, m.st, mgr, active, b, entries, false, archiveUnread)
 	m.list.labelOpen = m.labelOpen
+	m.spinning = m.list.loading
 	return m.sized()
 }
 
@@ -209,6 +215,9 @@ func (m tuiModel) Init() tea.Cmd {
 	if _, ok := m.b.(backend.Labeler); ok {
 		// The screen opens with the chats alone; this adds the label sections.
 		cmds = append(cmds, loadDialogs(m.ctx, m.b, m.archived))
+	}
+	if m.spinning {
+		cmds = append(cmds, m.spin.Tick)
 	}
 	return tea.Batch(cmds...)
 }
@@ -381,6 +390,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
+	if tick, ok := msg.(spinner.TickMsg); ok && tick.ID == m.spin.ID() {
+		m.spinning = m.list.loading
+		if !m.spinning {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -907,12 +925,16 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.list.labels, m.list.labelOpen = msg.labels, m.labelOpen
 		m.list.selected = min(selected, m.list.maxIndex())
 		m.list.offset = offset
+		var tick tea.Cmd
+		if m.list.loading && !m.spinning {
+			m.spinning, tick = true, m.spin.Tick
+		}
 		if i, ok := m.list.labelIndex(m.goToLabel); ok {
 			m.list.selected = i
 			m.focus = focusList
 		}
 		m.goToLabel = ""
-		return m, nil
+		return m, tick
 
 	case tuiRetryDialogs:
 		return m, loadDialogs(m.ctx, m.b, m.archived)
@@ -1065,6 +1087,7 @@ func (m tuiModel) View() tea.View {
 }
 
 func (m tuiModel) render() string {
+	m.list.spin = m.spin.View()
 	if m.chatOpen && m.chat.locked {
 		return m.chat.lockView(m.width, m.height)
 	}

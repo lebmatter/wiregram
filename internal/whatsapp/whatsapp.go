@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -51,6 +52,10 @@ type WaBackend struct {
 	events      backend.Bus
 	// PairDeadline is told when the pairing socket will close.
 	PairDeadline func(time.Time)
+	// syncing holds from connecting until the chats first arrive: the history
+	// sync after pairing, or the missed events after reconnecting.
+	syncing atomic.Bool
+	paired  atomic.Bool
 
 	configDir string
 }
@@ -58,6 +63,9 @@ type WaBackend struct {
 // pairWindow is how long whatsmeow keeps the pairing socket open: it closes it
 // once its six QR codes expire, the first after 60s and the rest after 20s.
 const pairWindow = 160 * time.Second
+
+// syncWait is how long the chat list shows as loading at most.
+const syncWait = 2 * time.Minute
 
 type waChatEntry struct {
 	jid     types.JID
@@ -124,6 +132,7 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	wa.Client.AddEventHandler(wa.handleEvent)
 
 	if wa.Client.Store.ID != nil {
+		wa.startSync()
 		if err := wa.Client.Connect(); err != nil {
 			return fmt.Errorf("reconnect to WhatsApp: %w", err)
 		}
@@ -180,6 +189,8 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	for item := range qrChan {
 		switch item.Event {
 		case "success":
+			wa.paired.Store(true)
+			wa.startSync()
 			wa.Jid = *wa.Client.Store.ID
 			wa.PushName = wa.Client.Store.PushName
 			return nil
@@ -224,6 +235,20 @@ func (wa *WaBackend) Logout(ctx context.Context) error {
 	return nil
 }
 
+func (wa *WaBackend) Syncing() bool { return wa.syncing.Load() }
+
+func (wa *WaBackend) startSync() {
+	wa.syncing.Store(true)
+	// The phone may never send a history sync; stop waiting for it.
+	time.AfterFunc(syncWait, wa.finishSync)
+}
+
+func (wa *WaBackend) finishSync() {
+	if wa.syncing.Swap(false) {
+		wa.events.Publish(backend.Event{Kind: backend.EventUnread})
+	}
+}
+
 func (wa *WaBackend) Run(ctx context.Context) error {
 	<-ctx.Done()
 	if wa.Client != nil {
@@ -244,6 +269,14 @@ func (wa *WaBackend) handleEvent(rawEvt any) {
 		wa.handlePresence(evt)
 	case *events.HistorySync:
 		wa.handleHistorySync(evt)
+		if len(evt.Data.GetConversations()) > 0 {
+			wa.syncing.Store(false)
+			wa.events.Publish(backend.Event{Kind: backend.EventUnread})
+		}
+	case *events.OfflineSyncCompleted:
+		if !wa.paired.Load() {
+			wa.finishSync()
+		}
 	case *events.Connected:
 		_ = wa.Client.SendPresence(context.Background(), types.PresenceAvailable)
 	case *events.LoggedOut:

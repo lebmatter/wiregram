@@ -193,6 +193,9 @@ func (b *MailBackend) runSync(ctx context.Context) {
 		if err := b.syncAll(ctx); err != nil && ctx.Err() == nil {
 			b.report(err)
 		}
+		if !b.synced.Swap(true) {
+			b.events.Publish(backend.Event{Kind: backend.EventUnread})
+		}
 		wg.Wait()
 		// IDLE watches the inbox only, so its nudges leave the labels be.
 		select {

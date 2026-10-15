@@ -31,7 +31,11 @@ type chatListModel struct {
 	caps          backend.Capabilities
 	mentions      bool // the backend can list mentions
 	labeler       bool // the backend groups chats under labels
-	labels        []labelSection
+	// loading is set while the backend's first sync has brought no chats
+	// yet; the tree shows spin, the root's spinner frame, in their place.
+	loading bool
+	spin    string
+	labels  []labelSection
 	// labelOpen names the expanded label sections; the screen owns it, so
 	// it outlasts reloads of the list.
 	labelOpen     map[string]bool
@@ -87,6 +91,9 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 	}
 	_, m.mentions = b.(backend.MentionFetcher)
 	_, m.labeler = b.(backend.Labeler)
+	if s, ok := b.(backend.Syncer); ok {
+		m.loading = s.Syncing() && len(entries) == 0 && !archived
+	}
 	m.selected = m.before()
 	return m
 }
@@ -105,6 +112,9 @@ type listAction struct {
 }
 
 func (m chatListModel) actions() []listAction {
+	if m.loading {
+		return nil // nothing to act on until the chats arrive
+	}
 	unread := backend.ChatEntry{Title: "Unread"}
 	for _, e := range m.entries {
 		unread.Unread += e.Unread
@@ -243,7 +253,7 @@ func (m chatListModel) row(index int) int {
 	if index < before+len(m.entries) {
 		return index + 1
 	}
-	r := index + 2 + max(0, 1-len(m.entries)) // "No chats here" placeholder
+	r := index + 2 + max(0, 1-len(m.entries)) // "No chats here" or loading placeholder
 	for i, a := range m.actions() {
 		if a.section != "" && before+len(m.entries)+i <= index {
 			r++
@@ -442,7 +452,10 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 			focused, max(1, width-4)))
 		index++
 	}
-	if len(m.entries) == 0 {
+	switch {
+	case m.loading:
+		rows = append(rows, "      "+m.spin+m.st.subtle.Render(" Loading chats…"))
+	case len(m.entries) == 0:
 		rows = append(rows, m.st.subtle.Render("      No chats here"))
 	}
 	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))

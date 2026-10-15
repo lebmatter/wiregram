@@ -36,6 +36,8 @@ type MxBackend struct {
 	StoreKey string
 
 	syncToken string
+	// synced is set once the first sync response has filled the rooms.
+	synced atomic.Bool
 
 	mu          sync.Mutex
 	subscribed  string
@@ -341,6 +343,8 @@ func (mx *MxBackend) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
+func (mx *MxBackend) Syncing() bool { return !mx.synced.Load() }
+
 func (mx *MxBackend) StartSync(ctx context.Context) {
 	syncCtx, cancel := context.WithCancel(ctx)
 	mx.syncCancel = cancel
@@ -406,6 +410,9 @@ func (mx *MxBackend) runSync(ctx context.Context) error {
 		mx.processSyncResponse(ctx, &syncResp)
 		mx.syncToken = syncResp.NextBatch
 		mx.saveSyncToken()
+		if !mx.synced.Swap(true) {
+			mx.events.Publish(backend.Event{Kind: backend.EventUnread})
+		}
 	}
 	return ctx.Err()
 }
