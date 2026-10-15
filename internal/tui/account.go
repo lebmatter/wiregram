@@ -782,7 +782,14 @@ func (m loginModel) View() tea.View {
 		lines = append(lines, "")
 	}
 	if m.current != nil {
-		lines = append(lines, styleTitle.Render(textfmt.ClipLine(loginLabel(m.current.Label), inner)), "")
+		lines = append(lines, styleTitle.Render(textfmt.ClipLine(loginLabel(m.current.Label), inner)))
+		if _, help, ok := strings.Cut(m.current.Label, "\n"); ok {
+			wrapped := lipgloss.NewStyle().Width(inner).Render(strings.TrimSpace(help))
+			for _, l := range strings.Split(wrapped, "\n") {
+				lines = append(lines, m.st.subtle.Render(l))
+			}
+		}
+		lines = append(lines, "")
 		m.input.SetWidth(max(10, inner-4))
 		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
 	} else {
@@ -809,8 +816,9 @@ func (m loginModel) View() tea.View {
 }
 
 // loginLabel turns a backend prompt like "Phone (international format): " into
-// bubble text.
+// bubble text. Lines after the first are help shown under the question.
 func loginLabel(label string) string {
+	label, _, _ = strings.Cut(label, "\n")
 	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(label), ":"))
 }
 

@@ -115,7 +115,12 @@ func (b *MailBackend) Authenticate(ctx context.Context, prompt config.PromptFunc
 		b.Account.RefreshToken = token.RefreshToken
 		b.setToken(token)
 	} else {
-		pw, err := prompt("App password: ", true)
+		ask := "App password: "
+		if isGmail(b.Account.IMAPHost) {
+			ask += "\nTurn on 2-Step Verification for your Google account, then create " +
+				"an app password at https://myaccount.google.com/apppasswords"
+		}
+		pw, err := prompt(ask, true)
 		if err != nil {
 			return fmt.Errorf("read app password: %w", err)
 		}
