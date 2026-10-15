@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,15 +37,14 @@ type MxBackend struct {
 
 	syncToken string
 
-	mu           sync.Mutex
-	subscribed   string
-	typing       map[string]time.Time
-	unreads      map[string]int
-	rooms        map[string]*mxRoom
-	userCache    map[string]string
-	dmRooms      map[string]bool
-	ownReactions map[string]string // "eventID\x00emoji" → reaction event ID
-	recentEmoji  []string
+	mu          sync.Mutex
+	subscribed  string
+	typing      map[string]time.Time
+	unreads     map[string]int
+	rooms       map[string]*mxRoom
+	userCache   map[string]string
+	dmRooms     map[string]bool
+	recentEmoji []string
 
 	events backend.Bus
 
@@ -56,8 +57,21 @@ type mxRoom struct {
 	name          string
 	members       map[string]string // userID → display name
 	lastAt        time.Time
-	prevBatch     string
 	paginationEnd string
+	// invitedBy is set while the user is only invited; opening the room
+	// joins it.
+	invitedBy string
+	// reactions holds every reaction seen in the room by its event ID; the
+	// server no longer counts them for us.
+	reactions map[string]mxReaction
+	// powerLevels is the m.room.power_levels content, nil until seen.
+	powerLevels map[string]any
+	// creators outrank every power level, from room version 12 on.
+	creators map[string]bool
+}
+
+type mxReaction struct {
+	target, key, sender string
 }
 
 // Sync response types.
@@ -69,7 +83,11 @@ type mxSyncResponse struct {
 }
 
 type mxSyncRooms struct {
-	Join map[string]mxSyncJoinedRoom `json:"join"`
+	Join   map[string]mxSyncJoinedRoom `json:"join"`
+	Invite map[string]struct {
+		InviteState mxEventList `json:"invite_state"`
+	} `json:"invite"`
+	Leave map[string]json.RawMessage `json:"leave"`
 }
 
 type mxSyncJoinedRoom struct {
@@ -114,14 +132,13 @@ type mxMessagesResponse struct {
 
 func NewMXBackend(homeserver string) *MxBackend {
 	return &MxBackend{
-		Homeserver:   strings.TrimRight(homeserver, "/"),
-		typing:       make(map[string]time.Time),
-		unreads:      make(map[string]int),
-		rooms:        make(map[string]*mxRoom),
-		userCache:    make(map[string]string),
-		dmRooms:      make(map[string]bool),
-		ownReactions: make(map[string]string),
-		client:       &http.Client{Timeout: 120 * time.Second},
+		Homeserver: strings.TrimRight(homeserver, "/"),
+		typing:     make(map[string]time.Time),
+		unreads:    make(map[string]int),
+		rooms:      make(map[string]*mxRoom),
+		userCache:  make(map[string]string),
+		dmRooms:    make(map[string]bool),
+		client:     &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -386,21 +403,54 @@ func (mx *MxBackend) runSync(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("decode sync: %w", err)
 		}
-		mx.processSyncResponse(&syncResp)
+		mx.processSyncResponse(ctx, &syncResp)
 		mx.syncToken = syncResp.NextBatch
 		mx.saveSyncToken()
 	}
 	return ctx.Err()
 }
 
-func (mx *MxBackend) processSyncResponse(resp *mxSyncResponse) {
+func (mx *MxBackend) processSyncResponse(ctx context.Context, resp *mxSyncResponse) {
 	for _, ev := range resp.AccountData.Events {
 		if ev.Type == "m.direct" {
 			mx.processDirect(ev.Content)
 		}
 	}
 	for roomID, room := range resp.Rooms.Join {
-		mx.processJoinedRoom(roomID, room)
+		mx.processJoinedRoom(ctx, roomID, room)
+	}
+	for roomID, room := range resp.Rooms.Invite {
+		mx.processInvitedRoom(roomID, room.InviteState.Events)
+	}
+	mx.mu.Lock()
+	for roomID := range resp.Rooms.Leave {
+		delete(mx.rooms, roomID)
+		delete(mx.unreads, roomID)
+	}
+	mx.mu.Unlock()
+}
+
+// processInvitedRoom lists a room the user is invited to from the stripped
+// state the invite carries.
+func (mx *MxBackend) processInvitedRoom(roomID string, state []mxTimelineEvent) {
+	mx.mu.Lock()
+	room := mx.rooms[roomID]
+	if room == nil {
+		room = &mxRoom{members: make(map[string]string), lastAt: time.Now()}
+		mx.rooms[roomID] = room
+	}
+	mx.mu.Unlock()
+	for _, ev := range state {
+		mx.processStateEvent(roomID, ev)
+		if ev.Type != "m.room.member" || ev.StateKey == nil || *ev.StateKey != mx.UserID {
+			continue
+		}
+		mx.mu.Lock()
+		room.invitedBy = ev.Sender
+		if direct, _ := ev.Content["is_direct"].(bool); direct {
+			mx.dmRooms[roomID] = true
+		}
+		mx.mu.Unlock()
 	}
 }
 
@@ -421,16 +471,14 @@ func (mx *MxBackend) processDirect(content map[string]any) {
 	}
 }
 
-func (mx *MxBackend) processJoinedRoom(roomID string, joined mxSyncJoinedRoom) {
+func (mx *MxBackend) processJoinedRoom(ctx context.Context, roomID string, joined mxSyncJoinedRoom) {
 	mx.mu.Lock()
 	room := mx.rooms[roomID]
 	if room == nil {
 		room = &mxRoom{members: make(map[string]string)}
 		mx.rooms[roomID] = room
 	}
-	if joined.Timeline.PrevBatch != "" {
-		room.prevBatch = joined.Timeline.PrevBatch
-	}
+	room.invitedBy = ""
 	mx.unreads[roomID] = joined.UnreadNotifications.NotificationCount
 	subscribed := mx.subscribed
 	mx.mu.Unlock()
@@ -442,7 +490,7 @@ func (mx *MxBackend) processJoinedRoom(roomID string, joined mxSyncJoinedRoom) {
 		if ev.StateKey != nil {
 			mx.processStateEvent(roomID, ev)
 		}
-		mx.processTimelineEvent(roomID, ev, subscribed)
+		mx.processTimelineEvent(ctx, roomID, ev, subscribed)
 	}
 	for _, ev := range joined.Ephemeral.Events {
 		if ev.Type == "m.typing" {
@@ -465,6 +513,20 @@ func (mx *MxBackend) processStateEvent(roomID string, ev mxTimelineEvent) {
 		return
 	}
 	switch ev.Type {
+	case "m.room.power_levels":
+		room.powerLevels = ev.Content
+	case "m.room.create":
+		version, _ := ev.Content["room_version"].(string)
+		if v, err := strconv.Atoi(version); err != nil || v < 12 {
+			return
+		}
+		room.creators = map[string]bool{ev.Sender: true}
+		extra, _ := ev.Content["additional_creators"].([]any)
+		for _, c := range extra {
+			if id, ok := c.(string); ok {
+				room.creators[id] = true
+			}
+		}
 	case "m.room.name":
 		if name, ok := ev.Content["name"].(string); ok {
 			room.name = name
@@ -476,7 +538,9 @@ func (mx *MxBackend) processStateEvent(roomID string, ev mxTimelineEvent) {
 		userID := *ev.StateKey
 		membership, _ := ev.Content["membership"].(string)
 		displayName, _ := ev.Content["displayname"].(string)
-		if membership == "join" {
+		// Invited users count, so a DM whose other side has not joined
+		// yet still carries their name and is found again.
+		if membership == "join" || membership == "invite" {
 			room.members[userID] = displayName
 			if displayName != "" {
 				mx.userCache[userID] = displayName
@@ -487,26 +551,20 @@ func (mx *MxBackend) processStateEvent(roomID string, ev mxTimelineEvent) {
 	}
 }
 
-func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, subscribed string) {
+func (mx *MxBackend) processTimelineEvent(ctx context.Context, roomID string, ev mxTimelineEvent, subscribed string) {
 	chat := backend.ChatID{Backend: "matrix", Id: roomID}
 	switch ev.Type {
 	case "m.room.message":
-		relatesTo := mxRelatesTo(ev.Content)
-		if relatesTo != nil {
-			relType, _ := relatesTo["rel_type"].(string)
-			if relType == "m.replace" {
-				targetID, _ := relatesTo["event_id"].(string)
+		if mxRedacted(ev) {
+			return
+		}
+		if rel := mxRelatesTo(ev.Content); rel != nil {
+			if relType, _ := rel["rel_type"].(string); relType == "m.replace" {
+				targetID, _ := rel["event_id"].(string)
 				if targetID == "" {
 					return
 				}
-				msg := mx.eventToMessage(ev)
-				msg.ID = targetID
-				if newContent, ok := ev.Content["m.new_content"].(map[string]any); ok {
-					if body, ok := newContent["body"].(string); ok {
-						msg.Text = body
-					}
-				}
-				msg.EditDate = int(ev.OriginServerTS / 1000)
+				msg := mx.editedMessage(ctx, roomID, targetID, ev)
 				mx.events.Publish(backend.Event{
 					Kind: backend.EventEdit, Chat: chat, DM: mx.isDirect(roomID), Message: &msg,
 				})
@@ -518,14 +576,14 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 			mx.unreads[roomID]++
 			mx.mu.Unlock()
 		}
-		msg := mx.eventToMessage(ev)
+		msg := mx.eventToMessage(roomID, ev)
 		mx.events.Publish(backend.Event{
 			Kind: backend.EventMessage, Chat: chat, DM: mx.isDirect(roomID), Message: &msg,
 		})
 
 	case "m.room.encrypted":
 		// Never marked DM: agents cannot read encrypted content.
-		msg := mx.eventToMessage(ev)
+		msg := mx.eventToMessage(roomID, ev)
 		mx.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chat, Message: &msg})
 
 	case "m.room.redaction":
@@ -535,34 +593,143 @@ func (mx *MxBackend) processTimelineEvent(roomID string, ev mxTimelineEvent, sub
 				targetID = tid
 			}
 		}
-		if targetID != "" {
-			mx.events.Publish(backend.Event{
-				Kind: backend.EventDelete, Chat: chat, Deleted: []string{targetID},
-			})
+		if targetID == "" {
+			return
 		}
+		if msgID, ok := mx.removeReaction(roomID, targetID); ok {
+			mx.events.Publish(backend.Event{
+				Kind: backend.EventReaction, Chat: chat,
+				Reaction: &backend.GenericReactionUpdate{
+					MessageID: msgID, Reactions: mx.reactionsFor(roomID, msgID),
+				},
+			})
+			return
+		}
+		mx.events.Publish(backend.Event{
+			Kind: backend.EventDelete, Chat: chat, Deleted: []string{targetID},
+		})
 
 	case "m.reaction":
-		relatesTo := mxRelatesTo(ev.Content)
-		if relatesTo == nil {
+		targetID, ok := mx.addReaction(roomID, ev)
+		if !ok {
 			return
 		}
-		targetID, _ := relatesTo["event_id"].(string)
-		emoji, _ := relatesTo["key"].(string)
-		if targetID == "" || emoji == "" {
-			return
-		}
-		if ev.Sender == mx.UserID {
-			mx.mu.Lock()
-			mx.ownReactions[targetID+"\x00"+emoji] = ev.EventID
-			mx.mu.Unlock()
-		}
-		// Matrix has no reaction aggregation here, so this only tells the UI
-		// which message changed.
 		mx.events.Publish(backend.Event{
 			Kind: backend.EventReaction, Chat: chat,
-			Reaction: &backend.GenericReactionUpdate{MessageID: targetID},
+			Reaction: &backend.GenericReactionUpdate{
+				MessageID: targetID, Reactions: mx.reactionsFor(roomID, targetID),
+			},
 		})
 	}
+}
+
+// editedMessage applies a live edit to its original, fetched so the message
+// keeps its time, reply and reactions. Without the original, the edit stands
+// in for it.
+func (mx *MxBackend) editedMessage(ctx context.Context, roomID, targetID string, edit mxTimelineEvent) backend.Message {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var orig mxTimelineEvent
+	path := fmt.Sprintf("/rooms/%s/event/%s", url.PathEscape(roomID), url.PathEscape(targetID))
+	if err := mx.apiJSON(ctx, "GET", path, nil, &orig); err != nil {
+		orig = mxTimelineEvent{EventID: targetID, Type: edit.Type, Sender: edit.Sender,
+			OriginServerTS: edit.OriginServerTS, Content: map[string]any{}}
+	}
+	if orig.Unsigned == nil {
+		orig.Unsigned = map[string]any{}
+	}
+	orig.Unsigned["m.relations"] = map[string]any{"m.replace": map[string]any{
+		"sender": edit.Sender, "origin_server_ts": float64(edit.OriginServerTS),
+		"content": edit.Content,
+	}}
+	return mx.eventToMessage(roomID, orig)
+}
+
+// addReaction records an m.reaction and returns the message it is on.
+func (mx *MxBackend) addReaction(roomID string, ev mxTimelineEvent) (string, bool) {
+	rel := mxRelatesTo(ev.Content)
+	if rel == nil {
+		return "", false
+	}
+	targetID, _ := rel["event_id"].(string)
+	key, _ := rel["key"].(string)
+	if targetID == "" || key == "" || ev.EventID == "" {
+		return "", false
+	}
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	room := mx.rooms[roomID]
+	if room == nil {
+		return "", false
+	}
+	if room.reactions == nil {
+		room.reactions = make(map[string]mxReaction)
+	}
+	room.reactions[ev.EventID] = mxReaction{target: targetID, key: key, sender: ev.Sender}
+	return targetID, true
+}
+
+// removeReaction forgets a redacted reaction and returns its message.
+func (mx *MxBackend) removeReaction(roomID, reactionID string) (string, bool) {
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	room := mx.rooms[roomID]
+	if room == nil {
+		return "", false
+	}
+	r, ok := room.reactions[reactionID]
+	if !ok {
+		return "", false
+	}
+	delete(room.reactions, reactionID)
+	return r.target, true
+}
+
+// reactionsFor counts the reactions seen on a message, by emoji.
+func (mx *MxBackend) reactionsFor(roomID, msgID string) []backend.MessageReaction {
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	room := mx.rooms[roomID]
+	if room == nil {
+		return nil
+	}
+	byKey := map[string]*backend.MessageReaction{}
+	var out []backend.MessageReaction
+	var keys []string
+	for _, r := range room.reactions {
+		if r.target != msgID {
+			continue
+		}
+		mr := byKey[r.key]
+		if mr == nil {
+			mr = &backend.MessageReaction{Emoji: r.key}
+			byKey[r.key] = mr
+			keys = append(keys, r.key)
+		}
+		mr.Count++
+		if r.sender == mx.UserID {
+			mr.Chosen = true
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out = append(out, *byKey[k])
+	}
+	return out
+}
+
+// ownReaction returns the event ID of the user's reaction key on a message.
+func (mx *MxBackend) ownReaction(roomID, msgID, key string) string {
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	if room := mx.rooms[roomID]; room != nil {
+		for id, r := range room.reactions {
+			if r.target == msgID && r.key == key && r.sender == mx.UserID {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 func (mx *MxBackend) processTypingEvent(roomID string, ev mxTimelineEvent, subscribed string) {
@@ -711,17 +878,11 @@ func (mx *MxBackend) roomEntry(id string, room *mxRoom) backend.ChatEntry {
 
 func (mx *MxBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backend.Message, error) {
 	roomID := ch.ID.Id
-	mx.mu.Lock()
-	room := mx.rooms[roomID]
-	from := ""
-	if room != nil {
-		from = room.prevBatch
+	if err := mx.acceptInvite(ctx, roomID); err != nil {
+		return nil, err
 	}
-	mx.mu.Unlock()
-	if from == "" {
-		from = mx.syncToken
-	}
-	msgs, end, err := mx.fetchMessages(ctx, roomID, from, 25)
+	// Without a from token the server pages back from the newest event.
+	msgs, end, err := mx.fetchMessages(ctx, roomID, "", 25)
 	if err != nil {
 		return nil, err
 	}
@@ -731,6 +892,60 @@ func (mx *MxBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backe
 	}
 	mx.mu.Unlock()
 	return msgs, nil
+}
+
+// acceptInvite joins a room the user is only invited to, since opening it
+// accepts the invite, and files a DM invite under m.direct as other clients do.
+func (mx *MxBackend) acceptInvite(ctx context.Context, roomID string) error {
+	mx.mu.Lock()
+	inviter, direct := "", mx.dmRooms[roomID]
+	if room := mx.rooms[roomID]; room != nil {
+		inviter = room.invitedBy
+	}
+	mx.mu.Unlock()
+	if inviter == "" {
+		return nil
+	}
+	if err := mx.apiJSON(ctx, "POST", "/join/"+url.PathEscape(roomID), map[string]any{}, nil); err != nil {
+		return fmt.Errorf("accept invite: %w", err)
+	}
+	mx.mu.Lock()
+	if room := mx.rooms[roomID]; room != nil {
+		room.invitedBy = ""
+	}
+	mx.mu.Unlock()
+	if direct {
+		return mx.markDirect(ctx, inviter, roomID)
+	}
+	return nil
+}
+
+// markDirect adds a DM to the user's m.direct account data, which every
+// client, wiregram included after a restart, reads to tell DMs from groups.
+func (mx *MxBackend) markDirect(ctx context.Context, userID, roomID string) error {
+	path := "/user/" + url.PathEscape(mx.UserID) + "/account_data/m.direct"
+	direct := map[string][]string{}
+	resp, err := mx.api(ctx, "GET", path, nil)
+	if err != nil {
+		return fmt.Errorf("read direct chats: %w", err)
+	}
+	if resp.StatusCode == http.StatusOK {
+		err = json.NewDecoder(resp.Body).Decode(&direct)
+	} else if resp.StatusCode != http.StatusNotFound {
+		err = fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read direct chats: %w", err)
+	}
+	if slices.Contains(direct[userID], roomID) {
+		return nil
+	}
+	direct[userID] = append(direct[userID], roomID)
+	if err := mx.apiJSON(ctx, "PUT", path, direct, nil); err != nil {
+		return fmt.Errorf("save direct chats: %w", err)
+	}
+	return nil
 }
 
 // UnreadMessages pages back from the latest sync. Reactions and state events
@@ -775,8 +990,8 @@ func (mx *MxBackend) Messages(ctx context.Context, ch backend.ChatEntry, ids []s
 			// A redacted or invisible event must not hide the others.
 			continue
 		}
-		if ev.Type == "m.room.message" || ev.Type == "m.room.encrypted" {
-			msgs = append(msgs, mx.eventToMessage(ev))
+		if (ev.Type == "m.room.message" || ev.Type == "m.room.encrypted") && !mxRedacted(ev) {
+			msgs = append(msgs, mx.eventToMessage(ch.ID.Id, ev))
 		}
 	}
 	return msgs, nil
@@ -796,12 +1011,17 @@ func (mx *MxBackend) fetchMessages(ctx context.Context, roomID, from string, lim
 			mx.processStateEvent(roomID, ev)
 		}
 	}
+	for _, ev := range resp.Chunk {
+		if ev.Type == "m.reaction" {
+			mx.addReaction(roomID, ev)
+		}
+	}
 	// Chunk comes newest-first; reverse for chronological order.
 	msgs := make([]backend.Message, 0, len(resp.Chunk))
 	for i := len(resp.Chunk) - 1; i >= 0; i-- {
 		ev := resp.Chunk[i]
-		if ev.Type == "m.room.message" || ev.Type == "m.room.encrypted" {
-			// Skip edit events in history; the server should bundle them.
+		if (ev.Type == "m.room.message" || ev.Type == "m.room.encrypted") && !mxRedacted(ev) {
+			// Skip edit events; the server bundles the newest with its original.
 			if ev.Type == "m.room.message" {
 				if rel := mxRelatesTo(ev.Content); rel != nil {
 					if rt, _ := rel["rel_type"].(string); rt == "m.replace" {
@@ -809,17 +1029,24 @@ func (mx *MxBackend) fetchMessages(ctx context.Context, roomID, from string, lim
 					}
 				}
 			}
-			msgs = append(msgs, mx.eventToMessage(ev))
+			msgs = append(msgs, mx.eventToMessage(roomID, ev))
 		}
 	}
 	return msgs, resp.End, nil
 }
 
-func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
+func (mx *MxBackend) eventToMessage(roomID string, ev mxTimelineEvent) backend.Message {
 	outgoing := ev.Sender == mx.UserID
 	sender := ""
 	if !outgoing {
 		sender = mx.displayName(ev.Sender)
+	}
+
+	content, editDate := ev.Content, 0
+	if ev.Type == "m.room.message" {
+		if c, ts, ok := mxReplacement(ev); ok {
+			content, editDate = c, ts
+		}
 	}
 
 	text := ""
@@ -830,8 +1057,8 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 	if ev.Type == "m.room.encrypted" {
 		mediaLabel = "[encrypted message]"
 	} else {
-		msgtype, _ := ev.Content["msgtype"].(string)
-		body, _ := ev.Content["body"].(string)
+		msgtype, _ := content["msgtype"].(string)
+		body, _ := content["body"].(string)
 
 		switch msgtype {
 		case "m.text", "m.notice":
@@ -840,30 +1067,24 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 		case "m.emote":
 			text = "* " + body
 		case "m.image":
-			mediaLabel = mxMediaLabel("photo", ev.Content)
-			image = mxInlineImage(ev.Content)
+			mediaLabel = mxMediaLabel("photo", content)
+			image = mxInlineImage(content)
 		case "m.video":
-			mediaLabel = mxMediaLabel("video", ev.Content)
+			mediaLabel = mxMediaLabel("video", content)
 		case "m.audio":
-			mediaLabel = mxMediaLabel("audio", ev.Content)
+			mediaLabel = mxMediaLabel("audio", content)
 		case "m.file":
-			mediaLabel = mxMediaLabel("file", ev.Content)
+			mediaLabel = mxMediaLabel("file", content)
 		default:
 			text = body
 		}
-	}
-
-	var editDate int
-	if ev.Type == "m.room.message" {
-		if rel := mxRelatesTo(ev.Content); rel != nil {
-			if rt, _ := rel["rel_type"].(string); rt == "m.replace" {
-				editDate = int(ev.OriginServerTS / 1000)
-			}
+		if mediaLabel != "" {
+			text = mxCaption(content)
 		}
 	}
 
 	replyToID := ""
-	if rel := mxRelatesTo(ev.Content); rel != nil {
+	if rel := mxRelatesTo(content); rel != nil {
 		if inReplyTo, ok := rel["m.in_reply_to"].(map[string]any); ok {
 			if eid, ok := inReplyTo["event_id"].(string); ok {
 				replyToID = eid
@@ -878,8 +1099,8 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 	}
 	// A formatted message's body is usually the Markdown its sender typed.
 	source, spans := "", []backend.Span(nil)
-	format, _ := ev.Content["format"].(string)
-	msgtype, _ := ev.Content["msgtype"].(string)
+	format, _ := content["format"].(string)
+	msgtype, _ := content["msgtype"].(string)
 	if format == "org.matrix.custom.html" && (msgtype == "m.text" || msgtype == "m.notice") {
 		source = text
 		text, spans = backend.Markdown(text)
@@ -897,26 +1118,28 @@ func (mx *MxBackend) eventToMessage(ev mxTimelineEvent) backend.Message {
 		MediaLabel: mediaLabel,
 		Image:      image,
 		Multiline:  multiline,
+		Reactions:  mx.reactionsFor(roomID, ev.EventID),
 		Spans:      spans,
 		Source:     source,
-		Mentioned:  !outgoing && mx.mentionsMe(ev.Content, replyToID != ""),
+		Mentioned:  !outgoing && mx.mentionsMe(roomID, ev.Sender, ev.Content, replyToID != ""),
 		Raw:        ev,
 	}
 }
 
 // mentionsMe reads m.mentions; clients that predate it are matched on the
 // user ID or @room in the body. A reply lists its original's sender in
-// m.mentions, so there the user must also be named in the text.
-func (mx *MxBackend) mentionsMe(content map[string]any, reply bool) bool {
+// m.mentions, so there the user must also be named in the text. @room counts
+// only from senders allowed to notify the room, as the server's push rules say.
+func (mx *MxBackend) mentionsMe(roomID, sender string, content map[string]any, reply bool) bool {
 	body, _ := content["body"].(string)
 	formatted, _ := content["formatted_body"].(string)
 	named := strings.Contains(body, mx.UserID) || strings.Contains(formatted, mx.UserID) ||
 		strings.Contains(formatted, url.QueryEscape(mx.UserID))
 	mentions, ok := content["m.mentions"].(map[string]any)
 	if !ok {
-		return named || strings.Contains(body, "@room")
+		return named || strings.Contains(body, "@room") && mx.canNotifyRoom(roomID, sender)
 	}
-	if room, _ := mentions["room"].(bool); room {
+	if room, _ := mentions["room"].(bool); room && mx.canNotifyRoom(roomID, sender) {
 		return true
 	}
 	ids, _ := mentions["user_ids"].([]any)
@@ -926,6 +1149,31 @@ func (mx *MxBackend) mentionsMe(content map[string]any, reply bool) bool {
 		}
 	}
 	return false
+}
+
+// canNotifyRoom reports whether sender's power level reaches the room's
+// notifications.room level (50 by default). Unknown levels allow it.
+func (mx *MxBackend) canNotifyRoom(roomID, sender string) bool {
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	room := mx.rooms[roomID]
+	if room == nil || room.powerLevels == nil || room.creators[sender] {
+		return true
+	}
+	pl := room.powerLevels
+	need := 50.0
+	if n, ok := pl["notifications"].(map[string]any); ok {
+		if v, ok := n["room"].(float64); ok {
+			need = v
+		}
+	}
+	have, _ := pl["users_default"].(float64)
+	if users, ok := pl["users"].(map[string]any); ok {
+		if v, ok := users[sender].(float64); ok {
+			have = v
+		}
+	}
+	return have >= need
 }
 
 // mxInlineImage reports whether an m.image can be fetched unencrypted and is
@@ -939,10 +1187,63 @@ func mxInlineImage(content map[string]any) bool {
 	return size <= backend.MaxInlineImage
 }
 
+// mxRedacted reports an event whose content the server has removed.
+func mxRedacted(ev mxTimelineEvent) bool {
+	_, ok := ev.Unsigned["redacted_because"]
+	return ok
+}
+
+// mxReplacement returns the newest edit's content and time, which the server
+// bundles with the original. An edit by anyone but the sender is ignored.
+func mxReplacement(ev mxTimelineEvent) (map[string]any, int, bool) {
+	rels, _ := ev.Unsigned["m.relations"].(map[string]any)
+	repl, _ := rels["m.replace"].(map[string]any)
+	if repl == nil {
+		return nil, 0, false
+	}
+	if sender, _ := repl["sender"].(string); sender != "" && sender != ev.Sender {
+		return nil, 0, false
+	}
+	edit, _ := repl["content"].(map[string]any)
+	newContent, _ := edit["m.new_content"].(map[string]any)
+	if newContent == nil {
+		return nil, 0, false
+	}
+	merged := make(map[string]any, len(newContent)+1)
+	for k, v := range newContent {
+		merged[k] = v
+	}
+	// The reply link stays on the original.
+	if rel, ok := ev.Content["m.relates_to"]; ok {
+		merged["m.relates_to"] = rel
+	}
+	ts, _ := repl["origin_server_ts"].(float64)
+	return merged, int(ts / 1000), true
+}
+
+// mxFilename is a media event's file name. A media event with a filename
+// apart from its body uses the body as caption.
+func mxFilename(content map[string]any) string {
+	if name, _ := content["filename"].(string); name != "" {
+		return name
+	}
+	body, _ := content["body"].(string)
+	return body
+}
+
+func mxCaption(content map[string]any) string {
+	name, _ := content["filename"].(string)
+	body, _ := content["body"].(string)
+	if name != "" && body != name {
+		return body
+	}
+	return ""
+}
+
 func mxMediaLabel(kind string, content map[string]any) string {
 	info, _ := content["info"].(map[string]any)
 	if info == nil {
-		body, _ := content["body"].(string)
+		body := mxFilename(content)
 		if body != "" {
 			return fmt.Sprintf("[%s] %s", kind, body)
 		}
@@ -954,7 +1255,7 @@ func mxMediaLabel(kind string, content map[string]any) string {
 	if kind == "photo" && w > 0 && h > 0 {
 		return fmt.Sprintf("[%s] %dx%d, %s", kind, int(w), int(h), textfmt.FormatBytes(int64(size)))
 	}
-	body, _ := content["body"].(string)
+	body := mxFilename(content)
 	if body != "" {
 		return fmt.Sprintf("[%s] %s, %s", kind, body, textfmt.FormatBytes(int64(size)))
 	}
@@ -1151,68 +1452,33 @@ func (mx *MxBackend) DeleteChat(ctx context.Context, ch backend.ChatEntry, forEv
 // Reactions.
 
 func (mx *MxBackend) React(ctx context.Context, ch backend.ChatEntry, msg backend.Message, emoji string) ([]backend.MessageReaction, error) {
-	key := msg.ID + "\x00" + emoji
-	mx.mu.Lock()
-	existingID := mx.ownReactions[key]
-	mx.mu.Unlock()
-
-	if existingID != "" {
-		// Remove reaction by redacting the reaction event.
+	roomID := ch.ID.Id
+	if existingID := mx.ownReaction(roomID, msg.ID, emoji); existingID != "" {
 		txnID := mx.nextTxnID()
-		path := fmt.Sprintf("/rooms/%s/redact/%s/%s", url.PathEscape(ch.ID.Id), url.PathEscape(existingID), url.PathEscape(txnID))
+		path := fmt.Sprintf("/rooms/%s/redact/%s/%s", url.PathEscape(roomID), url.PathEscape(existingID), url.PathEscape(txnID))
 		if err := mx.apiJSON(ctx, "PUT", path, map[string]string{}, nil); err != nil {
 			return nil, fmt.Errorf("remove reaction: %w", err)
 		}
-		mx.mu.Lock()
-		delete(mx.ownReactions, key)
-		mx.mu.Unlock()
-	} else {
-		// Add reaction.
-		txnID := mx.nextTxnID()
-		content := map[string]any{
-			"m.relates_to": map[string]any{
-				"rel_type": "m.annotation",
-				"event_id": msg.ID,
-				"key":      emoji,
-			},
-		}
-		path := fmt.Sprintf("/rooms/%s/send/m.reaction/%s", url.PathEscape(ch.ID.Id), url.PathEscape(txnID))
-		var resp struct {
-			EventID string `json:"event_id"`
-		}
-		if err := mx.apiJSON(ctx, "PUT", path, content, &resp); err != nil {
-			return nil, fmt.Errorf("add reaction: %w", err)
-		}
-		mx.mu.Lock()
-		mx.ownReactions[key] = resp.EventID
-		mx.mu.Unlock()
+		mx.removeReaction(roomID, existingID)
+		return mx.reactionsFor(roomID, msg.ID), nil
 	}
-
-	// Return updated reaction list from existing message reactions, toggled.
-	updated := make([]backend.MessageReaction, 0, len(msg.Reactions))
-	found := false
-	for _, r := range msg.Reactions {
-		nr := r
-		if r.Emoji == emoji {
-			found = true
-			if existingID != "" {
-				nr.Count--
-				nr.Chosen = false
-			} else {
-				nr.Count++
-				nr.Chosen = true
-			}
-			if nr.Count > 0 {
-				updated = append(updated, nr)
-			}
-		} else {
-			updated = append(updated, nr)
-		}
+	txnID := mx.nextTxnID()
+	content := map[string]any{
+		"m.relates_to": map[string]any{
+			"rel_type": "m.annotation",
+			"event_id": msg.ID,
+			"key":      emoji,
+		},
 	}
-	if !found && existingID == "" {
-		updated = append(updated, backend.MessageReaction{Emoji: emoji, Count: 1, Chosen: true})
+	path := fmt.Sprintf("/rooms/%s/send/m.reaction/%s", url.PathEscape(roomID), url.PathEscape(txnID))
+	var resp struct {
+		EventID string `json:"event_id"`
 	}
-	return updated, nil
+	if err := mx.apiJSON(ctx, "PUT", path, content, &resp); err != nil {
+		return nil, fmt.Errorf("add reaction: %w", err)
+	}
+	mx.addReaction(roomID, mxTimelineEvent{EventID: resp.EventID, Sender: mx.UserID, Content: content})
+	return mx.reactionsFor(roomID, msg.ID), nil
 }
 
 // Read receipts.
@@ -1273,7 +1539,9 @@ func (mx *MxBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 	}
 	messages := make([]backend.Message, 0, len(resp.SearchCategories.RoomEvents.Results))
 	for _, r := range resp.SearchCategories.RoomEvents.Results {
-		messages = append(messages, mx.eventToMessage(r.Result))
+		if !mxRedacted(r.Result) {
+			messages = append(messages, mx.eventToMessage(ch.ID.Id, r.Result))
+		}
 	}
 	return messages, nil
 }
@@ -1307,7 +1575,7 @@ func (mx *MxBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention
 		if entry.IsDM {
 			continue
 		}
-		msg := mx.eventToMessage(n.Event)
+		msg := mx.eventToMessage(n.RoomID, n.Event)
 		// Without m.mentions the server matched the display name, which
 		// mentionsMe cannot; with it, a plain reply to the user is no mention.
 		if _, ok := n.Event.Content["m.mentions"]; ok && !msg.Mentioned {
@@ -1391,7 +1659,7 @@ func (mx *MxBackend) MediaExec(ctx context.Context, msg backend.Message, player 
 	if mxcURL == "" {
 		return nil, nil, fmt.Errorf("this message has no playable media")
 	}
-	body, _ := ev.Content["body"].(string)
+	body := mxFilename(ev.Content)
 	if body == "" {
 		body = "media"
 	}
@@ -1419,8 +1687,8 @@ func (mx *MxBackend) MediaSaveable(msg backend.Message) (string, bool) {
 	if mxcURL == "" {
 		return "", false
 	}
-	body, _ := ev.Content["body"].(string)
-	if body == "" {
+	body := filepath.Base(mxFilename(ev.Content))
+	if body == "" || body == "." || body == "/" {
 		body = "attachment"
 	}
 	return body, true
@@ -1435,11 +1703,8 @@ func (mx *MxBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 	if mxcURL == "" {
 		return fmt.Errorf("this message has no downloadable attachment")
 	}
-	body, _ := ev.Content["body"].(string)
-	if body == "" {
-		body = "attachment"
-	}
-	return mx.downloadMXC(ctx, mxcURL, filepath.Join(destDir, body))
+	name, _ := mx.MediaSaveable(msg)
+	return mx.downloadMXC(ctx, mxcURL, filepath.Join(destDir, name))
 }
 
 func (mx *MxBackend) downloadMXC(ctx context.Context, mxcURL, dest string) error {
@@ -1472,22 +1737,31 @@ func (mx *MxBackend) openMXC(ctx context.Context, mxcURL string) (io.ReadCloser,
 	}
 	// Escape both parts: mxc URLs come from remote events, and a raw "../"
 	// would otherwise reach other homeserver endpoints with our token.
-	downloadURL := mx.Homeserver + "/_matrix/media/v3/download/" +
-		url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1])
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create download request: %w", err)
+	media := url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1])
+	// Current servers serve media only on the authenticated path; older ones
+	// only on the legacy one.
+	paths := []string{"/_matrix/client/v1/media/download/", "/_matrix/media/v3/download/"}
+	for _, path := range paths {
+		req, err := http.NewRequestWithContext(ctx, "GET", mx.Homeserver+path+media, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create download request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+mx.AccessToken)
+		resp, err := mx.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("download: %w", err)
+		}
+		if resp.StatusCode == http.StatusNotFound && path == paths[0] {
+			resp.Body.Close()
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("download: HTTP %d", resp.StatusCode)
+		}
+		return resp.Body, nil
 	}
-	req.Header.Set("Authorization", "Bearer "+mx.AccessToken)
-	resp, err := mx.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("download: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		resp.Body.Close()
-		return nil, fmt.Errorf("download: HTTP %d", resp.StatusCode)
-	}
-	return resp.Body, nil
+	return nil, fmt.Errorf("download: HTTP %d", http.StatusNotFound)
 }
 
 // LinkPreview asks the homeserver to summarise link; wiregram never fetches
@@ -1655,22 +1929,27 @@ func (mx *MxBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandid
 }
 
 func (mx *MxBackend) openDM(ctx context.Context, userID string) (backend.ChatEntry, error) {
-	// Check if we already have a DM room with this user.
+	// Reuse the most recent DM room with this user.
+	found := ""
+	var foundAt time.Time
 	mx.mu.Lock()
 	for roomID, room := range mx.rooms {
 		if !mx.dmRooms[roomID] {
 			continue
 		}
-		if _, ok := room.members[userID]; ok && len(room.members) <= 2 {
-			mx.mu.Unlock()
-			return backend.ChatEntry{
-				ID:    backend.ChatID{Backend: "matrix", Id: roomID},
-				Title: mx.displayName(userID),
-				IsDM:  true,
-			}, nil
+		if _, ok := room.members[userID]; ok && len(room.members) <= 2 &&
+			(found == "" || room.lastAt.After(foundAt)) {
+			found, foundAt = roomID, room.lastAt
 		}
 	}
 	mx.mu.Unlock()
+	if found != "" {
+		return backend.ChatEntry{
+			ID:    backend.ChatID{Backend: "matrix", Id: found},
+			Title: mx.displayName(userID),
+			IsDM:  true,
+		}, nil
+	}
 
 	var resp struct {
 		RoomID string `json:"room_id"`
@@ -1683,16 +1962,20 @@ func (mx *MxBackend) openDM(ctx context.Context, userID string) (backend.ChatEnt
 	if err := mx.apiJSON(ctx, "POST", "/createRoom", body, &resp); err != nil {
 		return backend.ChatEntry{}, fmt.Errorf("create DM with %s: %w", userID, err)
 	}
+	name := mx.displayName(userID)
 	mx.mu.Lock()
 	mx.dmRooms[resp.RoomID] = true
 	mx.rooms[resp.RoomID] = &mxRoom{
-		members: map[string]string{mx.UserID: "", userID: mx.displayName(userID)},
+		members: map[string]string{mx.UserID: "", userID: name},
 		lastAt:  time.Now(),
 	}
 	mx.mu.Unlock()
+	if err := mx.markDirect(ctx, userID, resp.RoomID); err != nil {
+		return backend.ChatEntry{}, err
+	}
 	return backend.ChatEntry{
 		ID:    backend.ChatID{Backend: "matrix", Id: resp.RoomID},
-		Title: mx.displayName(userID),
+		Title: name,
 		IsDM:  true,
 	}, nil
 }

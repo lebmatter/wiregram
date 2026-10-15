@@ -19,3 +19,6 @@ Wiregram signs in with a password; single sign-on is not supported.
 - Mentions insert the member's Matrix ID and are sent as proper Matrix mentions.
 - The Mentions row lists recent highlight notifications from the homeserver.
 - The sync token is kept in `wiregram.db`, so restarts pick up where they left off.
+- Rooms and DMs you are invited to appear in the chat list; opening one accepts the
+  invite.
+- `@room` counts as a mention only when its sender may notify the room, as on the server.
