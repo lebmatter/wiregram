@@ -58,7 +58,7 @@ wiregram
 ## Creating a bot
 
 Each expanded account in the chat sidebar (except email) ends with a **── Bots** section
-under Unread, Mentions, Archived chats and Search…: one **NAME @handle ✦** row per bot,
+under Unread, Mentions (where the network has them), Archived chats (Telegram only) and Search…: one **NAME @handle ✦** row per bot,
 then **New bot…**. Without a provider, an alert over the screen asks you to add one in
 Settings → AI providers first (any key or click closes it); otherwise a
 short scripted wizard opens. Every step is a fixed choice or a typed value;

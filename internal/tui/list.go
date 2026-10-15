@@ -92,12 +92,14 @@ func (m chatListModel) actions() []listAction {
 		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Mentions"},
 			msg: chatListMentions{}})
 	}
-	archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}
-	if m.archived {
-		archive = backend.ChatEntry{Title: "Back to chats"}
+	if m.caps.Archive {
+		archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}
+		if m.archived {
+			archive = backend.ChatEntry{Title: "Back to chats"}
+		}
+		acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}})
 	}
-	acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}},
-		listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
+	acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
 	if agentsAllowed(m.mgr, m.active) {
 		for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
 			acts = append(acts, listAction{

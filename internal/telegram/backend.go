@@ -262,7 +262,7 @@ func (tb *TelegramBackend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
 		Forward: true, DeleteForMe: true, OutboxReceipt: true,
 		ViewOnce: true, Reactions: true, Edit: true, Pin: true,
-		Upload: true, Search: true, Typing: true, DeleteChat: true,
+		Upload: true, Search: true, Typing: true, DeleteChat: true, Archive: true,
 	}
 }
 

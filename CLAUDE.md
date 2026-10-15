@@ -95,7 +95,7 @@ These are project constraints, not suggestions:
   shortcut list lives only in `wiregram -h` (`usageText`).
 - The sidebar is an account tree (`internal/tui/list.go`): every
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
-  has a bot), the active one expanded to its chats, archive, search and,
+  has a bot), the active one expanded to its chats, archive (Telegram only), search and,
   except on email, a `── Bots` section: a `NAME @handle` row per bot, then `New bot…`. Enter on
   another account switches to it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
