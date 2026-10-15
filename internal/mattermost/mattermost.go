@@ -1540,11 +1540,17 @@ func (mb *MmBackend) StartWebSocket(ctx context.Context) {
 
 	go func() {
 		delay := time.Second
-		for wsCtx.Err() == nil {
-			if err := mb.runWebSocket(wsCtx); err != nil {
+		for reconnect := false; wsCtx.Err() == nil; reconnect = true {
+			start := time.Now()
+			if err := mb.runWebSocket(wsCtx, reconnect); err != nil {
 				if wsCtx.Err() != nil {
 					return
 				}
+			}
+			// Back off from a server that keeps dropping us, not from one
+			// that stayed up and then went away once.
+			if time.Since(start) > time.Minute {
+				delay = time.Second
 			}
 			select {
 			case <-wsCtx.Done():
@@ -1556,7 +1562,18 @@ func (mb *MmBackend) StartWebSocket(ctx context.Context) {
 	}()
 }
 
-func (mb *MmBackend) runWebSocket(ctx context.Context) error {
+// wsPingEvery is how often the websocket is pinged; a ping unanswered for
+// wsPingTimeout drops it, so a connection lost while asleep is noticed.
+const (
+	wsPingEvery   = 30 * time.Second
+	wsPingTimeout = 15 * time.Second
+)
+
+// runWebSocket reads events until the connection drops. reconnect is set
+// after the first connection, whose gap may have missed posts.
+func (mb *MmBackend) runWebSocket(ctx context.Context, reconnect bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	wsURL := strings.Replace(mb.ServerURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL += "/api/v4/websocket"
@@ -1580,6 +1597,29 @@ func (mb *MmBackend) runWebSocket(ctx context.Context) error {
 	if err := conn.Write(ctx, websocket.MessageText, authData); err != nil {
 		return fmt.Errorf("websocket auth: %w", err)
 	}
+	if reconnect {
+		// Posts sent while disconnected never arrive as events, so have the
+		// chat list and unread counts reload.
+		mb.events.Publish(backend.Event{Kind: backend.EventUnread})
+	}
+	go func() {
+		ticker := time.NewTicker(wsPingEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			pctx, pcancel := context.WithTimeout(ctx, wsPingTimeout)
+			err := conn.Ping(pctx)
+			pcancel()
+			if err != nil {
+				cancel() // ends the Read below, and with it the connection
+				return
+			}
+		}
+	}()
 
 	for {
 		_, data, err := conn.Read(ctx)

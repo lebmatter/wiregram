@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -34,6 +35,9 @@ type MxBackend struct {
 	// Store and StoreKey persist the sync token; a nil Store keeps it in memory.
 	Store    *store.DB
 	StoreKey string
+	// OnLoggedOut is told when the server no longer accepts the access token,
+	// after which the sync stops.
+	OnLoggedOut func(error)
 
 	syncToken string // guarded by mu; runSync keeps its own copy
 	// synced is set once the first sync response has filled the rooms.
@@ -351,10 +355,20 @@ func (mx *MxBackend) StartSync(ctx context.Context) {
 	go func() {
 		delay := time.Second
 		for syncCtx.Err() == nil {
-			if err := mx.runSync(syncCtx); err != nil {
-				if syncCtx.Err() != nil {
-					return
+			start := time.Now()
+			err := mx.runSync(syncCtx)
+			if syncCtx.Err() != nil {
+				return
+			}
+			if errors.Is(err, errLoggedOut) {
+				// Retrying cannot help; the account must sign in again.
+				if mx.OnLoggedOut != nil {
+					mx.OnLoggedOut(err)
 				}
+				return
+			}
+			if time.Since(start) > time.Minute {
+				delay = time.Second // it synced for a while before failing
 			}
 			select {
 			case <-syncCtx.Done():
@@ -365,6 +379,9 @@ func (mx *MxBackend) StartSync(ctx context.Context) {
 		}
 	}()
 }
+
+// errLoggedOut is the sync's error once the server rejects the access token.
+var errLoggedOut = errors.New("signed out by the server; sign in again")
 
 func (mx *MxBackend) runSync(ctx context.Context) error {
 	token := mx.loadSyncToken()
@@ -399,6 +416,18 @@ func (mx *MxBackend) runSync(ctx context.Context) error {
 		if resp.StatusCode >= 400 {
 			data, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			resp.Body.Close()
+			var mxErr struct {
+				ErrCode string `json:"errcode"`
+			}
+			json.Unmarshal(data, &mxErr)
+			switch {
+			case resp.StatusCode == http.StatusUnauthorized || mxErr.ErrCode == "M_UNKNOWN_TOKEN":
+				return errLoggedOut
+			case mxErr.ErrCode == "M_UNKNOWN_POS" && token != "":
+				// The server forgot our place; start over from a fresh sync.
+				token = ""
+				continue
+			}
 			return fmt.Errorf("sync: HTTP %d: %s", resp.StatusCode, string(data))
 		}
 		var syncResp mxSyncResponse

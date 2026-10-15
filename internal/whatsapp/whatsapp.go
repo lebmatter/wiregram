@@ -53,6 +53,8 @@ type WaBackend struct {
 	events      backend.Bus
 	// PairDeadline is told when the pairing socket will close.
 	PairDeadline func(time.Time)
+	// OnLoggedOut is told when the phone unlinks this device.
+	OnLoggedOut func(error)
 	// syncing holds from connecting until the chats first arrive: the history
 	// sync after pairing, or the missed events after reconnecting.
 	syncing atomic.Bool
@@ -286,6 +288,9 @@ func (wa *WaBackend) handleEvent(rawEvt any) {
 		wa.mu.Lock()
 		wa.chatCache = nil
 		wa.mu.Unlock()
+		if wa.OnLoggedOut != nil {
+			wa.OnLoggedOut(fmt.Errorf("this device was unlinked from WhatsApp; link it again"))
+		}
 	}
 }
 

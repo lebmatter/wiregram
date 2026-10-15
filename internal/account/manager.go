@@ -755,13 +755,35 @@ func (m *AccountManager) startMatrix(parent context.Context, a *Account, prompt 
 				a.set(m, func(s *AccountState) { s.Notice = textfmt.CleanError(err) })
 			}
 		}
+		loggedOut := make(chan error, 1)
+		mb.OnLoggedOut = func(err error) {
+			select {
+			case loggedOut <- err:
+			default:
+			}
+		}
 		mb.StartSync(ctx)
 		a.set(m, func(s *AccountState) {
 			s.Backend, s.Ctx, s.Status, s.Notice = mb, ctx, "online", ""
 		})
-		<-ctx.Done()
-		a.set(m, func(s *AccountState) { s.Backend, s.Ctx, s.Status = nil, nil, "offline" })
+		m.waitOnline(ctx, cancel, a, loggedOut)
 	}()
+}
+
+// waitOnline keeps an online account up until ctx ends or its server signs
+// it out, which takes it offline asking for a new sign-in.
+func (m *AccountManager) waitOnline(ctx context.Context, cancel context.CancelFunc,
+	a *Account, loggedOut <-chan error) {
+	select {
+	case <-ctx.Done():
+		a.set(m, func(s *AccountState) { s.Backend, s.Ctx, s.Status = nil, nil, "offline" })
+	case err := <-loggedOut:
+		cancel()
+		a.set(m, func(s *AccountState) {
+			s.Backend, s.Ctx, s.Status = nil, nil, "sign-in required"
+			s.Notice, s.NeedsLogin = textfmt.CleanError(err), true
+		})
+	}
 }
 
 func (m *AccountManager) Close() {
@@ -884,6 +906,13 @@ func (m *AccountManager) startWhatsApp(parent context.Context, a *Account, promp
 	wb.PairDeadline = func(t time.Time) {
 		a.set(m, func(s *AccountState) { s.PairDeadline = t })
 	}
+	loggedOut := make(chan error, 1)
+	wb.OnLoggedOut = func(err error) {
+		select {
+		case loggedOut <- err:
+		default:
+		}
+	}
 	go func() {
 		defer close(a.Done)
 		defer m.notify()
@@ -908,11 +937,10 @@ func (m *AccountManager) startWhatsApp(parent context.Context, a *Account, promp
 		a.set(m, func(s *AccountState) {
 			s.Backend, s.Ctx, s.Status, s.Notice = wb, ctx, "online", ""
 		})
-		<-ctx.Done()
+		m.waitOnline(ctx, cancel, a, loggedOut)
 		if wb.Client != nil {
 			wb.Client.Disconnect()
 		}
-		a.set(m, func(s *AccountState) { s.Backend, s.Ctx, s.Status = nil, nil, "offline" })
 	}()
 }
 
