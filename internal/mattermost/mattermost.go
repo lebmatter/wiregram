@@ -1352,7 +1352,9 @@ func (mb *MmBackend) joinedChannels(ctx context.Context) ([]backend.UserCandidat
 	}
 }
 
-func (mb *MmBackend) UserSearchRemote(ctx context.Context, query string) ([]backend.UserCandidate, error) {
+// FindPeople searches the server's users; opening one creates the DM channel,
+// which shows the other person nothing until a message is sent.
+func (mb *MmBackend) FindPeople(ctx context.Context, query string) ([]backend.UserCandidate, error) {
 	var users []mmUser
 	if err := mb.apiJSON(ctx, "POST", "/users/search", map[string]string{"term": query}, &users); err != nil {
 		return nil, fmt.Errorf("search users: %w", err)
@@ -1362,6 +1364,14 @@ func (mb *MmBackend) UserSearchRemote(ctx context.Context, query string) ([]back
 		if u.ID != mb.UserID {
 			out = append(out, mb.userCandidate(u))
 		}
+	}
+	return out, nil
+}
+
+func (mb *MmBackend) UserSearchRemote(ctx context.Context, query string) ([]backend.UserCandidate, error) {
+	out, err := mb.FindPeople(ctx, query)
+	if err != nil {
+		return nil, err
 	}
 	// Public channels in the user's teams; joined ones are already listed
 	// locally under the same key, so these rows are the ones to join.

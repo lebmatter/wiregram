@@ -175,10 +175,9 @@ A bot's **NAME @handle** row in the account's Bots section.
 
 | Key | Action |
 |-----|--------|
-| Type | Filter the private chats by name |
-| <kbd>↑</kbd>, <kbd>↓</kbd> | Select a chat |
-| <kbd>Space</kbd> | Tick or untick it (chats another bot answers can't be ticked) |
-| <kbd>Tab</kbd> | Switch between all private chats and the ticked ones |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Select **All private chats**, **Selected users** or a person |
+| <kbd>Space</kbd> | Pick the radio row, or tick or untick the person (chats another bot answers can't be ticked) |
+| Type | Under Selected users, filter the people recently chatted with; on Telegram and Mattermost it also searches everyone |
 | <kbd>Enter</kbd> | Save |
 | <kbd>Esc</kbd> | Cancel (a click outside it cancels too) |
 

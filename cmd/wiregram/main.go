@@ -272,12 +272,14 @@ Keyboard shortcuts:
     Esc, Left/h       Back
 
   Chat picker (a modal over the bot's settings)
-    Type              Filter the private chats by name
-    Up/Down           Select a chat
-    Space             Tick or untick it; chats another bot answers show
-                      its name and cannot be ticked
-    Tab               Switch between all private chats and the ticked ones
-                      (all is unavailable while another bot answers any)
+    Up/Down           Select All private chats, Selected users or a person
+    Space             Pick the radio row, or tick or untick the person;
+                      chats another bot answers show its name and cannot
+                      be ticked (all is unavailable while another bot
+                      answers any)
+    Type              Under Selected users, filter the people recently
+                      chatted with; on Telegram and Mattermost it also
+                      searches everyone, for a DM yet to start
     Enter             Save
     Esc               Cancel (a click outside it cancels too)
 

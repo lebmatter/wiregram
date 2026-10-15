@@ -111,19 +111,25 @@ The chat picker is a modal over the bot's pane:
 
 ```
 ╭─ Chats Ava answers ─────────────────────────╮
-│ Answers   ○ all private chats  ● selected   │
-│ Filter    ra                                │
-│                                             │
+│   ○ All private chats                       │
+│   ● Selected users                          │
+│   Filter  ra                                │
+│   Results · 4                               │
 │ > [x] Rahul                                 │
 │   [ ] Rajesh                                │
 │   [-] Ravi                       ✦ Support  │
+│   [ ] Radha @radha · global                 │
 │                                             │
-│ 1 selected                                  │
+│ 1 selected · space: tick · enter: save      │
 ╰─────────────────────────────────────────────╯
 ```
 
-Typing filters the list, <kbd>↑</kbd>/<kbd>↓</kbd> select, <kbd>Space</kbd> (or a click)
-ticks a chat, <kbd>Tab</kbd> switches between all private chats and the ticked ones,
+**All private chats** and **Selected users** are a radio list: <kbd>↑</kbd>/<kbd>↓</kbd>
+select a row and <kbd>Space</kbd> (or a click) picks it. Selected users lists the people
+recently chatted with; typing filters them. On Telegram and Mattermost typing also searches
+everyone on the server, so a bot can be set to answer a private chat that has not started
+yet. Ticking a person found there tells them nothing. Matrix and WhatsApp only know a
+private chat's ID once it exists, so there only existing chats can be picked.
 <kbd>Enter</kbd> saves and <kbd>Esc</kbd> cancels.
 
 No private chat has two bots:

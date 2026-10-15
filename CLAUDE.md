@@ -238,7 +238,10 @@ These are project constraints, not suggestions:
   one through the scripted wizard (`internal/tui/agentwiz.go`), then opens the bot pane
   (`internal/tui/agentpane.go`) in the chat's place: Settings-style rows, whose Chats row
   opens the chat picker modal (`internal/tui/dmpicker.go`), centred over the pane with it
-  faded behind, where chats other bots answer show `[-]` and the owner's name. The
+  faded behind: a radio list of All private chats or Selected users, the latter listing
+  recent DMs under a filter that, on backends with `backend.DMFinder` (Telegram,
+  Mattermost), also searches the server for people whose DM has not started; chats other
+  bots answer show `[-]` and the owner's name. The
   runtime routes each DM to the bot that owns it (`agent.ChatClaims`). The theme's agent
   colour (violet, `styles.agent`) and `agentIcon` `✦` mark accounts with a bot, the DMs a
   bot answers while on, chats with a suggestion waiting and the messages a bot sent; those

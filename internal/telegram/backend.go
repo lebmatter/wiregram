@@ -620,6 +620,10 @@ func (tb *TelegramBackend) UserSearchRemote(ctx context.Context, query string) (
 	return tgCandidates(choices), err
 }
 
+func (tb *TelegramBackend) FindPeople(ctx context.Context, query string) ([]backend.UserCandidate, error) {
+	return tb.UserSearchRemote(ctx, query)
+}
+
 func (tb *TelegramBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandidate) (backend.ChatEntry, error) {
 	choice, ok := c.Raw.(userChoice)
 	if !ok {

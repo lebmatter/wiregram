@@ -47,6 +47,8 @@ type agentRow struct {
 
 type agentPaneModel struct {
 	st        *styles
+	ctx       context.Context
+	b         backend.Backend // the account's, for finding people to pick
 	mgr       *account.AccountManager
 	acct      *account.Account
 	rec       agent.AgentRecord
@@ -88,9 +90,10 @@ const botTimeout = 30 * time.Second
 // agentPaneHeader is how many lines sit above the rows: the status line and a gap.
 const agentPaneHeader = 2
 
-func newAgentPane(st *styles, mgr *account.AccountManager, acct *account.Account, id int64,
+func newAgentPane(ctx context.Context, st *styles, mgr *account.AccountManager,
+	acct *account.Account, b backend.Backend, id int64,
 	entries []backend.ChatEntry) (agentPaneModel, error) {
-	m := agentPaneModel{st: st, mgr: mgr, acct: acct, entries: entries}
+	m := agentPaneModel{st: st, ctx: ctx, b: b, mgr: mgr, acct: acct, entries: entries}
 	rec, ok := mgr.Agents.Agent(id)
 	if !ok {
 		return m, fmt.Errorf("that bot has been deleted")
@@ -192,6 +195,10 @@ func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
 		return m.key(msg)
 	case agentBotDone:
 		return m.botDone(msg)
+	case dmSearchDebounce, dmSearchResults, dmResolved:
+		if m.picker != nil {
+			return m, m.picker.update(msg)
+		}
 	}
 	return m, nil
 }
@@ -519,7 +526,8 @@ func (m agentPaneModel) openPicker() agentPaneModel {
 			dms = append(dms, agent.AgentChat{ID: e.ID.Id, Title: textfmt.Plain(e.Title)})
 		}
 	}
-	m.picker = newDMPicker(m.st, m.rec.Name, m.rec.AllChats, dms, picked, owners, allBy)
+	m.picker = newDMPicker(m.ctx, m.st, m.b, m.rec.Name, m.rec.AllChats, dms, picked, owners,
+		allBy)
 	m.picker.resized(m.width, m.height)
 	return m
 }

@@ -461,7 +461,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		return m, nil
 
-	case agentBotDone:
+	case agentBotDone, dmSearchDebounce, dmSearchResults, dmResolved:
 		if !m.agentOpen {
 			return m, nil
 		}
@@ -853,7 +853,9 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		}
 	case m.agentOpen && m.agentPane.picker != nil:
 		x, y := m.pickerAt()
-		if m.agentPane.picker.click(mouse.X-x, mouse.Y-y) {
+		var done bool
+		done, cmd = m.agentPane.picker.click(mouse.X-x, mouse.Y-y)
+		if done {
 			m.agentPane.picker = nil
 		}
 	case m.agentOpen:
@@ -1536,7 +1538,7 @@ func (m tuiModel) agentRow(id int64) (tuiModel, tea.Cmd) {
 }
 
 func (m tuiModel) openAgentPane(id int64) (tuiModel, tea.Cmd) {
-	pane, err := newAgentPane(m.st, m.mgr, m.active, id, m.entries)
+	pane, err := newAgentPane(m.ctx, m.st, m.mgr, m.active, m.b, id, m.entries)
 	if err != nil {
 		m.notice = textfmt.CleanError(err)
 		return m, nil

@@ -210,6 +210,14 @@ type Mentioner interface {
 	MentionSearch(ctx context.Context, ch ChatEntry, query string) ([]UserCandidate, error)
 }
 
+// DMFinder is implemented by backends that can search everyone a private chat
+// could be had with, so a bot can be set to answer one that has not started.
+// OpenUserCandidate on a result knows the DM's ID without telling the person
+// anything; on other backends a new DM's ID is not known until it starts.
+type DMFinder interface {
+	FindPeople(ctx context.Context, query string) ([]UserCandidate, error)
+}
+
 // Profiler is implemented by backends whose server can describe a user, so
 // clicking a sender opens their profile.
 type Profiler interface {
