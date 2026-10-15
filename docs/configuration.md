@@ -39,6 +39,7 @@ Accounts are listed on the left, followed by:
   [AI powered chat bots](/features/chat-bots#ai-providers) use.
 - **Reset…**: sign out of every account and delete all local data, then start over as
   a fresh installation.
+- **Home**: back to the account chooser.
 - **Quit**
 
 Select an account to see its settings on the right. Each is a row; <kbd>Enter</kbd> or

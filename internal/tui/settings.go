@@ -17,7 +17,8 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Themes…", "Chat…", "Plugins…", "AI providers…", "Reset…", "Quit"}
+var settingsActions = []string{"+ Add account…", "Themes…", "Chat…", "Plugins…", "AI providers…", "Reset…", "Home",
+	"Quit"}
 
 const (
 	actionAdd = iota
@@ -26,6 +27,7 @@ const (
 	actionPlugins
 	actionProviders
 	actionReset
+	actionHome
 	actionQuit
 )
 
@@ -53,6 +55,7 @@ const itemsTop = 2
 type settingsResult struct {
 	account *account.Account // switch to it
 	back    bool             // return to the active account
+	home    bool             // go to the account chooser
 	add     bool
 	reset   bool // every account was removed; delete all local data
 }
@@ -293,6 +296,8 @@ func (m settingsModel) accountsKey(k string) (tea.Model, tea.Cmd) {
 		switch m.left - len(m.accounts) {
 		case actionAdd:
 			m.result.add = true
+		case actionHome:
+			m.result.home = true
 		case actionReset:
 			m.confirm = newConfirmModal(m.st, "Reset",
 				"Delete all accounts and data and start fresh? This cannot be undone.",
@@ -801,8 +806,8 @@ func (m settingsModel) helpKeys() []helpKey {
 }
 
 // tuiSettings runs the Settings screen. It returns the account to open, nil
-// to quit, ResetRequested after Reset, or
-// accountsRequested when Esc leaves a Settings opened from the account chooser.
+// to quit, ResetRequested after Reset, or accountsRequested for the Home row and
+// when Esc leaves a Settings opened from the account chooser.
 func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *account.Account,
 	fromAccounts bool) (*account.Account, error) {
 	for {
@@ -823,7 +828,7 @@ func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *accou
 				continue
 			}
 			return a, err
-		case r.back && fromAccounts:
+		case r.home, r.back && fromAccounts:
 			return nil, accountsRequested{}
 		case r.back:
 			return active, nil

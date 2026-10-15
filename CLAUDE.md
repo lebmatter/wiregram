@@ -105,7 +105,7 @@ These are project constraints, not suggestions:
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Themes, Chat, Plugins, AI providers, Reset, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Chat, Plugins, AI providers, Reset, Home, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and bots

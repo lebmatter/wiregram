@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"wiregram/internal/account"
@@ -115,17 +116,21 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 				continue
 			}
 			if _, ok := err.(settingsRequested); ok {
-				to, err := tuiSettings(ctx, m, active, false)
-				if err != nil {
-					return err
+				err = nil
+				to, serr := tuiSettings(ctx, m, active, false)
+				if _, home := serr.(accountsRequested); !home {
+					if serr != nil || to == nil {
+						return serr
+					}
+					active = to
+					continue
 				}
-				if to == nil {
-					return nil
+				if !slices.Contains(m.List(), active) {
+					active = nil // removed in Settings
 				}
-				active = to
-				continue
 			}
-			if _, switching := err.(accountsRequested); !switching && !errors.Is(err, context.Canceled) {
+			if _, switching := err.(accountsRequested); err != nil && !switching &&
+				!errors.Is(err, context.Canceled) {
 				fmt.Fprintf(os.Stderr, "%s\n", textfmt.CleanError(err))
 			}
 		}

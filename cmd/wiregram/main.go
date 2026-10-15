@@ -180,6 +180,7 @@ Keyboard shortcuts:
     Reset…            Sign out of every account and delete all local data
                       (settings, plugins, bots, cached mail and media),
                       then start over as a fresh installation
+    Home              Back to the account chooser
     Esc, Left/h       Back to the accounts, then to where Settings was opened,
                       or quit when there is nowhere to go back to
 
