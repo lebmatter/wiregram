@@ -185,15 +185,19 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m accountListModel) bodyHeight() int { return max(4, m.height-2) }
 
-// digestGap is the blank line and the divider above the digest's cards.
-const digestGap = 2
+// digestGap is the blank line above the digest's cards; widgetsGap adds
+// the widgets' small label.
+const (
+	digestGap  = 1
+	widgetsGap = 2
+)
 
 // layout returns the logo when it fits above the rows, the digest and the
 // widgets, and how far the rows are moved down to make room for it, or up to
 // keep the selection in view; digest and widgets are the heights left for
 // their cards under the rows. The widgets give way to the digest.
 func (m accountListModel) layout() (logo []string, shift, digest, widgets int) {
-	rows := len(m.accounts) + 4 // the accounts, a separator and three actions
+	rows := len(m.accounts) + 4 // the accounts, a blank row and three actions
 	limit := m.bodyHeight() - 2
 	cards := m.digest.height(m.width - 4)
 	wants := m.widgets.height(m.width - 4)
@@ -203,7 +207,7 @@ func (m accountListModel) layout() (logo []string, shift, digest, widgets int) {
 		section = digestGap + cards
 	}
 	if wants > 0 {
-		section += digestGap + wants
+		section += widgetsGap + wants
 	}
 	if rows+len(logo)+2+section <= limit {
 		return logo, len(logo) + 2, cards, wants
@@ -220,13 +224,14 @@ func (m accountListModel) layout() (logo []string, shift, digest, widgets int) {
 		digest = min(cards, left-digestGap)
 		left -= digestGap + digest
 	}
-	if wants > 0 && left-digestGap >= wants {
+	if wants > 0 && left-widgetsGap >= wants {
 		widgets = wants
 	}
 	return nil, 0, digest, widgets
 }
 
-// itemAt maps a screen row to an account or action; the separator is none.
+// itemAt maps a screen row to an account or action; the blank row between
+// them is none.
 func (m accountListModel) itemAt(y int) (int, bool) {
 	_, shift, _, _ := m.layout()
 	r := y - 2 - shift // under the header and the box's top edge
@@ -295,7 +300,7 @@ func (m accountListModel) frame() string {
 		}
 		rows = append(rows, row)
 	}
-	rows = append(rows, m.st.dim.Render(strings.Repeat("─", inner)))
+	rows = append(rows, "")
 	for i, label := range []string{"Settings…", "Add account…", "Quit"} {
 		index := len(m.accounts) + i
 		if index == m.selected {
@@ -306,11 +311,11 @@ func (m accountListModel) frame() string {
 	}
 	logo, shift, digest, widgets := m.layout()
 	if digest > 0 {
-		rows = append(rows, "", m.st.dim.Render(sectionRule("── Unread ", inner)))
+		rows = append(rows, "")
 		rows = append(rows, strings.Split(m.digest.view(inner, digest), "\n")...)
 	}
 	if widgets > 0 {
-		rows = append(rows, "", m.st.dim.Render(sectionRule("── Widgets ", inner)))
+		rows = append(rows, "", m.st.dim.Render("── Widgets"))
 		rows = append(rows, strings.Split(m.widgets.view(inner, widgets), "\n")...)
 	}
 	if shift > 0 {
