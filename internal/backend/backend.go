@@ -210,6 +210,32 @@ type Mentioner interface {
 	MentionSearch(ctx context.Context, ch ChatEntry, query string) ([]UserCandidate, error)
 }
 
+// Profiler is implemented by backends whose server can describe a user, so
+// clicking a sender opens their profile.
+type Profiler interface {
+	// Profile describes the user a message's SenderID names.
+	Profile(ctx context.Context, userID string) (Profile, error)
+}
+
+// Profile is what the backend's user API tells about one person, as label
+// and value rows in the order shown; empty values are left out.
+type Profile struct {
+	Name   string
+	Fields []ProfileField
+}
+
+type ProfileField struct {
+	Label string
+	Value string
+}
+
+// Add appends a row unless value is blank.
+func (p *Profile) Add(label, value string) {
+	if value = strings.TrimSpace(value); value != "" {
+		p.Fields = append(p.Fields, ProfileField{label, value})
+	}
+}
+
 // LogoutBackend is implemented by backends that can end their server session,
 // so a removed account no longer shows among the user's active sessions.
 type LogoutBackend interface {

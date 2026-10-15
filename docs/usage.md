@@ -37,6 +37,8 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   <kbd>Enter</kbd> would.
 - A **click on a message** selects it; a **right click** opens its actions.
 - A **click on a reaction** under a message adds yours or takes it back, with a short blink.
+- A **click on a sender's name** opens their profile: what the network shares about
+  them. Any key or click closes it.
 - A **click on an attachment** (the image or the `[tag]` row) downloads it and opens it
   with `xdg-open` (`open` on macOS, the default app on Windows).
 - Hold <kbd>Shift</kbd> while dragging to select text with the terminal.

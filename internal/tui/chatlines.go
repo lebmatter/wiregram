@@ -317,6 +317,9 @@ func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry back
 			}
 		}
 	}
+	if len(kinds) > 0 {
+		kinds[0] |= rowHeader
+	}
 	lines = append(lines, below...)
 	for range below {
 		kinds = append(kinds, rowMedia)
@@ -330,13 +333,15 @@ func (s *styles) messageBlock(b backend.Backend, msg backend.Message, entry back
 	return lines, kinds
 }
 
-// rowKind is what a line of a message block draws, so a click knows what it hit.
+// rowKind is what a line of a message block draws, so a click knows what it
+// hit. The header row is a flag, since it can draw the attachment's tag too.
 type rowKind uint8
 
 const (
-	rowText  rowKind = iota
-	rowMedia         // the attachment: its image card or [tag] row
-	rowMeta          // reactions, reply count, pin and ticks
+	rowText   rowKind = 0
+	rowMedia  rowKind = 1 << iota // the attachment: its image card or [tag] row
+	rowMeta                       // reactions, reply count, pin and ticks
+	rowHeader                     // the first row: time, sender and the text's start
 )
 
 // reactionKey names one reaction on one message; the zero value names none.

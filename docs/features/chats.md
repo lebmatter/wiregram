@@ -67,6 +67,23 @@ pane beside the chat; <kbd>Enter</kbd> there replies in the thread and <kbd>Esc<
 closes it. On Mattermost, where threads live on the server, opening one fetches the
 whole thread once.
 
+## Profiles
+
+Click a sender's name to open their profile over the chat. It shows what the network's
+user API returns:
+
+- **Telegram:** name, usernames, phone, bio, birthday, groups in common, last seen and
+  whether the account is a bot, verified, premium or a contact. Someone known only from a
+  group shows what the group shared.
+- **Mattermost:** name, username, position, email, custom status, status and last
+  activity, local time and locale.
+- **Matrix:** display name, user ID and, where the homeserver shares it, presence and
+  status message.
+- **WhatsApp:** name, profile name, phone, about text and, for a business, its category,
+  address and email.
+
+Email has no profiles. Any key or click closes it.
+
 ## Message actions
 
 Select a message and press <kbd>Enter</kbd> on an empty composer, or right-click it.

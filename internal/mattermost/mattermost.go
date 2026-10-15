@@ -2,6 +2,7 @@ package mattermost
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1684,4 +1685,65 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		}
 		mb.events.Publish(backend.Event{Kind: backend.EventTyping, Chat: chat})
 	}
+}
+
+// Profile describes a user from /users/{id} and their status.
+func (mb *MmBackend) Profile(ctx context.Context, userID string) (backend.Profile, error) {
+	var u struct {
+		mmUser
+		Email          string            `json:"email"`
+		Position       string            `json:"position"`
+		Locale         string            `json:"locale"`
+		IsBot          bool              `json:"is_bot"`
+		BotDescription string            `json:"bot_description"`
+		Props          map[string]string `json:"props"`
+		Timezone       struct {
+			Automatic   string `json:"useAutomaticTimezone"`
+			AutomaticTZ string `json:"automaticTimezone"`
+			ManualTZ    string `json:"manualTimezone"`
+		} `json:"timezone"`
+	}
+	if err := mb.apiJSON(ctx, "GET", "/users/"+url.PathEscape(userID), nil, &u); err != nil {
+		return backend.Profile{}, fmt.Errorf("load profile: %w", err)
+	}
+	p := backend.Profile{Name: u.displayName()}
+	p.Add("Username", "@"+u.Username)
+	if full := strings.TrimSpace(u.First + " " + u.Last); full != p.Name {
+		p.Add("Full name", full)
+	}
+	p.Add("Position", u.Position)
+	p.Add("Email", u.Email)
+	if u.IsBot {
+		p.Add("Bot", cmp.Or(u.BotDescription, "yes"))
+	}
+	var custom struct {
+		Emoji string `json:"emoji"`
+		Text  string `json:"text"`
+	}
+	if raw := u.Props["customStatus"]; raw != "" && json.Unmarshal([]byte(raw), &custom) == nil {
+		if custom.Emoji != "" {
+			custom.Text = reactionLabel(custom.Emoji) + " " + custom.Text
+		}
+		p.Add("Custom status", custom.Text)
+	}
+	var status struct {
+		Status       string `json:"status"`
+		LastActivity int64  `json:"last_activity_at"`
+	}
+	if mb.apiJSON(ctx, "GET", "/users/"+url.PathEscape(userID)+"/status", nil, &status) == nil {
+		p.Add("Status", status.Status)
+		if status.Status != "online" && status.LastActivity > 0 {
+			p.Add("Last active", time.UnixMilli(status.LastActivity).Local().
+				Format("2 Jan 2006 15:04"))
+		}
+	}
+	tz := u.Timezone.ManualTZ
+	if u.Timezone.Automatic == "true" {
+		tz = u.Timezone.AutomaticTZ
+	}
+	if loc, err := time.LoadLocation(tz); tz != "" && err == nil {
+		p.Add("Local time", time.Now().In(loc).Format("15:04")+" ("+tz+")")
+	}
+	p.Add("Locale", u.Locale)
+	return p, nil
 }

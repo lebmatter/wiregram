@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"mime"
@@ -1580,4 +1581,52 @@ func isForwarded(m *waE2E.Message) bool {
 		}
 	}
 	return false
+}
+
+// Profile describes a user from the contact store, their about text and,
+// for a business, its business profile.
+func (wa *WaBackend) Profile(ctx context.Context, userID string) (backend.Profile, error) {
+	jid, err := types.ParseJID(userID)
+	if err != nil {
+		return backend.Profile{}, fmt.Errorf("read user %q: %w", userID, err)
+	}
+	jid = jid.ToNonAD()
+	contact, err := wa.Client.Store.Contacts.GetContact(ctx, jid)
+	if err != nil {
+		return backend.Profile{}, fmt.Errorf("load contact: %w", err)
+	}
+	p := backend.Profile{Name: cmp.Or(contact.FullName, contact.PushName,
+		contact.BusinessName, wa.contactName(jid))}
+	if contact.PushName != p.Name {
+		p.Add("Profile name", contact.PushName)
+	}
+	switch {
+	case jid.Server == types.DefaultUserServer:
+		p.Add("Phone", "+"+jid.User)
+	case contact.RedactedPhone != "":
+		p.Add("Phone", contact.RedactedPhone)
+	}
+	info, err := wa.Client.GetUserInfo(ctx, []types.JID{jid})
+	if err != nil {
+		return backend.Profile{}, fmt.Errorf("load profile: %w", err)
+	}
+	user := info[jid]
+	p.Add("About", user.Status)
+	if user.VerifiedName == nil {
+		return p, nil
+	}
+	if d := user.VerifiedName.Details; d != nil {
+		p.Add("Business", d.GetVerifiedName())
+	}
+	// A business's profile is extra; the rest stands without it.
+	if biz, err := wa.Client.GetBusinessProfile(ctx, jid); err == nil {
+		var cats []string
+		for _, c := range biz.Categories {
+			cats = append(cats, c.Name)
+		}
+		p.Add("Category", strings.Join(cats, ", "))
+		p.Add("Address", biz.Address)
+		p.Add("Email", biz.Email)
+	}
+	return p, nil
 }

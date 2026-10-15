@@ -1480,6 +1480,11 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		sel = m.messages[i]
 		m, follow = m.followThread()
 	}
+	if hit.kind&rowHeader != 0 && !msg.right && m.senderAt(sel, hit.col) {
+		if _, ok := m.b.(backend.Profiler); ok {
+			return m, tea.Batch(follow, func() tea.Msg { return profileOpen{m.b, m.ctx, sel} })
+		}
+	}
 	if hit.kind == rowMeta && !msg.right {
 		if emoji, ok := reactionAt(sel, hit.col); ok {
 			var cmd tea.Cmd
@@ -1488,7 +1493,7 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		}
 	}
 	if !msg.right {
-		if _, saveable := m.b.MediaSaveable(sel); hit.kind != rowMedia || !saveable {
+		if _, saveable := m.b.MediaSaveable(sel); hit.kind&rowMedia == 0 || !saveable {
 			return m, follow
 		}
 		var cmd tea.Cmd
@@ -1497,6 +1502,19 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	}
 	m, cmd := m.openMenuOn(sel)
 	return m, tea.Batch(follow, cmd)
+}
+
+// senderAt reports whether column col of sel's header row, counted from
+// the start of its text, falls on the sender's name. Only other people's
+// messages count: the user is always "you".
+func (m chatViewModel) senderAt(sel backend.Message, col int) bool {
+	if sel.Outgoing || sel.SenderID == "" {
+		return false
+	}
+	header := strings.TrimRight(ansi.Strip(m.st.messageHeader(sel, m.entry, false)), " ")
+	// The gutter and "[HH:MM] " come before the name.
+	x := col + m.st.textIndent(m.entry)
+	return x >= 2+8 && x < 2+textfmt.DisplayWidth(header)
 }
 
 // openAttachment downloads sel's attachment and opens it in the desktop's

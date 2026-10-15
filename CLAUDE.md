@@ -12,7 +12,8 @@ is the left and right click and the wheel. The wheel moves the selection of the 
 as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter. A click on
 a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`;
 a left click on a reaction in its meta row toggles the user's own (`reactionAt`, with a short
-blink); a left click elsewhere on a message selects it and a right click on a message opens its
+blink); a left click on the sender's name opens their profile modal (`backend.Profiler`,
+`internal/tui/profile.go`) on backends that have one; a left click elsewhere on a message selects it and a right click on a message opens its
 actions modal. The login and connecting
 screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|dry-run|reset`
 (`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend

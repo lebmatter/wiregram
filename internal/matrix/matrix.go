@@ -2035,3 +2035,37 @@ func mxRelatesTo(content map[string]any) map[string]any {
 	}
 	return rel
 }
+
+// Profile describes a user from their profile and, when the homeserver
+// shares it, their presence.
+func (mx *MxBackend) Profile(ctx context.Context, userID string) (backend.Profile, error) {
+	var prof struct {
+		DisplayName string `json:"displayname"`
+	}
+	path := "/profile/" + url.PathEscape(userID)
+	if err := mx.apiJSON(ctx, "GET", path, nil, &prof); err != nil {
+		return backend.Profile{}, fmt.Errorf("load profile: %w", err)
+	}
+	p := backend.Profile{Name: prof.DisplayName}
+	if p.Name == "" {
+		p.Name = mx.displayName(userID)
+	}
+	p.Add("User ID", userID)
+	var presence struct {
+		Presence        string `json:"presence"`
+		LastActiveAgo   int64  `json:"last_active_ago"`
+		CurrentlyActive bool   `json:"currently_active"`
+		StatusMsg       string `json:"status_msg"`
+	}
+	// Many homeservers turn presence off; the profile stands without it.
+	if mx.apiJSON(ctx, "GET", "/presence/"+url.PathEscape(userID)+"/status", nil,
+		&presence) == nil {
+		p.Add("Presence", presence.Presence)
+		p.Add("Status", presence.StatusMsg)
+		if presence.LastActiveAgo > 0 && !presence.CurrentlyActive {
+			at := time.Now().Add(-time.Duration(presence.LastActiveAgo) * time.Millisecond)
+			p.Add("Last active", at.Format("2 Jan 2006 15:04"))
+		}
+	}
+	return p, nil
+}
