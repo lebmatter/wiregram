@@ -434,6 +434,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 				m.unread.bot.id)
 			m.unread, reload = m.unread.load()
 		}
+		if m.agentOpen {
+			m.agentPane = m.agentPane.reloadLatest()
+		}
 		return m.withAgentSent(), tea.Batch(reload, listenAgents(m.agentsCtx, m.mgr))
 
 	case chatSuggestion:
@@ -889,6 +892,9 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		if done {
 			m.agentPane.picker = nil
 		}
+	case m.agentOpen && mouse.Y == 1 && !m.agentPane.editing:
+		// The status chip pauses or resumes the bot.
+		m.agentPane, cmd = m.agentPane.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
 	case m.agentOpen:
 		if i, ok := m.agentPane.rowAt(mouse.Y); ok && !m.agentPane.editing {
 			m.agentPane.sel = i

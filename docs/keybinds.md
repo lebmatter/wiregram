@@ -173,6 +173,7 @@ A bot's **NAME @handle** row in the account's Bots section.
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select a row |
 | <kbd>Enter</kbd> | Change it (edits in place: <kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels); Chats opens the chat picker |
+| <kbd>p</kbd> | Pause or resume the bot |
 | <kbd>Esc</kbd> | Back |
 
 ### Chat picker

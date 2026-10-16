@@ -86,12 +86,12 @@ some, a new bot starts with none and its chat picker opens right away.
 
 ## The bot pane
 
-<kbd>Enter</kbd> on a bot's row opens the bot's settings in place of the chat.
-<kbd>↑</kbd>/<kbd>↓</kbd> choose a row and <kbd>Enter</kbd> changes it:
+<kbd>Enter</kbd> on a bot's row opens the bot's settings in place of the chat. On top, a
+chip reads **● live** or **● paused**; <kbd>p</kbd> (or a click on it) pauses or resumes
+the bot. <kbd>↑</kbd>/<kbd>↓</kbd> choose a row and <kbd>Enter</kbd> changes it:
 
 | Row | Value |
 |-----|-------|
-| Status | on or paused |
 | Name, Handle, Model, Prompt, Knowledge | edited in place |
 | Provider | cycles through your providers |
 | Understands | text only, media descriptions or vision |
@@ -104,8 +104,11 @@ some, a new bot starts with none and its chat picker opens right away.
 | Rotate token…, Unregister… | while registered; each asks first |
 | Delete bot… | asks first, starting on Cancel; a registered bot is disabled on the server first |
 
-If the last reply failed, a line on top says why. <kbd>Esc</kbd> goes back, and
-<kbd>Tab</kbd> moves focus as usual.
+Delete bot… (and Unregister…) sit apart at the bottom, in red. When the pane is wide
+enough, a column on the right shows what the bot is **connected** to (the account, the
+bot account if registered, and the chats it answers) and its **latest** messages, newest
+first. If the last reply failed, the line beside the chip says why. <kbd>Esc</kbd> goes
+back, and <kbd>Tab</kbd> moves focus as usual.
 
 ### Picking chats
 

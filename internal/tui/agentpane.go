@@ -11,6 +11,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
@@ -66,6 +68,7 @@ type agentPaneModel struct {
 	confirmOf agentField // the row the confirm modal goes ahead with
 	busy      bool       // a request to the server is running
 	picker    *dmPicker
+	latest    []agent.AgentLoggedMessage // its newest messages, for the side column
 	notice    string
 	width     int
 	height    int
@@ -126,7 +129,19 @@ func newAgentPane(ctx context.Context, st *styles, mgr *account.AccountManager,
 		return m, err
 	}
 	m.rec = rec
-	return m, nil
+	return m.reloadLatest(), nil
+}
+
+// latestShown is how many of the bot's newest messages the side column lists.
+const latestShown = 8
+
+// reloadLatest rereads the bot's newest messages; a failure leaves the list as
+// it was, since it is only a glance.
+func (m agentPaneModel) reloadLatest() agentPaneModel {
+	if latest, err := m.mgr.Agents.Db.LatestMessages(m.rec.ID, latestShown); err == nil {
+		m.latest = latest
+	}
+	return m
 }
 
 func (m agentPaneModel) resized(width, height int) agentPaneModel {
@@ -140,7 +155,8 @@ func (m agentPaneModel) resized(width, height int) agentPaneModel {
 func (m agentPaneModel) rows() []agentRow {
 	_, registered := m.mgr.Agents.Registration(m.rec.ID)
 	var rows []agentRow
-	for f := fieldStatus; f <= fieldDelete; f++ {
+	// Status is the chip above the rows, switched with p.
+	for f := fieldName; f <= fieldDelete; f++ {
 		switch {
 		case f == fieldManager && !m.mgr.Agents.NeedsManager(m.acct),
 			f == fieldBotAccount && !registered && !m.mgr.Agents.CanRegister(m.acct),
@@ -266,6 +282,8 @@ func (m agentPaneModel) key(msg tea.KeyPressMsg) (agentPaneModel, tea.Cmd) {
 	switch k {
 	case "esc", "left", "h":
 		return m, func() tea.Msg { return agentPaneClosed{} }
+	case "p":
+		return m.apply(agentRow{field: fieldStatus})
 	case "up", "k":
 		m.sel = max(0, m.sel-1)
 	case "down", "j":
@@ -641,7 +659,7 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 		if bot, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
 			return "Bot account", "@" + bot.Username + " on " + accountLabel(m.acct)
 		}
-		return "Bot account", "not registered: Register…"
+		return "Bot account", "not registered · Register…"
 	case fieldRotate:
 		return "Rotate token…", ""
 	case fieldUnregister:
@@ -664,6 +682,10 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 	return styleError.Render("Delete bot…"), ""
 }
 
+// agentSideWidth is the side column of accounts and latest messages, shown
+// when the pane has room for it beside the rows.
+const agentSideWidth = 40
+
 func (m agentPaneModel) view(focused bool) string {
 	inner, height := m.width-4, m.height-2
 	status := "Answers its private chats as you; never groups or channels."
@@ -675,35 +697,201 @@ func (m agentPaneModel) view(focused bool) string {
 				plural(n, "reply", "replies"), bot.Username)
 		}
 	}
-	if problem := m.mgr.Agents.Problem(m.rec.ID); problem != "" {
-		status = styleError.Render(textfmt.ClipLine("Last reply failed: "+problem, inner))
-	} else {
-		status = m.st.subtle.Render(textfmt.ClipLine(status, inner))
+	chip := styleError.Bold(true).Render("● paused")
+	if m.rec.Enabled {
+		chip = m.st.accent.Bold(true).Render("● live")
 	}
-	lines := []string{status, ""}
+	room := inner - textfmt.DisplayWidth(chip) - 2
+	if problem := m.mgr.Agents.Problem(m.rec.ID); problem != "" {
+		status = styleError.Render(textfmt.ClipLine("Last reply failed: "+problem, room))
+	} else {
+		status = m.st.subtle.Render(textfmt.ClipLine(status, room))
+	}
+	left, side := inner, 0
+	if inner >= 2*agentSideWidth+4 {
+		side = agentSideWidth
+		left = inner - side - 4
+	}
+	lines := m.rowLines(left, height-agentPaneHeader, focused)
+	if side > 0 {
+		right := m.sideLines(side)
+		for i := range lines {
+			pad := strings.Repeat(" ", max(0, left-textfmt.DisplayWidth(lines[i])))
+			if i < len(right) {
+				lines[i] += pad + "    " + right[i]
+			}
+		}
+	}
+	lines = append([]string{chip + "  " + status, ""}, lines...)
+	return renderBox(agentIcon+" "+m.rec.Name, lines, m.width, m.height, m.st.border(focused))
+}
+
+// paneItems is the rows in display order with -1 for the gap that sets the
+// destructive rows apart.
+func (m agentPaneModel) paneItems() []int {
+	var items []int
+	for i, r := range m.rows() {
+		if r.field == fieldUnregister || (r.field == fieldDelete && (i == 0 ||
+			m.rows()[i-1].field != fieldUnregister)) {
+			items = append(items, -1)
+		}
+		items = append(items, i)
+	}
+	return items
+}
+
+// rowLines draws the rows width cells wide: a caret, the label column and the
+// value, dim until selected; destructive rows in red.
+func (m agentPaneModel) rowLines(width, height int, focused bool) []string {
 	rows := m.rows()
 	labelW := 0
 	for _, r := range rows {
 		l, _ := m.label(r)
-		labelW = max(labelW, textfmt.DisplayWidth(l))
+		labelW = max(labelW, textfmt.DisplayWidth(ansi.Strip(l)))
 	}
-	for i := window(m.sel, height-agentPaneHeader); i < len(rows) && len(lines) < height; i++ {
-		label, value := m.label(rows[i])
-		value = m.st.subtle.Render(textfmt.Plain(value))
-		if i == m.sel && m.editing {
-			in := m.edit
-			in.SetWidth(max(8, inner-labelW-5))
-			value = in.View()
+	items := m.paneItems()
+	var lines []string
+	for _, i := range items[window(m.itemOf(m.sel), height):] {
+		if len(lines) == height {
+			break
 		}
-		lines = append(lines, m.st.formRow(label, value, labelW, i == m.sel, focused, inner))
+		if i < 0 {
+			lines = append(lines, "")
+			continue
+		}
+		selected := i == m.sel
+		label, value := m.label(rows[i])
+		plainLabel := ansi.Strip(label)
+		labelStyle := lipgloss.NewStyle()
+		if label != plainLabel {
+			labelStyle = styleError // Unregister… and Delete bot…
+		}
+		valueStyle := m.st.subtle
+		if selected {
+			valueStyle = lipgloss.NewStyle()
+		}
+		caret := "  "
+		if selected {
+			caret = m.st.accent.Render("›") + " "
+		}
+		value = textfmt.Plain(value)
+		var shown string
+		if before, ok := strings.CutSuffix(value, "Register…"); ok {
+			shown = valueStyle.Render(before) + m.st.accent.Render("Register…")
+		} else {
+			shown = valueStyle.Render(value)
+		}
+		if selected && m.editing {
+			in := m.edit
+			in.SetWidth(max(8, width-labelW-5))
+			shown = in.View()
+		}
+		row := caret + labelStyle.Render(plainLabel)
+		if value != "" || (selected && m.editing) {
+			row += strings.Repeat(" ", labelW+2-textfmt.DisplayWidth(plainLabel)) + shown
+		}
+		row = textfmt.ClipLine(row, width)
+		if selected && focused {
+			row = shadeLine(row, m.st.selBgSGR, width)
+		}
+		lines = append(lines, row)
 	}
-	return renderBox(agentIcon+" "+m.rec.Name, lines, m.width, m.height, m.st.border(focused))
+	return lines
+}
+
+// itemOf is the display item of row i.
+func (m agentPaneModel) itemOf(i int) int {
+	for j, it := range m.paneItems() {
+		if it == i {
+			return j
+		}
+	}
+	return 0
+}
+
+// sideLines is the side column: the account the bot is on with the chats it
+// answers, then its newest messages.
+func (m agentPaneModel) sideLines(width int) []string {
+	head := func(text string) string { return m.st.dim.Bold(true).Render(text) }
+	lines := []string{head("connected"),
+		m.st.badge.Render(" "+backendTag(m.acct.BackendType)+" ") + " " +
+			truncate(accountLabel(m.acct), width-5)}
+	chat := func(text string) {
+		lines = append(lines, "    "+m.st.subtle.Render(truncate(text, width-4)))
+	}
+	if bot, ok := m.mgr.Agents.Registration(m.rec.ID); ok {
+		lines = append(lines, "    "+m.st.agent.Render(truncate(agentIcon+" @"+bot.Username, width-4)))
+	}
+	switch {
+	case m.rec.AllChats:
+		chat("@ all private chats")
+	case len(m.chats) == 0 && !m.rec.SelfChat:
+		chat("no chats yet")
+	}
+	if !m.rec.AllChats {
+		for _, c := range m.chats {
+			chat("@ " + textfmt.Plain(c.Title))
+		}
+	}
+	if m.rec.SelfChat {
+		chat("@ you (self)")
+	}
+	lines = append(lines, "", head("latest"))
+	if len(m.latest) == 0 {
+		lines = append(lines, m.st.subtle.Render("nothing yet"))
+	}
+	const timeW = 11
+	for _, msg := range m.latest {
+		who := textfmt.Plain(msg.Sender)
+		style := lipgloss.NewStyle()
+		switch {
+		case msg.IsAgentReply:
+			who, style = agentIcon+" "+textfmt.Plain(m.rec.Name), m.st.agent
+		case msg.Outgoing:
+			who = "you"
+		}
+		when := shortWhen(msg.Timestamp, time.Now())
+		text := strings.Join(strings.Fields(textfmt.Plain(msg.Text)), " ")
+		rest := truncate(who+" "+text, width-timeW-1)
+		name := rest
+		if len(rest) > len(who) {
+			name = rest[:len(who)]
+		}
+		lines = append(lines, m.st.dim.Render(when)+strings.Repeat(" ",
+			timeW+1-textfmt.DisplayWidth(when))+style.Render(name)+
+			m.st.subtle.Render(rest[len(name):]))
+	}
+	return lines
+}
+
+// shortWhen is a compact message time: the time today, yday, the weekday this
+// week, else the date.
+func shortWhen(at, now time.Time) string {
+	at = at.Local()
+	day := func(t time.Time) time.Time {
+		y, mo, d := t.Date()
+		return time.Date(y, mo, d, 0, 0, 0, 0, t.Location())
+	}
+	switch days := int(day(now).Sub(day(at)).Hours() / 24); {
+	case days == 0:
+		return at.Format("15:04")
+	case days == 1:
+		return "yday " + at.Format("15:04")
+	case days < 7:
+		return at.Format("Mon 15:04")
+	}
+	return at.Format("Jan 2")
 }
 
 // rowAt maps a row y of the pane, counted from its top edge, to a row index.
 func (m agentPaneModel) rowAt(y int) (int, bool) {
-	i := window(m.sel, m.height-2-agentPaneHeader) + y - 1 - agentPaneHeader
-	return i, y-1 >= agentPaneHeader && i >= 0 && i < len(m.rows())
+	height := m.height - 2 - agentPaneHeader
+	items := m.paneItems()
+	j := window(m.itemOf(m.sel), height) + y - 1 - agentPaneHeader
+	if y-1 < agentPaneHeader || j < 0 || j >= len(items) || items[j] < 0 {
+		return 0, false
+	}
+	return items[j], true
 }
 
 func (m agentPaneModel) helpKeys() []helpKey {
@@ -715,7 +903,7 @@ func (m agentPaneModel) helpKeys() []helpKey {
 	case m.editing:
 		return []helpKey{{"enter", "save"}, {"esc", "cancel"}}
 	}
-	return []helpKey{{"↑↓", "select"}, {"enter", "change"}, {"esc", "back"}}
+	return []helpKey{{"↑↓", "select"}, {"enter", "edit"}, {"p", "pause/resume"}, {"esc", "back"}}
 }
 
 // anyEnabled reports whether one of the bots is on.

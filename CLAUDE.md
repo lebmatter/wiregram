@@ -168,7 +168,7 @@ These are project constraints, not suggestions:
   or with the `<nick>` style (Settings' Chat…, `nick_style`, `styles.nickColumn`)
   `HH:MM sender` in a fixed-width nick column, then the text; the user is always
   `you`. Channels drop the nick, and a message soon after one from the same sender leaves
-  it out (`continues`). A reply puts a dim `↳ sender  excerpt` pointer on the header row with
+  it out (`continues`); every other message gets a blank row above it. A reply puts a dim `↳ sender  excerpt` pointer on the header row with
   its text below, once per run of replies to the same message; an original older than the loaded history is fetched by ID
   (`backend.QuoteFetcher`) or, on WhatsApp, taken from the copy the reply
   carries (`Message.Quote`), else it reads `earlier message`. Under the text come any image or preview card, then a meta row:
@@ -268,7 +268,10 @@ These are project constraints, not suggestions:
   saves a bot's choice in one transaction, naming the other bot when it conflicts.
   Providers live in Settings' AI providers… (`internal/tui/providers.go`). New bot… creates
   one through the scripted wizard (`internal/tui/agentwiz.go`), then opens the bot pane
-  (`internal/tui/agentpane.go`) in the chat's place: Settings-style rows, whose Chats row
+  (`internal/tui/agentpane.go`) in the chat's place: a `● live`/`● paused` chip (`p` or a
+  click switches it), rows with a `›` caret and dim values (Delete bot… and Unregister…
+  apart, in red) and, when wide enough, an `agentSideWidth` column of what it is connected
+  to and its newest messages (`AgentDB.LatestMessages`). The Chats row
   opens the chat picker modal (`internal/tui/dmpicker.go`), centred over the pane with it
   faded behind: a radio list of All private chats or Selected users, the latter listing
   recent DMs under a filter that, on backends with `backend.DMFinder` (Telegram,

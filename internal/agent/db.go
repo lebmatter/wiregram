@@ -911,6 +911,34 @@ func (d *AgentDB) ChatHistory(agentID int64, backendType, accountID, chatIDStr s
 	return out, rows.Err()
 }
 
+// LatestMessages is the agent's newest logged messages across its chats,
+// newest first.
+func (d *AgentDB) LatestMessages(agentID int64, limit int) ([]AgentLoggedMessage, error) {
+	rows, err := d.db.Query(
+		`SELECT message_id, sender, sender_id, text, timestamp, outgoing, is_agent_reply
+		 FROM agent_messages WHERE agent_id = ?
+		 ORDER BY timestamp DESC, id DESC
+		 LIMIT ?`,
+		agentID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("latest messages: %w", err)
+	}
+	defer rows.Close()
+	var out []AgentLoggedMessage
+	for rows.Next() {
+		var m AgentLoggedMessage
+		var ts string
+		if err := rows.Scan(&m.MessageID, &m.Sender, &m.SenderID, &m.Text, &ts, &m.Outgoing,
+			&m.IsAgentReply); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		m.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (d *AgentDB) PurgeOldMessages(agentID int64, retentionDays int) (int64, error) {
 	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Format(time.RFC3339)
 	res, err := d.db.Exec(

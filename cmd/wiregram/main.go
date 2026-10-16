@@ -271,7 +271,8 @@ Keyboard shortcuts:
     Esc               Close (a click outside it closes it too)
 
   Bot (a row in the Bots section)
-    Up/k, Down/j      Select a setting: status, name, @handle, provider,
+    p                 Pause or resume the bot (the chip on top)
+    Up/k, Down/j      Select a setting: name, @handle, provider,
                       model, prompt, knowledge files, media, replies (ask me
                       first or automatically), history, chats, bot account
                       (Register… creates @handle on Mattermost or Telegram,
