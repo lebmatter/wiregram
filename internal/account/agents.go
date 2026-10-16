@@ -580,7 +580,7 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		return
 	}
 	if ag.record.Auto {
-		if err := rt.send(b, entry, key, ag.record.Name, reply, replyTarget(b, trigger)); err != nil {
+		if err := rt.send(b, entry, key, ag.record, reply, replyTarget(b, trigger)); err != nil {
 			rt.fail(key.AgentID, err)
 			return
 		}
@@ -689,15 +689,17 @@ func (rt *agentRuntime) findChat(b backend.Backend, id backend.ChatID) (backend.
 	return backend.ChatEntry{}, fmt.Errorf("could not find the chat to reply in")
 }
 
-// send replies as the agent and records the message as the agent's, so the
-// chat shows who wrote it.
-func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key ConvKey, name, text, replyTo string) error {
+// send replies as the agent, behind its prefix, and records the message as the
+// agent's, so the chat shows who wrote it. The agent's history keeps the text
+// without the prefix, so the model never learns to write it.
+func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key ConvKey,
+	rec agent.AgentRecord, text, replyTo string) error {
 	if key.Self {
 		rt.mu.Lock()
 		rt.selfSending[key.Chat]++
 		rt.mu.Unlock()
 	}
-	sent, err := b.Send(rt.ctx, entry, text, replyTo)
+	sent, err := b.Send(rt.ctx, entry, rec.Prefixed(text), replyTo)
 	if key.Self {
 		rt.mu.Lock()
 		if err == nil {
@@ -712,14 +714,14 @@ func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key Con
 		return fmt.Errorf("send reply: %w", err)
 	}
 	if sent.Text == "" {
-		sent.Text = text
+		sent.Text = rec.Prefixed(text)
 	}
 	logChat := LogChatID(key.Chat, key.Bot)
-	if err := rt.Db.RecordSent(key.AccountKey, logChat, sent.ID, name); err != nil {
+	if err := rt.Db.RecordSent(key.AccountKey, logChat, sent.ID, rec.Name); err != nil {
 		return err
 	}
 	if err := rt.Db.LogMessage(key.AgentID, key.Chat.Backend, key.AccountKey, logChat, "", sent,
-		sent.Text, true); err != nil {
+		text, true); err != nil {
 		return err
 	}
 	// Telegram never echoes a session's own sends, so the open chat would miss
@@ -765,11 +767,12 @@ func (rt *agentRuntime) buildMessages(ag *runningAgent, history []agent.AgentLog
 	messages := make([]aiMessage, 0, len(history)+1)
 	messages = append(messages, aiMessage{Role: "system", Content: system.String()})
 	for _, h := range history {
-		role := "user"
+		role, text := "user", h.Text
 		if h.Outgoing || h.IsAgentReply {
-			role = "assistant"
+			// An echo or a thread from the server still carries the prefix.
+			role, text = "assistant", ag.record.Unprefixed(text)
 		}
-		messages = append(messages, aiMessage{Role: role, Content: h.Text})
+		messages = append(messages, aiMessage{Role: role, Content: text})
 	}
 	return messages, nil
 }
@@ -990,8 +993,7 @@ func (rt *agentRuntime) Approve(key ConvKey) error {
 	if !ok {
 		return fmt.Errorf("that bot has been deleted")
 	}
-	name := rec.Name
-	if err := rt.send(b, entry, key, name, sug.Text, sug.ReplyTo); err != nil {
+	if err := rt.send(b, entry, key, rec, sug.Text, sug.ReplyTo); err != nil {
 		return err
 	}
 	rt.Discard(key)

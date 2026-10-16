@@ -258,6 +258,9 @@ These are project constraints, not suggestions:
   moves it into the composer as the user's own, Discard (^X) drops it. On backends with
   server threads (`backend.ThreadFetcher`) a bot answers in the message's own thread, with
   the thread as context (`replyTarget`); elsewhere it quotes the message.
+  Every reply a bot sends starts with its Prefix row's emoji and a colon (`🤖: `, or `💻: `;
+  `agents.prefix`, schema v9, `AgentRecord.Prefixed`), added in `agentRuntime.send` and
+  kept out of the bot's history so the model never writes it.
   `wiregram dry-run` drafts the owning bot's reply without sending (`agentRuntime.DryRun`).
 - A bot can be registered on its network where the backend implements
   `backend.BotRegistrar` (Mattermost) or `backend.BotManaged` (Telegram, through managed

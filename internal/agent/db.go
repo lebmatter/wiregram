@@ -4,12 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 8
+const currentDBVersion = 9
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -38,8 +39,9 @@ type AgentRecord struct {
 	Model         string
 	RetentionDays int
 	Enabled       bool
-	AllChats      bool // answer every DM rather than only the chosen chats
-	SelfChat      bool // answer the user's chat with themselves too
+	AllChats      bool   // answer every DM rather than only the chosen chats
+	SelfChat      bool   // answer the user's chat with themselves too
+	Prefix        string // PrefixRobot or PrefixComputer, before every reply as "PREFIX: "
 }
 
 // AgentChat is a DM an agent with AllChats off answers.
@@ -54,6 +56,30 @@ const (
 	MediaTags   = "tags"   // media arrive as their bracket tag plus caption
 	MediaVision = "vision" // as tags, and incoming photos go to the model
 )
+
+// The prefixes a bot's replies start with, so no one takes them for the user's.
+const (
+	PrefixRobot    = "🤖"
+	PrefixComputer = "💻"
+)
+
+// Prefixed is text as the agent sends it: its prefix, a colon, then the text.
+func (a AgentRecord) Prefixed(text string) string {
+	return a.ReplyPrefix() + ": " + text
+}
+
+// Unprefixed takes the agent's prefix off a reply it sent.
+func (a AgentRecord) Unprefixed(text string) string {
+	return strings.TrimPrefix(text, a.ReplyPrefix()+": ")
+}
+
+// ReplyPrefix is the agent's prefix, the robot unless the computer was chosen.
+func (a AgentRecord) ReplyPrefix() string {
+	if a.Prefix == PrefixComputer {
+		return PrefixComputer
+	}
+	return PrefixRobot
+}
 
 func (a AgentRecord) TextOnly() bool { return a.Media == MediaText }
 func (a AgentRecord) Vision() bool   { return a.Media == MediaVision }
@@ -151,6 +177,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV8)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV9)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -171,6 +201,11 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV9 gives every agent the prefix its replies start with.
+const schemaV9 = `
+ALTER TABLE agents ADD COLUMN prefix TEXT NOT NULL DEFAULT '🤖';
+`
 
 // schemaV8 lets one agent per account answer the user's chat with themselves,
 // apart from the DMs that all_chats and agent_chats share out.
@@ -446,7 +481,7 @@ func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	rows, err := d.db.Query(
 		`SELECT id, account_key, name, handle, prompt, autoreply, media, provider_id, model,
-		 retention_days, enabled, all_chats, self_chat
+		 retention_days, enabled, all_chats, self_chat, prefix
 		 FROM agents ORDER BY name`,
 	)
 	if err != nil {
@@ -458,7 +493,7 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 		var a AgentRecord
 		if err := rows.Scan(&a.ID, &a.AccountKey, &a.Name, &a.Handle, &a.Prompt, &a.Auto,
 			&a.Media, &a.ProviderID, &a.Model, &a.RetentionDays, &a.Enabled,
-			&a.AllChats, &a.SelfChat); err != nil {
+			&a.AllChats, &a.SelfChat, &a.Prefix); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		out = append(out, a)
@@ -507,10 +542,10 @@ func (d *AgentDB) CreateAgent(a AgentRecord) (AgentRecord, error) {
 	a.AllChats = claims.All == 0 && len(claims.Chats) == 0
 	res, err := tx.Exec(
 		`INSERT INTO agents (account_key, name, handle, prompt, autoreply, media, provider_id,
-		 model, retention_days, enabled, all_chats)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 model, retention_days, enabled, all_chats, prefix)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.AccountKey, a.Name, a.Handle, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model,
-		a.RetentionDays, a.Enabled, a.AllChats,
+		a.RetentionDays, a.Enabled, a.AllChats, a.ReplyPrefix(),
 	)
 	if err != nil {
 		return a, fmt.Errorf("create agent: %w", err)
@@ -532,9 +567,9 @@ func (d *AgentDB) UpdateAgent(a AgentRecord) error {
 	}
 	_, err := d.db.Exec(
 		`UPDATE agents SET name = ?, handle = ?, prompt = ?, autoreply = ?, media = ?,
-		 provider_id = ?, model = ?, retention_days = ?, enabled = ? WHERE id = ?`,
+		 provider_id = ?, model = ?, retention_days = ?, enabled = ?, prefix = ? WHERE id = ?`,
 		a.Name, a.Handle, a.Prompt, a.Auto, a.Media, a.ProviderID, a.Model, a.RetentionDays,
-		a.Enabled, a.ID,
+		a.Enabled, a.ReplyPrefix(), a.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update agent: %w", err)

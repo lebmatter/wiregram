@@ -34,6 +34,7 @@ const (
 	fieldKnowledge
 	fieldMedia
 	fieldReplies
+	fieldPrefix
 	fieldRetention
 	fieldChats
 	fieldManager    // the account's manager bot, on Telegram
@@ -303,6 +304,8 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		m.rec.Media = nextOption(mediaOptions, m.rec.Media)
 	case fieldReplies:
 		m.rec.Auto = !m.rec.Auto
+	case fieldPrefix:
+		m.rec.Prefix = nextOption(prefixOptions, m.rec.ReplyPrefix())
 	case fieldRetention:
 		days, _ := strconv.Atoi(nextOption(retentionOptions, strconv.Itoa(m.rec.RetentionDays)))
 		m.rec.RetentionDays = days
@@ -355,6 +358,12 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 		return m, nil
 	}
 	return m.save(), nil
+}
+
+// prefixOptions are the prefixes a bot's replies can start with.
+var prefixOptions = []wizardOption{
+	{label: "🤖 robot", value: agent.PrefixRobot},
+	{label: "💻 computer", value: agent.PrefixComputer},
 }
 
 func nextOption(opts []wizardOption, v string) string {
@@ -619,6 +628,8 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 		return "Understands", optionLabel(mediaOptions, m.rec.Media)
 	case fieldReplies:
 		return "Replies", on(m.rec.Auto, "automatically", "ask me first")
+	case fieldPrefix:
+		return "Prefix", m.rec.Prefixed("…")
 	case fieldRetention:
 		return "History", fmt.Sprintf("%d days", m.rec.RetentionDays)
 	case fieldManager:

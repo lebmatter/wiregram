@@ -96,6 +96,7 @@ some, a new bot starts with none and its chat picker opens right away.
 | Provider | cycles through your providers |
 | Understands | text only, media descriptions or vision |
 | Replies | ask me first, or automatically |
+| Prefix | 🤖 (the default) or 💻; every reply the bot sends starts with it, as `🤖: ` |
 | History | 7, 30 or 90 days |
 | Chats | all private chats, or N selected; opens the chat picker |
 | Manager bot | Telegram only: the account's manager bot; <kbd>Enter</kbd> pastes its token |
