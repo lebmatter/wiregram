@@ -22,6 +22,7 @@ type Event struct {
 	Kind     EventKind
 	Chat     ChatID
 	DM       bool                   // one-to-one with a real person: never self, bot or group
+	Self     bool                   // the user's chat with themselves
 	Message  *Message               // EventMessage, EventEdit
 	Deleted  []string               // EventDelete
 	Reaction *GenericReactionUpdate // EventReaction
@@ -33,6 +34,7 @@ type Filter struct {
 	Kinds    EventKind // bitmask; 0 means all kinds
 	Chat     ChatID    // zero means every chat
 	DMOnly   bool
+	Self     bool // with DMOnly, the user's chat with themselves passes too
 	TextOnly bool // messages and edits must carry text and no media
 }
 
@@ -43,7 +45,7 @@ func (f Filter) Match(ev Event) bool {
 	if f.Chat != (ChatID{}) && f.Chat != ev.Chat {
 		return false
 	}
-	if f.DMOnly && !ev.DM {
+	if f.DMOnly && !ev.DM && !(f.Self && ev.Self) {
 		return false
 	}
 	if f.TextOnly && (ev.Kind == EventMessage || ev.Kind == EventEdit) {

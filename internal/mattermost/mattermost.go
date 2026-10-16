@@ -426,6 +426,7 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 			Unread:  cw.Unread,
 			IsDM:    isDM,
 			IsGroup: !isDM,
+			IsSelf:  cw.Ch.Type == "D" && cw.Ch.Name == mb.UserID+"__"+mb.UserID,
 			Raw:     cw.Ch,
 		})
 	}
@@ -1696,13 +1697,13 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		}
 		// A "D" channel named after the user twice is the self DM. Posts from
 		// other bots are left out; a bot's own, on its own connection, are not.
+		self := wrapper.ChannelType == "D" && wrapper.ChannelName == mb.UserID+"__"+mb.UserID
 		dm := wrapper.ChannelType == "D" &&
-			(post.UserID == mb.UserID || post.Props["from_bot"] != "true") &&
-			wrapper.ChannelName != mb.UserID+"__"+mb.UserID
+			(post.UserID == mb.UserID || post.Props["from_bot"] != "true") && !self
 		msg := mb.wsPostToMessage(post)
 		mb.events.Publish(backend.Event{
 			Kind: backend.EventMessage, Chat: backend.ChatID{Backend: "mattermost", Id: post.ChannelID},
-			DM: dm, Message: &msg,
+			DM: dm, Self: self, Message: &msg,
 		})
 
 	case "post_edited":

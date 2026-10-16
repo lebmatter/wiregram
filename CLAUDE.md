@@ -285,7 +285,12 @@ These are project constraints, not suggestions:
 - A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
   over its screen, faded behind it: navigation and search keys; any key or click closes it.
 - Bots answer incoming DMs only (`BackendEvent.DM`); they never act in
-  groups or channels and never start a chat. Email publishes no DM events
+  groups or channels and never start a chat. The exception is the user's chat with
+  themselves (`Event.Self`, `Filter.Self`): one bot per account may tick it in the chat
+  picker (`agents.self_chat`, schema v8, apart from `all_chats`/`agent_chats`), and there
+  the user's own messages are the asks (`ConvKey.Self`); the runtime tells its replies
+  apart by ID (`selfSent`, `selfSending`), and the composer publishes its sends there
+  since Telegram and WhatsApp never echo them. Email publishes no DM events
   (its events name folders), so bots never answer mail.
 
 ## Architecture

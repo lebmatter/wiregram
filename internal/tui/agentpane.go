@@ -535,8 +535,12 @@ func (m agentPaneModel) openPicker() agentPaneModel {
 			dms = append(dms, agent.AgentChat{ID: e.ID.Id, Title: textfmt.Plain(e.Title)})
 		}
 	}
-	m.picker = newDMPicker(m.ctx, m.st, m.b, m.rec.Name, m.rec.AllChats, dms, picked, owners,
-		allBy)
+	selfBy := ""
+	if claims.Self != 0 && claims.Self != m.rec.ID {
+		selfBy = names[claims.Self]
+	}
+	m.picker = newDMPicker(m.ctx, m.st, m.b, m.rec.Name, m.rec.AllChats, m.rec.SelfChat, dms,
+		picked, owners, allBy, selfBy)
 	m.picker.resized(m.width, m.height)
 	return m
 }
@@ -544,12 +548,12 @@ func (m agentPaneModel) openPicker() agentPaneModel {
 // saveChats stores the picker's choice; on failure the picker stays open with
 // the reason.
 func (m agentPaneModel) saveChats() agentPaneModel {
-	all, chats := m.picker.chosen()
-	if err := m.mgr.Agents.Db.SetAgentChats(m.rec.ID, all, chats); err != nil {
+	all, self, chats := m.picker.chosen()
+	if err := m.mgr.Agents.Db.SetAgentChats(m.rec.ID, all, self, chats); err != nil {
 		m.picker.notice = textfmt.CleanError(err)
 		return m
 	}
-	m.rec.AllChats, m.chats, m.picker = all, chats, nil
+	m.rec.AllChats, m.rec.SelfChat, m.chats, m.picker = all, self, chats, nil
 	m.mgr.Agents.Reload()
 	m.notice = "Saved"
 	return m
@@ -632,13 +636,19 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 	case fieldUnregister:
 		return styleError.Render("Unregister…"), ""
 	case fieldChats:
+		you := ""
+		if m.rec.SelfChat {
+			you = " + you"
+		}
 		switch {
 		case m.rec.AllChats:
-			return "Chats", "all private chats"
+			return "Chats", "all private chats" + you
+		case len(m.chats) == 0 && m.rec.SelfChat:
+			return "Chats", "you"
 		case len(m.chats) == 0:
 			return "Chats", "none yet: pick some"
 		}
-		return "Chats", fmt.Sprintf("%d selected", len(m.chats))
+		return "Chats", fmt.Sprintf("%d selected", len(m.chats)) + you
 	}
 	return styleError.Render("Delete bot…"), ""
 }

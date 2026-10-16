@@ -308,6 +308,11 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 		}
 	}
 
+	if wa.isSelf(chatJID) {
+		// Notes to self come under the own number or the own LID; keep one chat.
+		chatJID = wa.Jid.ToNonAD()
+	}
+
 	if evt.Info.PushName != "" {
 		wa.mu.Lock()
 		wa.userCache[evt.Info.Sender.ToNonAD()] = evt.Info.PushName
@@ -339,14 +344,16 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 		reactions = wa.reactionsOf(target)
 	}
 	// Person-to-person only: not groups, broadcasts or the own number.
+	self := wa.isSelf(chatJID)
 	dm := (chatJID.Server == types.DefaultUserServer || chatJID.Server == types.HiddenUserServer) &&
-		chatJID.User != wa.Jid.User
+		!self
 	wa.mu.Unlock()
 
 	switch {
 	case evt.IsEdit:
 		msg.ID = getEditTargetID(evt)
-		wa.events.Publish(backend.Event{Kind: backend.EventEdit, Chat: chat, DM: dm, Message: &msg})
+		wa.events.Publish(backend.Event{Kind: backend.EventEdit, Chat: chat, DM: dm, Self: self,
+			Message: &msg})
 	case reaction != nil:
 		wa.events.Publish(backend.Event{
 			Kind: backend.EventReaction, Chat: chat,
@@ -355,7 +362,8 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 			},
 		})
 	default:
-		wa.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chat, DM: dm, Message: &msg})
+		wa.events.Publish(backend.Event{Kind: backend.EventMessage, Chat: chat, DM: dm, Self: self,
+			Message: &msg})
 	}
 }
 
@@ -649,6 +657,7 @@ func (wa *WaBackend) chatEntry(c waChatEntry) backend.ChatEntry {
 		LastAt:  c.lastAt,
 		IsDM:    c.jid.Server == types.DefaultUserServer,
 		IsGroup: c.isGroup,
+		IsSelf:  wa.isSelf(c.jid),
 		Raw:     c.jid,
 	}
 }
@@ -682,6 +691,18 @@ func (wa *WaBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention
 		return found[i].Message.Timestamp.After(found[j].Message.Timestamp)
 	})
 	return found[:min(len(found), limit)], nil
+}
+
+// isSelf reports whether jid is the user's own chat, by phone number or LID.
+func (wa *WaBackend) isSelf(jid types.JID) bool {
+	if jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer {
+		return false
+	}
+	lid := ""
+	if wa.Client != nil && wa.Client.Store != nil {
+		lid = wa.Client.Store.LID.User
+	}
+	return jid.User == wa.Jid.User || lid != "" && jid.User == lid
 }
 
 // mentionsMe reports whether m mentions the user, by phone number or by the

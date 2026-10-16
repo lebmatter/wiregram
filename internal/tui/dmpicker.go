@@ -16,13 +16,15 @@ import (
 )
 
 // dmPicker is the modal, opened from a bot's Chats row, that chooses which
-// private chats it answers: a radio list of all of them or selected users.
+// private chats it answers: a radio list of all of them or selected users,
+// then, on backends with backend.SelfChatter, a tick for the user's chat with
+// themselves, which is apart from both and has at most one bot too.
 // Selected users lists the people recently chatted with, filtered as you type,
 // and on backends with backend.DMFinder the people found on the server too,
 // so a DM that has not started yet can be picked. No DM has two bots, so chats
 // another bot answers are shown with its name and cannot be ticked, all is
-// unavailable while another bot answers any, and nothing can change while
-// another bot answers all.
+// unavailable while another bot answers any, and only the user's own chat can
+// change while another bot answers all.
 type dmPicker struct {
 	st     *styles
 	ctx    context.Context
@@ -30,6 +32,9 @@ type dmPicker struct {
 	finder backend.DMFinder // nil when only existing chats can be picked
 	bot    string
 	all    bool
+	selfOK bool              // the backend has a chat with oneself
+	self   bool              // the bot answers it
+	selfBy string            // the other bot answering it, or ""
 	dms    []agent.AgentChat // the bot's own picks first, then recent DMs
 	picked map[string]bool
 	owners map[string]string // DM ID → the other bot answering it
@@ -39,7 +44,7 @@ type dmPicker struct {
 	remote []backend.UserCandidate
 	gen    int
 	busy   bool // searching or resolving a pick
-	sel    int  // dmRadioRows radio rows, then index into items()
+	sel    int  // m.top() rows, then index into items()
 	notice string
 	width  int
 	height int
@@ -63,17 +68,27 @@ type dmResolved struct {
 	err  error
 }
 
-// The picker's lines above its people: the two radio rows, the filter and
-// the heading.
+// dmRadioRows is the two radio rows; dmPickerRows the people shown at most.
 const (
 	dmRadioRows  = 2
-	dmPickerTop  = dmRadioRows + 2
 	dmPickerRows = 14
 )
 
-func newDMPicker(ctx context.Context, st *styles, b backend.Backend, bot string, all bool,
+// top is how many rows the arrows reach above the people: the radio rows and
+// the user's own chat.
+func (m *dmPicker) top() int {
+	if m.selfOK {
+		return dmRadioRows + 1
+	}
+	return dmRadioRows
+}
+
+// head is the lines above the people: the top rows, the filter and the heading.
+func (m *dmPicker) head() int { return m.top() + 2 }
+
+func newDMPicker(ctx context.Context, st *styles, b backend.Backend, bot string, all, self bool,
 	dms []agent.AgentChat, picked map[string]bool, owners map[string]string,
-	allBy string) *dmPicker {
+	allBy, selfBy string) *dmPicker {
 	in := textinput.New()
 	in.Prompt = ""
 	in.Placeholder = "type to filter"
@@ -82,12 +97,17 @@ func newDMPicker(ctx context.Context, st *styles, b backend.Backend, bot string,
 	if finder != nil {
 		in.Placeholder = "name or username"
 	}
-	m := &dmPicker{st: st, ctx: ctx, b: b, finder: finder, bot: bot, all: all, dms: dms,
-		picked: picked, owners: owners, allBy: allBy, input: in}
+	_, selfOK := b.(backend.SelfChatter)
+	m := &dmPicker{st: st, ctx: ctx, b: b, finder: finder, bot: bot, all: all, selfOK: selfOK,
+		self: self, selfBy: selfBy, dms: dms, picked: picked, owners: owners, allBy: allBy,
+		input: in}
 	if !all {
 		m.sel = 1
 	}
-	if allBy != "" {
+	switch {
+	case allBy != "" && selfOK:
+		m.sel = dmRadioRows // only the user's own chat can change
+	case allBy != "":
 		m.notice = "Bot " + allBy + " answers all private chats"
 	}
 	m.input.Focus()
@@ -115,18 +135,18 @@ func (m *dmPicker) items() []dmItem {
 	return out
 }
 
-// chosen is what the modal saves: whether the bot answers all, else its ticks.
-func (m *dmPicker) chosen() (bool, []agent.AgentChat) {
+// chosen is what the modal saves: whether the bot answers all, else its
+// ticks, and whether it answers the user's own chat.
+func (m *dmPicker) chosen() (all, self bool, chats []agent.AgentChat) {
 	if m.all {
-		return true, nil
+		return true, m.self, nil
 	}
-	var chats []agent.AgentChat
 	for _, c := range m.dms {
 		if m.picked[c.ID] {
 			chats = append(chats, c)
 		}
 	}
-	return false, chats
+	return false, m.self, chats
 }
 
 // setAll picks all private chats or selected users.
@@ -144,12 +164,23 @@ func (m *dmPicker) setAll(all bool) {
 // pick acts on row i of the radio rows and items: a radio row is chosen, a
 // person ticked or unticked.
 func (m *dmPicker) pick(i int) tea.Cmd {
-	if i < dmRadioRows {
+	switch {
+	case i < dmRadioRows && m.allBy != "":
+		m.notice = "Bot " + m.allBy + " answers all private chats"
+		return nil
+	case i < dmRadioRows:
 		m.setAll(i == 0)
+		return nil
+	case i < m.top():
+		if m.selfBy != "" {
+			m.notice = "Bot " + m.selfBy + " answers your own chat"
+			return nil
+		}
+		m.self = !m.self
 		return nil
 	}
 	items := m.items()
-	i -= dmRadioRows
+	i -= m.top()
 	if m.all || i >= len(items) {
 		return nil
 	}
@@ -180,10 +211,10 @@ func (m *dmPicker) tick(c agent.AgentChat) {
 
 // rowCount is how many rows the arrows move through.
 func (m *dmPicker) rowCount() int {
-	if m.all {
-		return dmRadioRows
+	if m.all || m.allBy != "" {
+		return m.top()
 	}
-	return dmRadioRows + len(m.items())
+	return m.top() + len(m.items())
 }
 
 // key handles a key press: save when the choice should be stored, done when
@@ -194,9 +225,9 @@ func (m *dmPicker) key(msg tea.KeyPressMsg) (save, done bool, cmd tea.Cmd) {
 	case "esc", "ctrl+c":
 		return false, true, nil
 	case "enter":
-		return m.allBy == "", true, nil
+		return m.allBy == "" || m.selfOK, true, nil
 	}
-	if m.allBy != "" {
+	if m.allBy != "" && !m.selfOK {
 		return false, false, nil
 	}
 	m.notice = ""
@@ -208,7 +239,7 @@ func (m *dmPicker) key(msg tea.KeyPressMsg) (save, done bool, cmd tea.Cmd) {
 	case "space", " ":
 		cmd = m.pick(m.sel)
 	default:
-		if m.all {
+		if m.all || m.allBy != "" {
 			return false, false, nil
 		}
 		m.input, cmd = m.input.Update(msg)
@@ -235,7 +266,7 @@ func (m *dmPicker) edited() tea.Cmd {
 	}
 	m.query, m.remote = q, nil
 	m.gen++
-	m.sel = min(m.rowCount()-1, dmRadioRows)
+	m.sel = min(m.rowCount()-1, m.top())
 	if m.finder == nil || utf8.RuneCountInString(q) < 2 {
 		m.busy = false
 		return nil
@@ -267,8 +298,8 @@ func (m *dmPicker) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		m.remote = msg.candidates
-		if m.sel < dmRadioRows {
-			m.sel = dmRadioRows
+		if m.sel < m.top() {
+			m.sel = m.top()
 		}
 		m.sel = min(m.sel, m.rowCount()-1)
 	case dmResolved:
@@ -299,23 +330,27 @@ func (m *dmPicker) update(msg tea.Msg) tea.Cmd {
 // resized fits the modal into an area width by height.
 func (m *dmPicker) resized(width, height int) {
 	m.width = min(56, width-4)
-	if m.allBy != "" {
+	switch {
+	case m.allBy != "" && !m.selfOK:
 		m.height = 4 // the two lines of View
+		return
+	case m.allBy != "":
+		m.height = m.top() + 6 // borders, the top rows, a gap, two lines and the status
 		return
 	}
 	// Borders, the top lines, the people, a gap and the status line.
-	m.height = max(dmPickerTop+6, min(height-2, dmPickerTop+dmPickerRows+4))
+	m.height = max(m.head()+6, min(height-2, m.head()+dmPickerRows+4))
 }
 
 // rows is how many people fit between the heading and the status line.
-func (m *dmPicker) rows() int { return max(1, m.height-2-dmPickerTop-2) }
+func (m *dmPicker) rows() int { return max(1, m.height-2-m.head()-2) }
 
 func (m *dmPicker) size() (int, int) { return m.width, m.height }
 
 func (m *dmPicker) View() string {
 	inner := m.width - 4
 	title := "Chats " + textfmt.Plain(m.bot) + " answers"
-	if m.allBy != "" {
+	if m.allBy != "" && !m.selfOK {
 		return renderBox(title, []string{
 			m.st.subtle.Render(textfmt.ClipLine(m.notice, inner)),
 			m.st.dim.Render(textfmt.ClipLine("A chat has one bot; change "+m.allBy+
@@ -329,6 +364,9 @@ func (m *dmPicker) View() string {
 		return "  "
 	}
 	radio := func(i int, on bool, label string) string {
+		if m.allBy != "" {
+			return marker(i) + m.st.dim.Render("○ "+label)
+		}
 		if on {
 			return marker(i) + m.st.accent.Render("● ") + label
 		}
@@ -338,10 +376,19 @@ func (m *dmPicker) View() string {
 		radio(0, m.all, "All private chats"),
 		radio(1, !m.all, "Selected users"),
 	}
-	if m.all {
+	if m.selfOK {
+		body = append(body, m.selfRow())
+	}
+	switch {
+	case m.allBy != "":
+		body = append(body, "", m.st.subtle.Render(textfmt.ClipLine(
+			"  Bot "+m.allBy+" answers all private chats;", inner)),
+			m.st.dim.Render(textfmt.ClipLine("  change "+m.allBy+"'s Chats to pick others.",
+				inner)))
+	case m.all:
 		body = append(body, "", m.st.subtle.Render(textfmt.ClipLine(
 			"  Every private chat of this account, now and later.", inner)))
-	} else {
+	default:
 		m.input.SetWidth(max(1, inner-10))
 		body = append(body, m.st.subtle.Render("  Filter  ")+m.input.View(), m.heading())
 		body = append(body, m.people(inner)...)
@@ -353,10 +400,10 @@ func (m *dmPicker) View() string {
 	switch {
 	case m.notice != "":
 		status = styleError.Render(textfmt.ClipLine(m.notice, inner))
-	case m.all:
+	case m.all || m.allBy != "":
 		status = m.st.dim.Render(textfmt.ClipLine("space: pick · enter: save", inner))
 	default:
-		_, chats := m.chosen()
+		_, _, chats := m.chosen()
 		count := fmt.Sprintf("%d selected", len(chats))
 		status = m.st.subtle.Render(count) + m.st.dim.Render(textfmt.ClipLine(
 			" · space: tick · enter: save", max(0, inner-textfmt.DisplayWidth(count))))
@@ -391,7 +438,7 @@ func (m *dmPicker) people(inner int) []string {
 		return []string{m.st.dim.Render(empty)}
 	}
 	var out []string
-	sel := m.sel - dmRadioRows
+	sel := m.sel - m.top()
 	first := window(max(0, sel), m.rows())
 	for i := first; i < min(len(items), first+m.rows()); i++ {
 		it := items[i]
@@ -442,18 +489,18 @@ func (m *dmPicker) click(x, y int) (done bool, cmd tea.Cmd) {
 	if x < 0 || x >= m.width || y < 0 || y >= m.height {
 		return true, nil
 	}
-	if m.allBy != "" {
+	if m.allBy != "" && !m.selfOK {
 		return false, nil
 	}
 	m.notice = ""
 	switch row := y - 1; {
-	case row < dmRadioRows:
+	case row < m.top():
 		m.sel = row
-		m.setAll(row == 0)
-	case row >= dmPickerTop && !m.all && row-dmPickerTop < m.rows():
-		i := window(max(0, m.sel-dmRadioRows), m.rows()) + row - dmPickerTop
+		cmd = m.pick(row)
+	case row >= m.head() && !m.all && m.allBy == "" && row-m.head() < m.rows():
+		i := window(max(0, m.sel-m.top()), m.rows()) + row - m.head()
 		if i < len(m.items()) {
-			m.sel = dmRadioRows + i
+			m.sel = m.top() + i
 			cmd = m.pick(m.sel)
 		}
 	}
@@ -461,9 +508,34 @@ func (m *dmPicker) click(x, y int) (done bool, cmd tea.Cmd) {
 }
 
 func (m *dmPicker) helpKeys() []helpKey {
-	if m.allBy != "" {
+	if m.allBy != "" && !m.selfOK {
 		return []helpKey{{"esc", "close"}}
 	}
 	return []helpKey{{"↑↓", "select"}, {"space", "pick/tick"}, {"enter", "save"},
 		{"esc", "cancel"}}
+}
+
+// selfRow is the tick for the user's chat with themselves.
+func (m *dmPicker) selfRow() string {
+	box := "[ ] "
+	switch {
+	case m.selfBy != "":
+		box = "[-] "
+	case m.self:
+		box = "[x] "
+	}
+	row := box + "You"
+	tag := m.st.dim.Render("  notes to yourself")
+	if m.selfBy != "" {
+		tag = m.st.agent.Render("  " + agentIcon + " " + truncate(m.selfBy, 24))
+	}
+	switch {
+	case m.sel == dmRadioRows:
+		row = m.st.accent.Render("> ") + m.st.selectedRow.Render(row)
+	case m.selfBy != "":
+		row = "  " + m.st.dim.Render(row)
+	default:
+		row = "  " + row
+	}
+	return row + tag
 }

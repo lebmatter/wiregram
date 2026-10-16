@@ -14,7 +14,8 @@ Every conversation a bot answers is sent to the AI provider you configure.
 ## What bots do and don't do
 
 - They answer **DMs only**. They never act in groups or channels, and never start a
-  conversation.
+  conversation. On Telegram, Mattermost and WhatsApp one bot can also answer your chat
+  with yourself (see [Your own chat](#your-own-chat)).
 - They never answer email.
 - A bot belongs to one account. A private chat is answered by **at most one bot**: a bot
   takes all of the account's private chats, or the ones picked for it.
@@ -113,6 +114,7 @@ The chat picker is a modal over the bot's pane:
 ╭─ Chats Ava answers ─────────────────────────╮
 │   ○ All private chats                       │
 │   ● Selected users                          │
+│   [x] You  notes to yourself                │
 │   Filter  ra                                │
 │   Results · 4                               │
 │ > [x] Rahul                                 │
@@ -136,9 +138,21 @@ No private chat has two bots:
 
 - Chats another bot answers show `[-]` and its name, and cannot be ticked.
 - **All private chats** is unavailable while another bot answers any.
-- While another bot answers all of them, the picker only shows that; <kbd>Esc</kbd>
-  closes it.
+- While another bot answers all of them, the picker only shows that and the **You**
+  row (where there is one); <kbd>Esc</kbd> closes it.
 - A paused bot keeps its chats. Deleting a bot frees them.
+
+### Your own chat
+
+On Telegram (Saved Messages), Mattermost and WhatsApp the picker has a **You** row under
+the radio list: a tick for your chat with yourself, the sidebar's You row. It is apart
+from All private chats and Selected users, so a bot can answer it whichever of those it
+has, and only one bot of the account can tick it (another bot's shows `[-]` and its
+name). There you are the one asking: every message you write in that chat, in wiregram
+or on another device, is a question for the bot, and it answers as you. Without its own
+instructions the bot acts as your assistant, and the rules for strangers' messages are
+left out. Its replies are told apart from yours by message ID, so it never answers
+itself.
 
 In the sidebar a violet ✦ follows the account's name (dim while all its bots are paused),
 and the account chooser gives each bot a chip with its own ✦ and name. Each private chat a bot answers

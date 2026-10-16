@@ -328,12 +328,23 @@ func (m chatViewModel) sendMessage(outgoing chatOutgoing) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
 	entry := m.entry
+	// A bot answering the user's own chat waits for their messages there, but
+	// Telegram and WhatsApp never echo a session's own sends; the chat dedupes
+	// the echo of backends that do.
+	announce := func(msg backend.Message, err error) {
+		if err == nil && entry.IsSelf {
+			b.Events().Publish(backend.Event{Kind: backend.EventMessage, Chat: entry.ID,
+				Self: true, Message: &msg})
+		}
+	}
 	return func() tea.Msg {
 		if outgoing.path != "" {
 			msg, err := b.SendUpload(ctx, entry, outgoing.path, outgoing.text, outgoing.replyTo)
+			announce(msg, err)
 			return chatUploadResult{chatTag{entry.ID}, outgoing.path, msg, err}
 		}
 		msg, err := b.Send(ctx, entry, outgoing.text, outgoing.replyTo)
+		announce(msg, err)
 		return chatSendResult{chatTag{entry.ID}, msg, err}
 	}
 }

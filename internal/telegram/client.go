@@ -249,13 +249,15 @@ func (c *Client) accept(value tg.MessageClass, newMessage bool) {
 	}
 	dm := c.isDM(key)
 	c.mu.Unlock()
+	self := key.kind == 'u' && key.id == c.AccountID
 
 	kind := backend.EventMessage
 	if !newMessage {
 		kind = backend.EventEdit
 	}
 	msg := tgToMessage(c, m)
-	c.events.Publish(backend.Event{Kind: kind, Chat: peerKeyToID(key), DM: dm, Message: &msg})
+	c.events.Publish(backend.Event{Kind: kind, Chat: peerKeyToID(key), DM: dm, Self: self,
+		Message: &msg})
 }
 
 func (c *Client) acceptTyping(userID int64) {

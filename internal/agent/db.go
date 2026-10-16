@@ -9,7 +9,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 7
+const currentDBVersion = 8
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -39,6 +39,7 @@ type AgentRecord struct {
 	RetentionDays int
 	Enabled       bool
 	AllChats      bool // answer every DM rather than only the chosen chats
+	SelfChat      bool // answer the user's chat with themselves too
 }
 
 // AgentChat is a DM an agent with AllChats off answers.
@@ -146,6 +147,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV7)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV8)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -166,6 +171,13 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV8 lets one agent per account answer the user's chat with themselves,
+// apart from the DMs that all_chats and agent_chats share out.
+const schemaV8 = `
+ALTER TABLE agents ADD COLUMN self_chat INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX idx_agents_self ON agents(account_key) WHERE self_chat = 1;
+`
 
 // schemaV7 keeps each account's manager bot, through which its Telegram bots
 // are created and their tokens exported.
@@ -434,7 +446,7 @@ func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 	rows, err := d.db.Query(
 		`SELECT id, account_key, name, handle, prompt, autoreply, media, provider_id, model,
-		 retention_days, enabled, all_chats
+		 retention_days, enabled, all_chats, self_chat
 		 FROM agents ORDER BY name`,
 	)
 	if err != nil {
@@ -446,7 +458,7 @@ func (d *AgentDB) ListAgents() ([]AgentRecord, error) {
 		var a AgentRecord
 		if err := rows.Scan(&a.ID, &a.AccountKey, &a.Name, &a.Handle, &a.Prompt, &a.Auto,
 			&a.Media, &a.ProviderID, &a.Model, &a.RetentionDays, &a.Enabled,
-			&a.AllChats); err != nil {
+			&a.AllChats, &a.SelfChat); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		out = append(out, a)
@@ -599,6 +611,7 @@ func (d *AgentDB) AgentChats(agentID int64) ([]AgentChat, error) {
 type ChatClaims struct {
 	All   int64            // the agent answering every DM, or 0
 	Chats map[string]int64 // DM ID → the agent that picked it
+	Self  int64            // the agent answering the user's chat with themselves, or 0
 }
 
 // Owner is the agent answering the DM, or 0.
@@ -620,6 +633,11 @@ func chatClaims(q querier, accountKey string) (ChatClaims, error) {
 	if err != nil && err != sql.ErrNoRows {
 		return c, fmt.Errorf("read chat claims: %w", err)
 	}
+	err = q.QueryRow(`SELECT id FROM agents WHERE account_key = ? AND self_chat = 1`,
+		accountKey).Scan(&c.Self)
+	if err != nil && err != sql.ErrNoRows {
+		return c, fmt.Errorf("read chat claims: %w", err)
+	}
 	rows, err := q.Query(`SELECT chat_id, agent_id FROM agent_chats WHERE account_key = ?`,
 		accountKey)
 	if err != nil {
@@ -638,9 +656,9 @@ func chatClaims(q querier, accountKey string) (ChatClaims, error) {
 }
 
 // SetAgentChats makes the agent answer every DM of its account, or only
-// chats, in one step. It fails, naming the other agent, when one already
-// answers a DM it would take.
-func (d *AgentDB) SetAgentChats(agentID int64, all bool, chats []AgentChat) error {
+// chats, and the user's chat with themselves when self is set, in one step. It
+// fails, naming the other agent, when one already answers a chat it would take.
+func (d *AgentDB) SetAgentChats(agentID int64, all, self bool, chats []AgentChat) error {
 	tx, err := d.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin agent chats tx: %w", err)
@@ -663,7 +681,10 @@ func (d *AgentDB) SetAgentChats(agentID int64, all bool, chats []AgentChat) erro
 		}
 		return n
 	}
-	if claims.All != 0 && claims.All != agentID {
+	if self && claims.Self != 0 && claims.Self != agentID {
+		return fmt.Errorf("%s answers your own chat", name(claims.Self))
+	}
+	if claims.All != 0 && claims.All != agentID && (all || len(chats) > 0) {
 		return fmt.Errorf("%s answers all private chats", name(claims.All))
 	}
 	for _, owner := range claims.Chats {
@@ -681,7 +702,8 @@ func (d *AgentDB) SetAgentChats(agentID int64, all bool, chats []AgentChat) erro
 	if _, err := tx.Exec(`DELETE FROM agent_chats WHERE agent_id = ?`, agentID); err != nil {
 		return fmt.Errorf("clear agent chats: %w", err)
 	}
-	if _, err := tx.Exec(`UPDATE agents SET all_chats = ? WHERE id = ?`, all, agentID); err != nil {
+	if _, err := tx.Exec(`UPDATE agents SET all_chats = ?, self_chat = ? WHERE id = ?`,
+		all, self, agentID); err != nil {
 		return fmt.Errorf("save agent chats: %w", err)
 	}
 	if !all {
