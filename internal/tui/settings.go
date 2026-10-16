@@ -628,7 +628,8 @@ func (m settingsModel) itemLines(width, height int) []string {
 			"The colours of the whole app.", "How every chat draws its messages.",
 			"Lua scripts that add widgets to the account list.",
 			"Where bots get their replies: any OpenAI-compatible API.",
-			"Delete every account and all local data, as on a fresh install.", "Leave wiregram."}
+			"Delete every account and all local data, as on a fresh install.",
+			"Back to the account chooser.", "Leave wiregram."}
 		lines := []string{m.st.subtle.Render(textfmt.ClipLine(desc[m.left-len(m.accounts)], width))}
 		if m.onThemes() {
 			lines = append(append(lines, ""), m.themeLines(width)...)
