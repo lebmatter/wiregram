@@ -40,23 +40,24 @@ func newWelcomeModal(st *styles, b backend.Backend, twoPane bool) welcomeModal {
 }
 
 func (m welcomeModal) size() (int, int) {
-	return welcomeModalWidth, 8 + len(m.keys) // borders, account, blanks, headings, hint
+	return welcomeModalWidth, 8 + len(m.keys) // borders, account, blanks, rules, keys
 }
 
 func (m welcomeModal) View() string {
 	w, h := m.size()
 	glyph := lipgloss.NewStyle().Foreground(colorGreen).Render("●")
-	body := []string{glyph + " " + m.label, "", m.st.subtle.Render("Navigate")}
+	inner := w - 4
+	body := []string{glyph + " " + m.label, "", m.st.modalRule("navigate", inner)}
 	for _, k := range m.keys {
 		if k.key == "" {
-			body = append(body, "", m.st.subtle.Render("Search"))
+			body = append(body, "", m.st.modalRule("search", inner))
 			continue
 		}
 		pad := strings.Repeat(" ", max(1, 9-textfmt.DisplayWidth(k.key)))
-		body = append(body, "  "+m.st.accent.Render(k.key)+pad+k.desc)
+		body = append(body, "   "+m.st.accent.Render(k.key)+pad+k.desc)
 	}
-	body = append(body, "", m.st.dim.Render("Press any key to start"))
-	return renderBox("Account connected", body, w, h, m.st.accentColor)
+	body = append(body, m.st.modalKeys([]helpKey{{"any key", "start"}}, "", inner)...)
+	return m.st.modalBox("account connected", body, w, h)
 }
 
 var welcomeModalHelp = []helpKey{{"enter", "start"}}

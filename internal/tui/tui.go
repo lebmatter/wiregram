@@ -1616,7 +1616,7 @@ func (m tuiModel) agentRow(id int64) (tuiModel, tea.Cmd) {
 	for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
 		taken[rec.Handle] = rec.Name
 	}
-	wiz := newWizard(m.st, "New bot for "+accountLabel(m.active),
+	wiz := newWizard(m.st, "new bot for "+accountLabel(m.active),
 		agentSteps(providers, m.mgr.Dir, taken), nil)
 	m.wiz = &wiz
 	return m, wiz.Init()

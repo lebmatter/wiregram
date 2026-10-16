@@ -95,8 +95,19 @@ type UserCandidate struct {
 	Match string // lowercase text matched against the query
 	// Mention is the text a pick inserts into the composer, for Mentioner.
 	Mention string
+	Kind    CandidateKind
+	Tag     string // a team or other scope, drawn at the row's right edge
 	Raw     any
 }
+
+// CandidateKind is what a search result opens: a person, a channel or a group.
+type CandidateKind int
+
+const (
+	CandidatePerson CandidateKind = iota
+	CandidateChannel
+	CandidateGroup
+)
 
 // userSearchBase is what the search shows before and while typing: base when
 // the query is empty, local filtered by the query until remote results arrive.

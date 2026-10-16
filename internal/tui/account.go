@@ -567,7 +567,7 @@ func newAddAccountModel(st *styles, needsAPI bool, backdrop string) addAccountMo
 	w, h := termSize()
 	return addAccountModel{
 		st:       st,
-		wiz:      newWizard(st, "Add account", addAccountSteps(st, needsAPI), nil),
+		wiz:      newWizard(st, "add account", addAccountSteps(st, needsAPI), nil),
 		backdrop: backdrop,
 		width:    w,
 		height:   h,
@@ -608,10 +608,12 @@ func (m addAccountModel) bodyHeight() int { return max(4, m.height-1) }
 
 // formBox draws a form modal tall enough for lines, keeping the last ones
 // when it doesn't fit, and returns how many lines were cut from the top.
-func formBox(title string, lines []string, width, bodyHeight int, st *styles) (string, int) {
-	h := min(bodyHeight, max(8, len(lines)+2))
-	top := max(0, len(lines)-(h-2))
-	return renderBox(title, lines[top:], width, h, st.accentColor), top
+func formBox(title string, lines []string, keys []helpKey, width, bodyHeight int,
+	st *styles) (string, int) {
+	h := min(bodyHeight, max(8, len(lines)+4)) // the borders and the keys
+	top := max(0, len(lines)-(h-4))
+	body := append(fillLines(slices.Clone(lines[top:]), h-4), st.modalKeys(keys, "", width-4)...)
+	return st.modalBox(title, body, width, h), top
 }
 
 func (m addAccountModel) View() tea.View {
@@ -827,13 +829,15 @@ func (m loginModel) View() tea.View {
 	var lines []string
 	for _, t := range m.turns {
 		// Long prompts leave no room beside them, so the reply goes below.
-		if 2+labelW+2+textfmt.DisplayWidth(t.reply) > inner {
-			lines = append(lines, m.st.formRow(t.ask, "", labelW, false, false, inner),
-				textfmt.ClipLine("    "+m.st.subtle.Render(t.reply), inner))
+		done := m.st.dim.Render("✓")
+		if modalMark+labelW+2+textfmt.DisplayWidth(t.reply) > inner {
+			lines = append(lines, m.st.modalRow(done, textfmt.ClipLine(t.ask, inner-modalMark),
+				false, inner), textfmt.ClipLine("     "+m.st.subtle.Render(t.reply), inner))
 			continue
 		}
-		lines = append(lines, m.st.formRow(t.ask, m.st.subtle.Render(t.reply), labelW,
-			false, false, inner))
+		pad := strings.Repeat(" ", labelW+2-textfmt.DisplayWidth(t.ask))
+		lines = append(lines, m.st.modalRow(done, t.ask+pad+m.st.subtle.Render(t.reply),
+			false, inner))
 	}
 	if len(lines) > 0 {
 		lines = append(lines, "")
@@ -847,8 +851,8 @@ func (m loginModel) View() tea.View {
 			}
 		}
 		lines = append(lines, "")
-		m.input.SetWidth(max(10, inner-4))
-		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
+		m.input.SetWidth(max(10, inner-6))
+		lines = append(lines, m.st.modalField("›", m.input.View(), inner)...)
 	} else {
 		lines = append(lines, m.st.subtle.Render("Waiting for server…"))
 	}
@@ -864,9 +868,10 @@ func (m loginModel) View() tea.View {
 	if m.notice != "" {
 		lines = append(lines, styleError.Render(textfmt.ClipLine(textfmt.Plain(m.notice), inner)))
 	}
-	box, _ := formBox("Sign in — "+m.label, lines, w, bodyHeight, m.st)
+	keys := []helpKey{{"enter", "answer"}, {"esc", "cancel"}}
+	box, _ := formBox("sign in — "+m.label, lines, keys, w, bodyHeight, m.st)
 	content := m.st.overlay(m.backdrop, box, m.width, bodyHeight) + "\n" +
-		m.st.footer([]helpKey{{"enter", "answer"}, {"esc", "cancel"}}, "", m.width)
+		m.st.footer(keys, "", m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v

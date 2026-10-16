@@ -115,19 +115,21 @@ back, and <kbd>Tab</kbd> moves focus as usual.
 The chat picker is a modal over the bot's pane:
 
 ```
-╭─ Chats Ava answers ─────────────────────────╮
-│   ○ All private chats                       │
-│   ● Selected users                          │
-│   [x] You  notes to yourself                │
-│   Filter  ra                                │
-│   Results · 4                               │
-│ > [x] Rahul                                 │
-│   [ ] Rajesh                                │
-│   [-] Ravi                       ✦ Support  │
-│   [ ] Radha @radha · global                 │
-│                                             │
-│ 1 selected · space: tick · enter: save      │
-╰─────────────────────────────────────────────╯
+╭─ chats Ava answers ──────────────────────────────╮
+│    ○ All private chats                           │
+│    ● Selected users                              │
+│    [x] You                    notes to yourself  │
+│ ╭──────────────────────────────────────────────╮ │
+│ │ / ra                                         │ │
+│ ╰──────────────────────────────────────────────╯ │
+│ 4 matches ────────────────────────────────────── │
+│ ▎› [x] Person A                                  │
+│    [ ] Person B                                  │
+│    [-] Person C                       ✦ Support  │
+│    [ ] Person D  @person-d · global              │
+│ ──────────────────────────────────────────────── │
+│ space tick  enter save  esc cancel   1 selected  │
+╰──────────────────────────────────────────────────╯
 ```
 
 **All private chats** and **Selected users** are a radio list: <kbd>↑</kbd>/<kbd>↓</kbd>

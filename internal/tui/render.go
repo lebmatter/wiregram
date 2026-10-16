@@ -197,6 +197,82 @@ func renderTitledBox(left, right string, body []string, width, height int,
 		bs.Render("─╮") + "\n" + box[1]
 }
 
+// modalBox is a modal's frame: the accent border with title, bold in the
+// accent, set into its top edge. Titles are lowercase, names aside.
+func (s *styles) modalBox(title string, body []string, width, height int) string {
+	return renderTitledBox(s.brand.Render(title), "", body, width, height, s.accentColor)
+}
+
+// modalField is a modal's input line in a dim box three rows tall, the
+// prompt in the accent.
+func (s *styles) modalField(prompt, input string, width int) []string {
+	line := s.accent.Render(prompt) + " " + input
+	return strings.Split(renderBox("", []string{line}, width, 3, s.dimColor), "\n")
+}
+
+// modalRule is a dim heading, then a rule across the rest of width.
+func (s *styles) modalRule(heading string, width int) string {
+	if heading == "" {
+		return s.dim.Render(strings.Repeat("─", width))
+	}
+	line := s.dim.Render(heading)
+	if fill := width - textfmt.DisplayWidth(heading) - 1; fill > 0 {
+		line += " " + s.dim.Render(strings.Repeat("─", fill))
+	}
+	return line
+}
+
+// modalMark is the width of a modal row's mark column with its padding.
+const modalMark = 3
+
+// fillLines pads lines with blank ones to n.
+func fillLines(lines []string, n int) []string {
+	for len(lines) < n {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// modalRow is a modal's row: a mark column, then text. The selected row
+// gets the accent caret, the selection tint and an accent ▎ at its edge.
+func (s *styles) modalRow(mark, text string, selected bool, width int) string {
+	if selected {
+		mark = s.accent.Render("›")
+	} else if mark == "" {
+		mark = " "
+	}
+	line := " " + mark + " " + text
+	if !selected {
+		return line
+	}
+	return shadeLine(gutterBar(line, s.accent.Render("▎")), s.selBgSGR, width)
+}
+
+// modalRight puts right at the far edge of a row width cells wide, a cell in.
+func modalRight(line, right string, width int) string {
+	if right == "" {
+		return line
+	}
+	gap := width - 1 - textfmt.DisplayWidth(line) - textfmt.DisplayWidth(right)
+	return line + strings.Repeat(" ", max(1, gap)) + right
+}
+
+// modalKeys is a modal's own key strip under a rule: each key subtle, its
+// action dim, and right at the far edge when it fits.
+func (s *styles) modalKeys(keys []helpKey, right string, width int) []string {
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, s.subtle.Render(k.key)+" "+s.dim.Render(k.desc))
+	}
+	line := strings.Join(parts, "  ")
+	if right != "" {
+		if gap := width - textfmt.DisplayWidth(line) - textfmt.DisplayWidth(right); gap >= 3 {
+			line += strings.Repeat(" ", gap) + right
+		}
+	}
+	return []string{s.modalRule("", width), line}
+}
+
 // chatName is the chat as titles show it: # or @, then its name.
 func chatName(e backend.ChatEntry) string {
 	if e.IsDM || e.IsSelf {

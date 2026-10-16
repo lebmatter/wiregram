@@ -162,6 +162,11 @@ These are project constraints, not suggestions:
 - `>` marks the selected row in lists (the sidebar uses an accent `▎`). The selected message in a chat is
   tinted with `colorSelBg` across its whole block (`shadeLine`), with an accent `▎` in its
   gutter (`gutterBar`) and its time in the accent; selection never moves a column.
+- Modals share one look (`modalBox`, `modalField`, `modalRule`, `modalRow`, `modalKeys` in
+  `render.go`): an accent box with a lowercase bold title (names keep their case), inputs
+  in a dim box of their own with an accent prompt, dim headings followed by a rule, rows
+  with a mark column that the selected row turns into an accent `›` over the selection
+  tint with an accent `▎` at its edge, and a key strip under a rule at the bottom.
 - Every backend's messages share one block (`messageBlock`,
   `internal/tui/chatlines.go`), in the chat and the thread pane: a 2-cell
   gutter (`*` when edited live), `HH:MM sender: text` with later lines under the time,
@@ -194,6 +199,9 @@ These are project constraints, not suggestions:
 - Search users (`/`), the forward picker and the mention picker are one modal
   (`userSearchModel`, `internal/tui/search.go`) drawn over the screen with
   `fadeUnder`: search users centred on the body, forward and mention on the chat.
+  A boxed `@` query, a `recent · N` (or `N matches`) heading rule, rows of a kind glyph
+  (`@`, `#`, `⁂`; `backend.CandidateKind`), name, dim detail and a `[team]` tag
+  (`UserCandidate.Tag`) with the query lit, then a key line with the glyph legend.
   `@` at the start of a word in a group chat's composer opens the mention picker
   when the backend implements `backend.Mentioner`; a pick inserts the
   candidate's `Mention` text and each backend turns that text into a native
@@ -204,7 +212,7 @@ These are project constraints, not suggestions:
 - Messages have no per-message shortcuts (email aside: see its bullet). Enter on an empty
   composer or a right click opens the actions modal
   (`internal/tui/msgmenu.go`) for the selected message: when the backend has
-  reactions, a `reaction:` search field (typing in the modal filters) over the
+  reactions, a `+` reaction search field (typing in the modal filters) over the
   matching emoji row, then only the actions the message allows. The root draws
   it centred over the chat with everything behind it reduced to plain dim
   text (`fadeUnder`); the footer shows the modal's keys.

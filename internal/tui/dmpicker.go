@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/agent"
 	"wiregram/internal/backend"
@@ -83,19 +84,20 @@ func (m *dmPicker) top() int {
 	return dmRadioRows
 }
 
-// head is the lines above the people: the top rows, the filter and the heading.
-func (m *dmPicker) head() int { return m.top() + 2 }
+// head is the lines above the people: the top rows, the boxed filter and the
+// heading rule.
+func (m *dmPicker) head() int { return m.top() + 4 }
 
 func newDMPicker(ctx context.Context, st *styles, b backend.Backend, bot string, all, self bool,
 	dms []agent.AgentChat, picked map[string]bool, owners map[string]string,
 	allBy, selfBy string) *dmPicker {
 	in := textinput.New()
 	in.Prompt = ""
-	in.Placeholder = "type to filter"
+	in.Placeholder = "filter chats…"
 	in.CharLimit = 64
 	finder, _ := b.(backend.DMFinder)
 	if finder != nil {
-		in.Placeholder = "name or username"
+		in.Placeholder = "name or username…"
 	}
 	_, selfOK := b.(backend.SelfChatter)
 	m := &dmPicker{st: st, ctx: ctx, b: b, finder: finder, bot: bot, all: all, selfOK: selfOK,
@@ -332,100 +334,107 @@ func (m *dmPicker) resized(width, height int) {
 	m.width = min(56, width-4)
 	switch {
 	case m.allBy != "" && !m.selfOK:
-		m.height = 4 // the two lines of View
+		m.height = 6 // borders, the two lines of View and the keys
 		return
 	case m.allBy != "":
-		m.height = m.top() + 6 // borders, the top rows, a gap, two lines and the status
+		m.height = m.top() + 7 // borders, the top rows, a gap, two lines and the keys
 		return
 	}
-	// Borders, the top lines, the people, a gap and the status line.
+	// Borders, the top lines, the people and the keys.
 	m.height = max(m.head()+6, min(height-2, m.head()+dmPickerRows+4))
 }
 
-// rows is how many people fit between the heading and the status line.
+// rows is how many people fit between the heading and the keys.
 func (m *dmPicker) rows() int { return max(1, m.height-2-m.head()-2) }
 
 func (m *dmPicker) size() (int, int) { return m.width, m.height }
 
 func (m *dmPicker) View() string {
 	inner := m.width - 4
-	title := "Chats " + textfmt.Plain(m.bot) + " answers"
+	title := "chats " + textfmt.Plain(m.bot) + " answers"
 	if m.allBy != "" && !m.selfOK {
-		return renderBox(title, []string{
+		body := []string{
 			m.st.subtle.Render(textfmt.ClipLine(m.notice, inner)),
 			m.st.dim.Render(textfmt.ClipLine("A chat has one bot; change "+m.allBy+
 				"'s Chats first.", inner)),
-		}, m.width, m.height, m.st.accentColor)
-	}
-	marker := func(i int) string {
-		if i == m.sel {
-			return m.st.accent.Render("> ")
 		}
-		return "  "
+		body = append(body, m.st.modalKeys([]helpKey{{"esc", "close"}}, "", inner)...)
+		return m.st.modalBox(title, body, m.width, m.height)
 	}
 	radio := func(i int, on bool, label string) string {
-		if m.allBy != "" {
-			return marker(i) + m.st.dim.Render("○ "+label)
+		glyph, style := m.st.dim.Render("○"), m.st.subtle
+		switch {
+		case m.allBy != "":
+			style = m.st.dim
+		case on:
+			glyph, style = m.st.accent.Render("●"), lipgloss.NewStyle()
 		}
-		if on {
-			return marker(i) + m.st.accent.Render("● ") + label
+		if i == m.sel {
+			style = m.st.brand
 		}
-		return marker(i) + m.st.subtle.Render("○ "+label)
+		return m.st.modalRow("", glyph+" "+style.Render(label), i == m.sel, inner)
 	}
 	body := []string{
 		radio(0, m.all, "All private chats"),
 		radio(1, !m.all, "Selected users"),
 	}
 	if m.selfOK {
-		body = append(body, m.selfRow())
+		body = append(body, m.selfRow(inner))
 	}
 	switch {
 	case m.allBy != "":
 		body = append(body, "", m.st.subtle.Render(textfmt.ClipLine(
-			"  Bot "+m.allBy+" answers all private chats;", inner)),
-			m.st.dim.Render(textfmt.ClipLine("  change "+m.allBy+"'s Chats to pick others.",
+			"   Bot "+m.allBy+" answers all private chats;", inner)),
+			m.st.dim.Render(textfmt.ClipLine("   change "+m.allBy+"'s Chats to pick others.",
 				inner)))
 	case m.all:
 		body = append(body, "", m.st.subtle.Render(textfmt.ClipLine(
-			"  Every private chat of this account, now and later.", inner)))
+			"   Every private chat of this account, now and later.", inner)))
 	default:
-		m.input.SetWidth(max(1, inner-10))
-		body = append(body, m.st.subtle.Render("  Filter  ")+m.input.View(), m.heading())
+		m.input.SetWidth(max(1, inner-6))
+		body = append(body, m.st.modalField("/", m.input.View(), inner)...)
+		body = append(body, m.heading(inner))
 		body = append(body, m.people(inner)...)
 	}
-	for len(body) < m.height-3 {
-		body = append(body, "")
-	}
-	var status string
-	switch {
-	case m.notice != "":
-		status = styleError.Render(textfmt.ClipLine(m.notice, inner))
-	case m.all || m.allBy != "":
-		status = m.st.dim.Render(textfmt.ClipLine("space: pick · enter: save", inner))
-	default:
+	body = fillLines(body, m.height-4)
+	keys := []helpKey{{"space", "tick"}, {"enter", "save"}, {"esc", "cancel"}}
+	count := ""
+	if !m.all && m.allBy == "" {
 		_, _, chats := m.chosen()
-		count := fmt.Sprintf("%d selected", len(chats))
-		status = m.st.subtle.Render(count) + m.st.dim.Render(textfmt.ClipLine(
-			" · space: tick · enter: save", max(0, inner-textfmt.DisplayWidth(count))))
+		count = m.st.subtle.Render(fmt.Sprintf("%d selected", len(chats)))
 	}
-	body = append(body, status)
-	return renderBox(title, body, m.width, m.height, m.st.accentColor)
+	strip := m.st.modalKeys(keys, count, inner)
+	if m.notice != "" {
+		strip[0] = styleError.Render(textfmt.ClipLine(m.notice, inner))
+	}
+	body = append(body, strip...)
+	return m.st.modalBox(title, body, m.width, m.height)
 }
 
-// heading names the people listed under the filter.
-func (m *dmPicker) heading() string {
-	heading := "  Recently chatted with"
+// heading names the people listed under the filter, over a rule.
+func (m *dmPicker) heading(width int) string {
+	heading := "recently chatted with"
+	n := len(m.items())
 	if m.query != "" {
-		heading = "  Results"
-	}
-	line := m.st.subtle.Render(heading)
-	if n := len(m.items()); n > 0 {
-		line += m.st.dim.Render(fmt.Sprintf(" · %d", n))
+		heading = fmt.Sprintf("%d %s", n, plural(n, "match", "matches"))
+	} else if n > 0 {
+		heading += fmt.Sprintf(" · %d", n)
 	}
 	if m.busy {
-		line += m.st.dim.Render(" · searching…")
+		heading += " · searching…"
 	}
-	return line
+	return m.st.modalRule(heading, width)
+}
+
+// check is a tick box: ticked in the accent, held by another bot dim.
+func (m *dmPicker) check(on, taken bool) string {
+	switch {
+	case taken:
+		return m.st.dim.Render("[-]")
+	case on:
+		return m.st.accent.Render("[x]")
+	}
+	return m.st.dim.Render("[ ]")
 }
 
 func (m *dmPicker) people(inner int) []string {
@@ -442,43 +451,34 @@ func (m *dmPicker) people(inner int) []string {
 	first := window(max(0, sel), m.rows())
 	for i := first; i < min(len(items), first+m.rows()); i++ {
 		it := items[i]
-		box, owner, name, desc := "[ ] ", "", "", ""
+		owner, name, desc, on := "", "", "", false
 		if it.cand != nil {
 			name, desc = userItem{*it.cand}.Title(), userItem{*it.cand}.Description()
 		} else {
 			name, owner = textfmt.Plain(it.chat.Title), m.owners[it.chat.ID]
-			switch {
-			case owner != "":
-				box = "[-] "
-			case m.picked[it.chat.ID]:
-				box = "[x] "
-			}
+			on = m.picked[it.chat.ID]
 		}
 		tag := ""
 		if owner != "" {
 			tag = agentIcon + " " + owner
 		}
-		room := max(1, inner-2-4-textfmt.DisplayWidth(tag)-1)
+		room := max(1, inner-modalMark-4-textfmt.DisplayWidth(tag)-2)
 		name = truncate(name, room)
 		if desc != "" {
-			desc = truncate(" "+desc, max(0, room-textfmt.DisplayWidth(name)))
+			desc = truncate("  "+desc, max(0, room-textfmt.DisplayWidth(name)))
 		}
-		gap := strings.Repeat(" ", max(1, inner-2-4-textfmt.DisplayWidth(name)-
-			textfmt.DisplayWidth(desc)-textfmt.DisplayWidth(tag)))
-		row := box + name
+		style := lipgloss.NewStyle()
 		switch {
 		case i == sel:
-			row = m.st.accent.Render("> ") + m.st.selectedRow.Render(row)
+			style = m.st.brand
 		case owner != "":
-			row = "  " + m.st.dim.Render(row)
-		default:
-			row = "  " + row
+			style = m.st.dim
 		}
-		row += m.st.dim.Render(desc)
+		row := m.check(on, owner != "") + " " + style.Render(name) + m.st.dim.Render(desc)
 		if tag != "" {
-			row += gap + m.st.agent.Render(tag)
+			row = modalRight(row, m.st.agent.Render(tag), inner-modalMark)
 		}
-		out = append(out, row)
+		out = append(out, m.st.modalRow("", row, i == sel, inner))
 	}
 	return out
 }
@@ -516,26 +516,18 @@ func (m *dmPicker) helpKeys() []helpKey {
 }
 
 // selfRow is the tick for the user's chat with themselves.
-func (m *dmPicker) selfRow() string {
-	box := "[ ] "
-	switch {
-	case m.selfBy != "":
-		box = "[-] "
-	case m.self:
-		box = "[x] "
-	}
-	row := box + "You"
-	tag := m.st.dim.Render("  notes to yourself")
-	if m.selfBy != "" {
-		tag = m.st.agent.Render("  " + agentIcon + " " + truncate(m.selfBy, 24))
-	}
+func (m *dmPicker) selfRow(inner int) string {
+	name := "You"
 	switch {
 	case m.sel == dmRadioRows:
-		row = m.st.accent.Render("> ") + m.st.selectedRow.Render(row)
+		name = m.st.brand.Render(name)
 	case m.selfBy != "":
-		row = "  " + m.st.dim.Render(row)
-	default:
-		row = "  " + row
+		name = m.st.dim.Render(name)
 	}
-	return row + tag
+	tag := m.st.dim.Render("notes to yourself")
+	if m.selfBy != "" {
+		tag = m.st.agent.Render(agentIcon + " " + truncate(m.selfBy, 24))
+	}
+	row := modalRight(m.check(m.self, m.selfBy != "")+" "+name, tag, inner-modalMark)
+	return m.st.modalRow("", row, m.sel == dmRadioRows, inner)
 }

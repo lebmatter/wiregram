@@ -59,7 +59,9 @@ Questions and pickers open as modals over the screen, with everything behind the
   account and Reset ask first. <kbd>y</kbd> or <kbd>Enter</kbd> on the action goes
   ahead, <kbd>Esc</kbd> cancels. Deletes and Reset start on Cancel.
 - **Search users, Forward to and Mention** share one picker: type to filter,
-  <kbd>Enter</kbd> to pick.
+  <kbd>Enter</kbd> to pick. Each row starts with `@` for a person, `#` for a channel or
+  `⁂` for a group, the typed text is lit in the accent, and a Mattermost channel shows
+  its team at the right edge.
 - **Message actions** open with <kbd>Enter</kbd> on an empty composer or a right click.
   See [Chats](/features/chats#message-actions).
 - **Account connected.** A new account opens with a card listing the keys to get around

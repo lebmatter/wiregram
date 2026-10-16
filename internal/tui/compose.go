@@ -267,34 +267,37 @@ func composeRect(width, height int) (x, y, w, h int) {
 // view draws the composer in a box width by height.
 func (c *mailComposer) view(width, height int) string {
 	inner := width - 4
+	room := inner - modalMark - composeLabelWidth - 2
 	field := func(f composeField) string {
 		label := composeLabels[f]
 		style := c.st.subtle
 		if c.focus == f {
-			style = c.st.accent
+			style = c.st.brand
 		}
-		c.inputs[f].SetWidth(max(1, inner-composeLabelWidth-2))
-		return style.Render(label) + strings.Repeat(" ", composeLabelWidth+2-len(label)) +
-			c.inputs[f].View()
+		c.inputs[f].SetWidth(max(1, room))
+		return c.st.modalRow("", style.Render(label)+
+			strings.Repeat(" ", composeLabelWidth+2-len(label))+c.inputs[f].View(),
+			c.focus == f, inner)
 	}
 	lines := []string{field(fieldTo), field(fieldCc), field(fieldSubject), field(fieldAttach)}
 	if files := c.attachLine(); files != "" {
-		lines = append(lines, strings.Repeat(" ", composeLabelWidth+2)+
-			c.st.dim.Render(textfmt.ClipLine(textfmt.Plain(files), inner-composeLabelWidth-2)))
+		lines = append(lines, strings.Repeat(" ", modalMark+composeLabelWidth+2)+
+			c.st.dim.Render(textfmt.ClipLine(textfmt.Plain(files), room)))
 	}
-	lines = append(lines, c.st.dim.Render(strings.Repeat("─", max(1, inner))))
+	lines = append(lines, c.st.modalRule("message", inner))
 	c.body.SetWidth(max(1, inner))
-	c.body.SetHeight(max(1, height-2-len(lines)-1))
+	c.body.SetHeight(max(1, height-2-len(lines)-2))
 	lines = append(lines, strings.Split(c.body.View(), "\n")...)
-	status := c.notice
+	status := ""
 	switch {
 	case c.sending:
 		status = c.st.subtle.Render("sending…")
-	case status != "":
-		status = styleError.Render(textfmt.ClipLine(status, inner))
+	case c.notice != "":
+		status = styleError.Render(textfmt.ClipLine(c.notice, inner/2))
 	}
-	lines = append(lines, status)
-	return renderBox(c.title, lines, width, height, c.st.accentColor)
+	keys := []helpKey{{"^S", "send"}, {"tab", "next"}, {"esc", "keep draft"}, {"^X", "discard"}}
+	lines = append(lines, c.st.modalKeys(keys, status, inner)...)
+	return c.st.modalBox(strings.ToLower(c.title), lines, width, height)
 }
 
 func (c *mailComposer) helpKeys() []helpKey {

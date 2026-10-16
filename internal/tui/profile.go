@@ -66,7 +66,7 @@ func (m *profileModal) loaded(msg profileLoaded) {
 
 func (m *profileModal) lines() []string {
 	inner := profileModalMaxWidth - 4
-	body := []string{m.st.accent.Render(textfmt.Plain(m.profile.Name)), ""}
+	body := []string{m.st.brand.Render(textfmt.Plain(m.profile.Name)), ""}
 	switch {
 	case m.loading:
 		return append(body, m.st.subtle.Render("loading…"))
@@ -101,12 +101,13 @@ func (m *profileModal) size() (int, int) {
 	for _, l := range lines {
 		w = max(w, textfmt.DisplayWidth(l))
 	}
-	return min(profileModalMaxWidth, max(profileModalMinWidth, w+4)), len(lines) + 2
+	return min(profileModalMaxWidth, max(profileModalMinWidth, w+4)), len(lines) + 4
 }
 
 func (m *profileModal) View() string {
 	w, h := m.size()
-	return renderBox("Profile", m.lines(), w, h, m.st.accentColor)
+	body := append(m.lines(), m.st.modalKeys(profileModalHelp, "", w-4)...)
+	return m.st.modalBox("profile", body, w, h)
 }
 
 var profileModalHelp = []helpKey{{"any key", "close"}}

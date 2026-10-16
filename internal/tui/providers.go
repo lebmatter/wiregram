@@ -79,7 +79,7 @@ func (m settingsModel) providersKey(k string) (tea.Model, tea.Cmd) {
 func (m settingsModel) applyProvider(r providerRow) (tea.Model, tea.Cmd) {
 	switch {
 	case r.p == nil:
-		wiz := newWizard(m.st, "Add AI provider", providerSteps(), nil)
+		wiz := newWizard(m.st, "add AI provider", providerSteps(), nil)
 		m.wiz = &wiz
 		return m, wiz.Init()
 	case r.field == provHeader:

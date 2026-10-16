@@ -160,7 +160,7 @@ The thread pane opens by itself on a threaded message in wide terminals, and wit
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Select an action: reply, thread, go to quote, edit, forward, open/play/save attachment, pin, delete |
-| Type | Search reactions by name in the `reaction:` field (<kbd>Backspace</kbd> deletes) |
+| Type | Search reactions by name in the `+` field (<kbd>Backspace</kbd> deletes) |
 | <kbd>←</kbd>/<kbd>→</kbd> | Select a reaction on the emoji row |
 | <kbd>Enter</kbd> | Do it (deletes ask first) |
 | <kbd>Esc</kbd> | Close (a click outside it closes it too) |

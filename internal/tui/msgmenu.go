@@ -50,8 +50,6 @@ type msgMenuModel struct {
 	prev      chatSubMode
 }
 
-const reactionPrompt = "reaction: "
-
 // msgMenuChoice is what Enter or a click picked: an action, or a reaction
 // when kind is actReact.
 type msgMenuChoice struct {
@@ -59,7 +57,7 @@ type msgMenuChoice struct {
 	emoji string
 }
 
-const msgMenuWidth = 46
+const msgMenuWidth = 50
 
 func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel backend.Message,
 	prev chatSubMode) msgMenuModel {
@@ -104,8 +102,7 @@ func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel ba
 		m.emoji = b.ReactionChoices("")
 		m.search = textinput.New()
 		m.search.Prompt = ""
-		m.search.Placeholder = "type to search"
-		m.search.SetWidth(msgMenuWidth - 5 - len(reactionPrompt))
+		m.search.Placeholder = "search reactions…"
 	}
 	m.row = m.firstAction()
 	return m
@@ -201,11 +198,15 @@ func (m msgMenuModel) emojiCells(inner int) (int, []string) {
 	return start, cells
 }
 
+// msgMenuTop is the rows above the reaction field or the actions: the top
+// border and the excerpt.
+const msgMenuTop = 2
+
 // size is the box's width and height on a screen width columns wide.
 func (m msgMenuModel) size(width int) (int, int) {
-	h := 3 + len(m.actions) // borders and the excerpt
+	h := msgMenuTop + 1 + len(m.actions) + 3 // the rule, the keys and the bottom border
 	if m.reactions {
-		h += 3 // the search, the emoji row and a blank
+		h += 4 // the field and the emoji row
 	}
 	return min(msgMenuWidth, max(8, width-2)), h
 }
@@ -215,11 +216,11 @@ func (m msgMenuModel) View(width int) string {
 	inner := w - 4
 	body := []string{m.st.subtle.Render(textfmt.ClipLine(m.excerpt, inner))}
 	if m.reactions {
-		m.search.SetWidth(max(1, inner-len(reactionPrompt)-1))
-		body = append(body, m.st.accent.Render(reactionPrompt)+m.search.View())
+		m.search.SetWidth(max(1, inner-6))
+		body = append(body, m.st.modalField("+", m.search.View(), inner)...)
 	}
 	if m.reactions && len(m.emoji) == 0 {
-		body = append(body, m.st.dim.Render("  no matching reaction"), "")
+		body = append(body, m.st.dim.Render("  no matching reaction"))
 	} else if m.reactions {
 		start, cells := m.emojiCells(inner)
 		var b strings.Builder
@@ -230,7 +231,7 @@ func (m msgMenuModel) View(width int) string {
 		}
 		for i, c := range cells {
 			if m.row == 0 && start+i == m.col {
-				b.WriteString(m.st.selectedRow.Render(c))
+				b.WriteString(shadeLine(m.st.brand.Render(c), m.st.selBgSGR, 0))
 			} else {
 				b.WriteString(c)
 			}
@@ -238,25 +239,36 @@ func (m msgMenuModel) View(width int) string {
 		if start+len(cells) < len(m.emoji) {
 			b.WriteString(m.st.dim.Render("›"))
 		}
-		body = append(body, b.String(), "")
+		body = append(body, b.String())
 	}
+	body = append(body, m.st.modalRule("actions", inner))
 	for i, a := range m.actions {
-		if m.row == m.firstAction()+i {
-			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(a.label))
-		} else {
-			body = append(body, "  "+a.label)
+		label := a.label
+		selected := m.row == m.firstAction()+i
+		switch {
+		case a.kind == actDeleteForMe || a.kind == actDeleteForAll:
+			label = styleError.Render(label)
+		case selected:
+			label = m.st.brand.Render(label)
 		}
+		body = append(body, m.st.modalRow("", label, selected, inner))
 	}
-	return renderBox(m.title, body, w, h, m.st.accentColor)
+	keys := []helpKey{{"↑↓", "select"}}
+	if m.reactions {
+		keys = append(keys, helpKey{"←→", "react"})
+	}
+	keys = append(keys, helpKey{"enter", "choose"}, helpKey{"esc", "close"})
+	body = append(body, m.st.modalKeys(keys, "", inner)...)
+	return m.st.modalBox(textfmt.Plain(m.title), body, w, h)
 }
 
 // hit maps column x and row y of the box, counted from its top-left corner,
 // to the row and emoji there.
 func (m msgMenuModel) hit(x, y, width int) (msgMenuModel, bool) {
 	w, _ := m.size(width)
-	row := y - 3 // under the top border, the excerpt and the search
+	row := y - msgMenuTop
 	if m.reactions {
-		if row == 0 {
+		if row == 3 { // under the field
 			start, cells := m.emojiCells(w - 4)
 			at := 3 // the border, its padding and the ‹ column
 			for i, c := range cells {
@@ -269,8 +281,9 @@ func (m msgMenuModel) hit(x, y, width int) (msgMenuModel, bool) {
 			}
 			return m, false
 		}
-		row -= 2
+		row -= 4
 	}
+	row-- // the actions rule
 	if row < 0 || row >= len(m.actions) {
 		return m, false
 	}

@@ -287,7 +287,7 @@ func createAgent(db *agent.AgentDB, accountKey string, a wizardAnswers) (agent.A
 func (m wizardModel) modal(width, bodyHeight int) (box string, top int) {
 	w := min(formModalWidth, width-2)
 	lines, _ := m.formView(w - 4)
-	return formBox(m.title, lines, w, bodyHeight, m.st)
+	return formBox(m.title, lines, m.helpKeys(), w, bodyHeight, m.st)
 }
 
 // modalClick answers a click at screen x, y on the modal, centred in an area

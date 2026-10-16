@@ -99,7 +99,7 @@ Email has no profiles. Any key or click closes it.
 
 Select a message and press <kbd>Enter</kbd> on an empty composer, or right-click it.
 The actions modal opens over the faded chat. Where the network has reactions, it starts
-with a `reaction:` search field over a row of matching emoji: type to filter,
+with a `+` reaction search field over a row of matching emoji: type to filter,
 <kbd>←</kbd>/<kbd>→</kbd> to pick one, <kbd>Enter</kbd> to react.
 
 Below come only the actions the message allows:

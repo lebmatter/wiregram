@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
@@ -61,7 +62,28 @@ func (i userItem) Description() string {
 	return strings.Join(strings.Fields(rest), " ")
 }
 
-func (i userItem) FilterValue() string { return i.c.Label + " " + i.c.Match }
+func (i userItem) FilterValue() string {
+	return i.c.Label + " " + i.c.Match + " " + i.c.Tag
+}
+
+// glyph marks the kind of chat a pick opens.
+func (i userItem) glyph() string {
+	switch i.c.Kind {
+	case backend.CandidateChannel:
+		return "#"
+	case backend.CandidateGroup:
+		return "⁂"
+	}
+	return "@"
+}
+
+// tag is the chip at the row's right edge: the team, or "group".
+func (i userItem) tag() string {
+	if i.c.Tag == "" && i.c.Kind == backend.CandidateGroup {
+		return "group"
+	}
+	return i.c.Tag
+}
 
 type userSearchLoaded struct {
 	base backend.UserSearchBase
@@ -100,7 +122,7 @@ func newForwardSearch(ctx context.Context, st *styles, b backend.Backend, recent
 func newMentionSearch(ctx context.Context, st *styles, b backend.Backend, mn backend.Mentioner, ch backend.ChatEntry) (userSearchModel, tea.Cmd) {
 	m := newSearchModel(ctx, st, b)
 	m.mention = &ch
-	m.input.Placeholder = "Name…"
+	m.input.Placeholder = "name…"
 	load := func() tea.Msg {
 		base, err := mn.MentionBase(ctx, ch)
 		return userSearchLoaded{base, err}
@@ -112,7 +134,7 @@ func newUserSearch(ctx context.Context, st *styles, b backend.Backend, recent []
 	m := newSearchModel(ctx, st, b)
 	if b.Capabilities().ChannelSearch {
 		m.channels = true
-		m.input.Placeholder = "Name, username or channel…"
+		m.input.Placeholder = "name, username or channel…"
 	}
 	load := func() tea.Msg {
 		base, err := b.UserSearchBase(ctx, recent)
@@ -130,7 +152,7 @@ func newSearchModel(ctx context.Context, st *styles, b backend.Backend) userSear
 
 	in := textinput.New()
 	in.Prompt = ""
-	in.Placeholder = "Name or username…"
+	in.Placeholder = "name or username…"
 
 	return userSearchModel{st: st, ctx: ctx, b: b, input: in, list: l, busy: true}
 }
@@ -146,20 +168,24 @@ func (rowDelegate) Render(io.Writer, list.Model, int, list.Item) {}
 // searchMaxRows is the most people the modal lists at once.
 const searchMaxRows = 14
 
-// searchHeader is the box's top border, the query line and the heading.
-const searchHeader = 3
+// searchHeader is the box's top border, the boxed query and the heading rule.
+const searchHeader = 5
+
+// searchFooter is the key rule, the key line and the box's bottom border.
+const searchFooter = 3
 
 // resized fits the modal into a width×height area.
 func (m userSearchModel) resized(width, height int) userSearchModel {
-	m.width = min(56, width-4)
-	m.height = max(searchHeader+2, min(searchHeader+searchMaxRows+1, height-2))
+	m.width = min(72, width-4)
+	m.height = max(searchHeader+searchFooter+1,
+		min(searchHeader+searchMaxRows+searchFooter, height-2))
 	// One page holds every item, so Index counts from the first.
 	m.list.SetSize(max(1, m.width-4), 1<<20)
 	return m
 }
 
 // rows is how many people fit under the heading.
-func (m userSearchModel) rows() int { return max(1, m.height-searchHeader-1) }
+func (m userSearchModel) rows() int { return max(1, m.height-searchHeader-searchFooter) }
 
 // firstRow is the index of the top row shown: the list pages by rows.
 func (m userSearchModel) firstRow() int {
@@ -370,58 +396,92 @@ func (m userSearchModel) click(y int) (userSearchModel, tea.Cmd) {
 
 func (m userSearchModel) View() string {
 	inner := m.width - 4
-	m.input.SetWidth(max(1, inner-3))
-	body := []string{m.st.accent.Render("@ ") + m.input.View(), m.heading()}
+	m.input.SetWidth(max(1, inner-6))
+	body := append(m.st.modalField("@", m.input.View(), inner), m.heading(inner))
 	items := m.list.VisibleItems()
 	first := m.firstRow()
 	for i := first; i < min(len(items), first+m.rows()); i++ {
-		item := items[i].(userItem)
-		name, desc := item.Title(), item.Description()
-		if desc != "" {
-			desc = " " + m.st.dim.Render(desc)
-		}
-		if i == m.list.Index() {
-			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(name)+desc)
-		} else {
-			body = append(body, "  "+name+desc)
-		}
+		body = append(body, m.row(items[i].(userItem), i == m.list.Index(), inner))
 	}
 	if len(items) == 0 && !m.busy {
 		empty := "  no one found"
 		if m.channels {
-			empty = "  nothing found"
+			empty = "  no matches"
 		}
 		body = append(body, m.st.dim.Render(empty))
 	}
-	title := "Search users"
+	body = fillLines(body, searchHeader-1+m.rows())
+	title, action, esc := "search", "open", "close"
 	switch {
 	case m.forward != nil:
-		title = "Forward to"
+		title, action = "forward to", "forward"
 	case m.mention != nil:
-		title = "Mention"
-	case m.channels:
-		title = "Search users & channels"
+		title, action, esc = "mention", "mention", "type @"
 	}
-	return renderBox(title, body, m.width, m.height, m.st.accentColor)
+	legend := ""
+	if m.channels {
+		legend = m.st.dim.Render("@ person  # channel  ⁂ group")
+	}
+	keys := []helpKey{{"↑↓", "select"}, {"enter", action}, {"esc", esc}}
+	body = append(body, m.st.modalKeys(keys, legend, inner)...)
+	return m.st.modalBox(title, body, m.width, m.height)
 }
 
-// heading names the list and counts it, or shows the last error.
-func (m userSearchModel) heading() string {
+// row draws one result: the kind glyph, the name, the rest of the label dim,
+// and the tag at the right edge; the query is lit.
+func (m userSearchModel) row(item userItem, selected bool, width int) string {
+	name := lipgloss.NewStyle()
+	if selected {
+		name = name.Bold(true)
+	}
+	tag := item.tag()
+	if tag != "" {
+		tag = m.st.subtle.Render("[" + tag + "]")
+	}
+	title, desc := item.Title(), item.Description()
+	if desc != "" {
+		desc = "  " + desc
+	}
+	text := truncate(title+desc, max(1, width-modalMark-2-textfmt.DisplayWidth(tag)))
+	if strings.HasPrefix(text, title) {
+		desc = text[len(title):]
+	} else {
+		title, desc = text, ""
+	}
+	line := modalRight(m.lit(title, name)+m.lit(desc, m.st.dim), tag, width-modalMark)
+	return m.st.modalRow(m.st.dim.Render(item.glyph()), line, selected, width)
+}
+
+// lit renders text in style with the first match of the query in bold accent.
+func (m userSearchModel) lit(text string, style lipgloss.Style) string {
+	i := -1
+	if m.query != "" {
+		i = strings.Index(strings.ToLower(text), strings.ToLower(m.query))
+	}
+	if i < 0 || len(strings.ToLower(text)) != len(text) {
+		return style.Render(text)
+	}
+	end := i + len(m.query)
+	return style.Render(text[:i]) + m.st.brand.Render(text[i:end]) + style.Render(text[end:])
+}
+
+// heading names the list and counts it, or shows the last error, over a rule.
+func (m userSearchModel) heading(width int) string {
 	if m.status != "" {
 		return styleError.Render(m.status)
 	}
-	heading := m.base.Heading
-	if m.query != "" {
-		heading = "Results"
+	n := len(m.list.VisibleItems())
+	heading := strings.ToLower(m.base.Heading)
+	if heading != "" && n > 0 {
+		heading += fmt.Sprintf(" · %d", n)
 	}
-	line := m.st.subtle.Render(heading)
-	if n := len(m.list.VisibleItems()); n > 0 {
-		line += m.st.dim.Render(fmt.Sprintf(" · %d", n))
+	if m.query != "" {
+		heading = fmt.Sprintf("%d %s", n, plural(n, "match", "matches"))
 	}
 	if m.busy {
-		line += m.st.dim.Render(" · searching…")
+		heading = strings.TrimSpace(heading + " · searching…")
 	}
-	return line
+	return m.st.modalRule(heading, width)
 }
 
 func (m userSearchModel) helpKeys() []helpKey {

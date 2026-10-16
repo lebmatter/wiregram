@@ -28,8 +28,9 @@ type labelPicker struct {
 	height int
 }
 
-// labelPickerTop is how many lines sit above the labels: the filter and a gap.
-const labelPickerTop = 2
+// labelPickerTop is how many lines sit above the labels: the boxed filter and
+// the heading rule.
+const labelPickerTop = 4
 
 func newLabelPicker(st *styles, lb backend.Labeler) (*labelPicker, error) {
 	labels, err := lb.Labels()
@@ -38,7 +39,7 @@ func newLabelPicker(st *styles, lb backend.Labeler) (*labelPicker, error) {
 	}
 	in := textinput.New()
 	in.Prompt = ""
-	in.Placeholder = "type to filter"
+	in.Placeholder = "filter labels…"
 	in.CharLimit = 64
 	m := &labelPicker{st: st, lb: lb, labels: labels, input: in}
 	m.input.Focus()
@@ -152,9 +153,20 @@ func (m *labelPicker) size() (int, int) { return m.width, m.height }
 
 func (m *labelPicker) View() string {
 	inner := m.width - 4
-	m.input.SetWidth(max(1, inner-10))
-	body := []string{m.st.subtle.Render("Filter    ") + m.input.View(), ""}
+	m.input.SetWidth(max(1, inner-6))
 	shown := m.shown()
+	title, heading := "labels", "labels"
+	if m.move {
+		title, heading = "move to", "folders"
+	}
+	if len(shown) > 0 {
+		heading += fmt.Sprintf(" · %d", len(shown))
+	}
+	rule := m.st.modalRule(heading, inner)
+	if m.notice != "" {
+		rule = styleError.Render(textfmt.ClipLine(m.notice, inner))
+	}
+	body := append(m.st.modalField("/", m.input.View(), inner), rule)
 	if len(shown) == 0 {
 		text := "  no labels"
 		if len(m.labels) == 0 {
@@ -165,46 +177,36 @@ func (m *labelPicker) View() string {
 	first := window(m.sel, m.rows())
 	for i := first; i < min(len(shown), first+m.rows()); i++ {
 		l := shown[i]
-		box := "[ ] "
+		mark := ""
 		switch {
 		case m.move:
-			box = ""
 		case l.Shown:
-			box = "[x] "
+			mark = m.st.accent.Render("●")
+		default:
+			mark = m.st.dim.Render("○")
 		}
 		count := ""
 		if l.Unread > 0 {
-			count = fmt.Sprintf("%d unread", l.Unread)
+			count = m.st.dim.Render(fmt.Sprintf("%d unread", l.Unread))
 		}
-		boxW := textfmt.DisplayWidth(box)
-		room := max(1, inner-2-boxW-textfmt.DisplayWidth(count)-1)
+		room := max(1, inner-modalMark-3-textfmt.DisplayWidth(count)-1)
 		name := truncate(textfmt.Plain(l.Name), room)
-		gap := strings.Repeat(" ", max(1, inner-2-boxW-textfmt.DisplayWidth(name)-
-			textfmt.DisplayWidth(count)))
-		row := box + name
 		if i == m.sel {
-			row = m.st.accent.Render("> ") + m.st.selectedRow.Render(row)
-		} else {
-			row = "  " + row
+			name = m.st.brand.Render(name)
 		}
-		if count != "" {
-			row += gap + m.st.dim.Render(count)
+		if mark != "" {
+			name = mark + " " + name
 		}
-		body = append(body, row)
+		body = append(body, m.st.modalRow("", modalRight(name, count, inner-modalMark),
+			i == m.sel, inner))
 	}
-	for len(body) < m.height-3 {
-		body = append(body, "")
-	}
-	hint, title := "space: show/hide in sidebar · enter: go to label", "Labels"
+	body = fillLines(body, m.height-4)
+	keys := []helpKey{{"space", "show/hide"}, {"enter", "go to"}, {"esc", "close"}}
 	if m.move {
-		hint, title = "enter: move the mail here", "Move to"
+		keys = []helpKey{{"↑↓", "select"}, {"enter", "move here"}, {"esc", "cancel"}}
 	}
-	status := m.st.dim.Render(textfmt.ClipLine(hint, inner))
-	if m.notice != "" {
-		status = styleError.Render(textfmt.ClipLine(m.notice, inner))
-	}
-	body = append(body, status)
-	return renderBox(title, body, m.width, m.height, m.st.accentColor)
+	body = append(body, m.st.modalKeys(keys, "", inner)...)
+	return m.st.modalBox(title, body, m.width, m.height)
 }
 
 // click answers a left click at x, y of the box, counted from its top-left

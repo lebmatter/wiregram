@@ -230,8 +230,10 @@ func (m wizardModel) formView(width int) (lines []string, first int) {
 		case step.show != nil:
 			value = step.show(value, m.answers)
 		}
-		lines = append(lines, m.st.formRow(step.label, m.st.subtle.Render(value), labelW,
-			false, false, width))
+		pad := strings.Repeat(" ", labelW+2-textfmt.DisplayWidth(step.label))
+		lines = append(lines, m.st.modalRow(m.st.dim.Render("✓"),
+			textfmt.ClipLine(step.label+pad+m.st.subtle.Render(value), width-modalMark),
+			false, width))
 	}
 	if len(lines) > 0 {
 		lines = append(lines, "")
@@ -246,11 +248,15 @@ func (m wizardModel) formView(width int) (lines []string, first int) {
 	lines = append(lines, "")
 	first = len(lines)
 	if step.kind == wizText {
-		m.input.SetWidth(max(10, width-4))
-		lines = append(lines, m.st.accent.Render("› ")+m.input.View())
+		m.input.SetWidth(max(10, width-6))
+		lines = append(lines, m.st.modalField("›", m.input.View(), width)...)
 	} else {
 		for j, o := range step.options(m.answers) {
-			lines = append(lines, m.st.formRow(o.label, "", 0, j == m.cursor, true, width))
+			label := o.label
+			if j == m.cursor {
+				label = m.st.brand.Render(label)
+			}
+			lines = append(lines, m.st.modalRow("", label, j == m.cursor, width))
 		}
 	}
 	if m.err != "" {

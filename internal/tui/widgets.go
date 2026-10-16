@@ -184,7 +184,8 @@ func (md *widgetModal) box(st *styles, screenW, screenH int) string {
 		lines = append(slices.Clone(lines[:min(len(lines), h-1)]),
 			styleError.Render(textfmt.CleanError(md.err)))
 	}
-	return renderBox(md.m.Title, lines, w+4, h+2, st.pluginBorder(md.frame.Border, st.accentColor))
+	return renderTitledBox(st.brand.Render(textfmt.Plain(md.m.Title)), "", lines, w+4, h+2,
+		st.pluginBorder(md.frame.Border, st.accentColor))
 }
 
 // widgetAt maps a click at x, y inside the widgets to its plugin.

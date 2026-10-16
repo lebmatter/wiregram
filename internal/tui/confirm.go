@@ -73,7 +73,8 @@ func (m *confirmModal) size() (int, int) {
 	for _, l := range lines {
 		w = max(w, textfmt.DisplayWidth(l))
 	}
-	return max(confirmModalMinWidth, w+4), len(lines) + 4 + len(m.rows()) // borders, a blank
+	// The borders, a blank, the rows, the key rule and keys.
+	return max(confirmModalMinWidth, w+4), len(lines) + 5 + len(m.rows())
 }
 
 func (m *confirmModal) rows() []string {
@@ -92,12 +93,16 @@ func (m *confirmModal) View() string {
 	body = append(body, "")
 	for i, label := range m.rows() {
 		if i == m.row {
-			body = append(body, m.st.accent.Render("> ")+m.st.selectedRow.Render(label))
-		} else {
-			body = append(body, "  "+label)
+			label = m.st.brand.Render(label)
 		}
+		body = append(body, m.st.modalRow("", label, i == m.row, w-4))
 	}
-	return renderBox(m.title, body, w, h, m.st.accentColor)
+	keys := []helpKey{{"any key", "close"}}
+	if !m.alert {
+		keys = []helpKey{{"y", strings.ToLower(m.action)}, {"esc", "cancel"}}
+	}
+	body = append(body, m.st.modalKeys(keys, "", w-4)...)
+	return m.st.modalBox(strings.ToLower(m.title), body, w, h)
 }
 
 // hit selects the row at row y of the box, counted from its top edge.

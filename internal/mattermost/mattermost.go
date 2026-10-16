@@ -1328,19 +1328,16 @@ func (mb *MmBackend) channelCandidate(ch mmChannel, teamName string, joined bool
 	if name == "" {
 		name = ch.Name
 	}
-	label := name + "  ~" + ch.Name
+	label, kind := name+"  ~"+ch.Name, backend.CandidateChannel
 	if ch.Type == "G" {
-		label = name + "  group"
-	}
-	if teamName != "" {
-		label += " · " + teamName
+		label, kind = name, backend.CandidateGroup
 	}
 	if !joined {
-		label += " · join"
+		label += "  · join"
 	}
 	match := strings.ToLower(ch.Name + " " + ch.DisplayName)
-	return backend.UserCandidate{Key: ch.ID, Label: label, Match: match,
-		Raw: mmChannelChoice{ch, joined}}
+	return backend.UserCandidate{Key: ch.ID, Label: label, Match: match, Kind: kind,
+		Tag: teamName, Raw: mmChannelChoice{ch, joined}}
 }
 
 func (mb *MmBackend) teams(ctx context.Context) ([]mmTeam, error) {
