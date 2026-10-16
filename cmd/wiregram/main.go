@@ -211,14 +211,13 @@ Keyboard shortcuts:
     Alt+L             Lock the chat (it also locks when the terminal loses focus)
     Any key           Unlock the locked chat
 
-  Email folder (a list of conversations; the newest mail first)
+  Email folder (a list of conversations under day headings, the newest first)
     Up/k, Down/j      Select a conversation, or a mail in an expanded one
     PgUp/PgDn, g/G    Page, top, bottom
     Space             Expand or collapse the conversation
     Enter             Read the mail (a conversation: its newest), marking it
-                      read; panes 140+ columns wide show the reader beside
-                      the list, previewing the selected mail; ] and [ move
-                      between them
+                      read; panes 120+ columns wide open the reader beside
+                      the list, focused; ] and [ move between them
     c                 Compose a new mail
     r, R, f           Reply, reply to all, forward
     d                 Move to Trash
@@ -228,7 +227,7 @@ Keyboard shortcuts:
     /                 Search the folder on the server (Esc clears the results)
     v                 Visual mode: Space picks conversations or mails, then
                       d, a, m or u acts on them all; Esc leaves it
-    Esc               Back
+    Esc               Close the reader, else back
 
   Mail reader
     Up/k, Down/j      Scroll
@@ -236,6 +235,8 @@ Keyboard shortcuts:
     Home/g, End/G     Top, bottom
     o, s              Open the attachment, or save it to ~/Downloads
     r, R, f, d, a, m, u  As in the folder, on this mail
+    Enter             Type a quick reply in the box under the mail; Enter
+                      sends it (quoting the mail), Esc stops typing
     Esc               Close
 
   Mail composer

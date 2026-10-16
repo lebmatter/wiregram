@@ -101,7 +101,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>g</kbd>/<kbd>G</kbd> | Page, top, bottom |
 | <kbd>Space</kbd> | Expand or collapse the conversation |
 | <kbd>Enter</kbd> | Read the mail (a conversation: its newest), marking it read |
-| <kbd>]</kbd>, <kbd>[</kbd> | Move to the reader and back, when it sits beside the list (140+ column pane) |
+| <kbd>]</kbd>, <kbd>[</kbd> | Move to the reader and back, when it sits beside the list (120+ column pane) |
 | <kbd>c</kbd> | Compose a new mail |
 | <kbd>r</kbd>, <kbd>R</kbd>, <kbd>f</kbd> | Reply, reply to all, forward |
 | <kbd>d</kbd> | Move to Trash |
@@ -110,7 +110,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>u</kbd> | Mark read, or the newest mail unread |
 | <kbd>/</kbd> | Search the folder on the server (<kbd>Esc</kbd> clears the results) |
 | <kbd>v</kbd> | Visual mode: <kbd>Space</kbd> picks rows, then <kbd>d</kbd>, <kbd>a</kbd>, <kbd>m</kbd> or <kbd>u</kbd> acts on them; <kbd>Esc</kbd> leaves it |
-| <kbd>Esc</kbd> | Back |
+| <kbd>Esc</kbd> | Close the reader, else back |
 
 ## Mail reader
 
@@ -121,6 +121,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Home</kbd>/<kbd>g</kbd>, <kbd>End</kbd>/<kbd>G</kbd> | Top, bottom |
 | <kbd>o</kbd>, <kbd>s</kbd> | Open the attachment, or save it to `~/Downloads` |
 | <kbd>r</kbd>, <kbd>R</kbd>, <kbd>f</kbd>, <kbd>d</kbd>, <kbd>a</kbd>, <kbd>m</kbd>, <kbd>u</kbd> | As in the folder, on this mail |
+| <kbd>Enter</kbd> | Type a quick reply; <kbd>Enter</kbd> sends it, <kbd>Esc</kbd> stops typing |
 | <kbd>Esc</kbd> | Close |
 
 ## Mail composer

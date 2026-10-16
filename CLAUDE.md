@@ -244,11 +244,15 @@ These are project constraints, not suggestions:
 - Email (`internal/mail`, tag `EM`, `backend.Mailbox`) has folders for chats: Dialogs
   lists Inbox, Sent, Archive (`\Archive`; Gmail archives to All Mail, without a row) and
   the shown labels. A folder opens in the chat's place as `mailListModel`
-  (`internal/tui/mail.go`): one row per conversation (unread dot, who it is with, subject
-  and count, date), threaded in `internal/mail/thread.go` by In-Reply-To, else by a
+  (`internal/tui/mail.go`), as wide as the pane under an `EM` title with the unread count:
+  two lines per conversation (unread dot, who it is with and the time; then subject and
+  count) under day headings, unread bold and read dimmed, threaded in
+  `internal/mail/thread.go` by In-Reply-To, else by a
   reply-prefixed subject, with the user's Sent mail joining the conversations it answers.
-  Space expands one; Enter reads a mail with headers and its whole text, beside the list
-  when the pane is `mailSplitWidth` (140) or wider. Email is the exception to "no
+  Space expands one; Enter reads a mail with headers and its whole text, in a focused pane
+  opened beside the list when the pane is `mailSplitWidth` (120) or wider, which Esc
+  closes; under the text a quick reply box (`newComposerArea`) that Enter types into and
+  sends as a quoting reply. Email is the exception to "no
   per-message shortcuts": `c` `r` `R` `f` `d` `a` `m` `u` `/` and `v` (visual mode,
   Space picks rows) act on the selected row, the mail read or the picked ones, and
   Trash asks nothing since it can be undone. The composer (`internal/tui/compose.go`), a large modal the root draws over

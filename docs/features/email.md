@@ -12,16 +12,24 @@ the **compose** and **labels** chips. Entering the account opens the inbox.
 
 ## Conversations
 
-A folder opens as a list of conversations, the newest first:
+A folder opens as a list of conversations as wide as the pane, the newest first, under
+a heading for each day. The pane's title counts the unread ones:
 
 ```
-> ● Alice Smith          Quarterly report (3)                        14:05
-    Bob                  Lunch on Friday?                              Mon
-    Carol                Invoice 2291                                3 Oct
+╭─ EM Inbox · 2 unread ───────────────────────────╮
+│  today ───────────────────────────────────────  │
+│ ▎ ● Alice Smith                           14:05 │
+│ ▎   Quarterly report (3)                        │
+│     Bob                                   09:12 │
+│     Lunch on Friday?                            │
+│  yesterday ───────────────────────────────────  │
+│     Carol                                 18:40 │
+│     Invoice 2291                                │
 ```
 
-A dot marks unread mail. Each row shows who the conversation is with (who wrote last,
-or whom you wrote to), its subject with the number of mails, and the date of the newest.
+Each conversation takes two lines: who it is with (who wrote last, or whom you wrote
+to) and the time of the newest mail, then its subject with the number of mails. Unread
+conversations are bold with a dot; read ones are dimmed.
 Mails are grouped by their reply headers, or failing those, by a `Re:` or `Fwd:` subject.
 Your replies join the conversations they answer, wherever they are filed.
 
@@ -29,12 +37,18 @@ Your replies join the conversations they answer, wherever they are filed.
 
 ## Reading
 
-<kbd>Enter</kbd> opens the selected mail, or a conversation's newest, in the reader with
-its headers and whole text, and marks it read. Opening a conversation marks all of it read.
+<kbd>Enter</kbd> or a click opens the selected mail, or a conversation's newest, in the
+reader with its headers and whole text, and marks it read. Opening a conversation marks
+all of it read.
 
-When the folder pane is 140 columns or wider, the reader sits beside the list and
-previews the selected mail as you move (without marking it read). <kbd>]</kbd> moves to
-the reader and <kbd>[</kbd> back to the list.
+When the folder pane is 120 columns or wider, the reader opens beside the list and takes
+the focus; narrower, it takes the list's place. <kbd>Esc</kbd> closes it. <kbd>[</kbd>
+moves back to the list with the reader still open, and <kbd>]</kbd> to the reader again.
+
+Under the mail sits a quick reply box. <kbd>Enter</kbd> (or a click on it) starts typing;
+the box wraps and grows with the text. <kbd>Enter</kbd> sends it as a reply to the mail,
+quoting it as <kbd>r</kbd> would, and <kbd>Esc</kbd> stops typing, keeping the text until
+the reader closes.
 
 In the reader:
 
@@ -45,6 +59,7 @@ In the reader:
 | <kbd>g</kbd>/<kbd>G</kbd> | Top, bottom |
 | <kbd>o</kbd> | Open the attachment with the default app |
 | <kbd>s</kbd> | Save the attachment to `~/Downloads` |
+| <kbd>Enter</kbd> | Type a quick reply |
 | <kbd>Esc</kbd> | Close |
 
 HTML mail is reduced to text, and nothing it references (images, trackers) is fetched.

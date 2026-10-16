@@ -250,8 +250,7 @@ func (m tuiModel) sized() tuiModel {
 		m.agentPane = m.agentPane.resized(paneWidth, bodyHeight)
 	}
 	if m.mailOpen {
-		m.mail.width, m.mail.height = paneWidth, bodyHeight
-		m.mail = m.mail.scrolled()
+		m.mail = m.mail.resized(paneWidth, bodyHeight)
 	}
 	if m.labels != nil {
 		m.labels.resized(m.width, bodyHeight)
@@ -565,6 +564,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 				} else {
 					m.mailDraft, m.notice = nil, "sent"
 				}
+			}
+			if msg.quick && msg.err != nil {
+				m.notice = "reply not sent: " + textfmt.CleanError(msg.err)
 			}
 			return m, nil
 		}
@@ -1115,7 +1117,8 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m.mail.reading, m.mail.search = nil, nil
+		m.mail = m.mail.closeReader()
+		m.mail.search = nil
 		m.mail, cmd = m.mail.act("c")
 		m.focus = focusChat
 		return m, tea.Batch(load, cmd)

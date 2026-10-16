@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 
@@ -15,12 +16,13 @@ import (
 
 // mailSplitWidth is the narrowest folder pane that shows the reader beside
 // the list; narrower, the reader takes the list's place.
-const mailSplitWidth = 140
+const mailSplitWidth = 120
 
 // mailListModel is an email folder (backend.Mailbox): its conversations in
-// a list, each a row that Space expands into its mails. Enter reads a mail,
-// in the list's place or beside it in a wide pane, and single keys reply,
-// forward, move and mark. The root draws the composer as a modal over the screen.
+// a list as wide as the pane, each a row that Space expands into its mails.
+// Enter reads a mail, in the list's place or in a pane opened beside it, with
+// a quick reply box under the text, and single keys reply, forward, move and
+// mark. The root draws the composer as a modal over the screen.
 type mailListModel struct {
 	st     *styles
 	ctx    context.Context
@@ -49,6 +51,10 @@ type mailListModel struct {
 	reading     *backend.Message
 	readerTop   int
 	readerFocus bool // in the split, keys go to the reader
+
+	quick        textarea.Model // the reader's quick reply
+	replying     bool           // keys go to the quick reply
+	quickSending bool
 
 	composer  *mailComposer
 	composing bool // the composer is up; a kept draft waits while false
@@ -79,6 +85,7 @@ type mailDone struct {
 	notice string
 	err    error
 	sent   bool
+	quick  bool // a quick reply was sent
 	moved  bool
 }
 
@@ -91,7 +98,9 @@ type mailClosed struct{}
 func newMailList(ctx context.Context, st *styles, b backend.Backend, mb backend.Mailbox,
 	folder backend.ChatEntry, draft *mailComposer) (mailListModel, tea.Cmd) {
 	m := mailListModel{st: st, ctx: ctx, b: b, mb: mb, folder: folder, composer: draft,
-		open: make(map[string]bool), marked: make(map[string]bool)}
+		open: make(map[string]bool), marked: make(map[string]bool),
+		quick: newComposerArea(st, "quick reply")}
+	m.quick.Blur()
 	return m.reload()
 }
 
@@ -123,8 +132,9 @@ func (m mailListModel) syncing() bool {
 	return ok && s.Syncing() && len(m.threads) == 0 && m.query == ""
 }
 
-// typing reports whether keys are text: the composer or the search field.
-func (m mailListModel) typing() bool { return m.composing || m.search != nil }
+// typing reports whether keys are text: the composer, the search field or
+// the quick reply.
+func (m mailListModel) typing() bool { return m.composing || m.search != nil || m.replying }
 
 func (m mailListModel) update(msg tea.Msg) (mailListModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -140,14 +150,22 @@ func (m mailListModel) update(msg tea.Msg) (mailListModel, tea.Cmd) {
 		if msg.err == nil {
 			m.threads, m.loaded = msg.threads, true
 			m.sel = min(m.sel, max(0, len(m.rows())-1))
-			if !m.readerFocus {
-				m = m.scrolled().previewed()
-			}
+			m = m.scrolled()
 		}
 		if m.stale {
 			return m.reload()
 		}
 	case mailDone:
+		if msg.quick {
+			m.quickSending = false
+			if msg.err != nil {
+				m.notice = "reply not sent: " + textfmt.CleanError(msg.err)
+				return m, nil
+			}
+			m.quick.Reset()
+			m.replying = false
+			m.quick.Blur()
+		}
 		if msg.sent && m.composer != nil {
 			m.composer.sending = false
 			if msg.err == nil {
@@ -187,6 +205,10 @@ func (m mailListModel) update(msg tea.Msg) (mailListModel, tea.Cmd) {
 		case m.search != nil:
 			in, cmd := m.search.Update(msg)
 			m.search = &in
+			return m, cmd
+		case m.replying:
+			var cmd tea.Cmd
+			m.quick, cmd = m.quick.Update(msg)
 			return m, cmd
 		}
 	}
@@ -273,6 +295,9 @@ func (m mailListModel) key(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	if m.search != nil {
 		return m.searchKey(msg)
 	}
+	if m.replying {
+		return m.replyKey(msg)
+	}
 	if m.reading != nil && (m.readerFocus || !m.split()) {
 		return m.readerKey(msg)
 	}
@@ -285,6 +310,8 @@ func (m mailListModel) listKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		switch {
+		case m.reading != nil:
+			m = m.closeReader()
 		case m.visual:
 			m.visual, m.marked = false, make(map[string]bool)
 		case m.query != "":
@@ -347,8 +374,7 @@ func (m mailListModel) listKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	default:
 		return m.act(msg.String())
 	}
-	m = m.scrolled()
-	return m.previewed(), nil
+	return m.scrolled(), nil
 }
 
 // headerIndex is the row of conversation t's header.
@@ -361,20 +387,6 @@ func (m mailListModel) headerIndex(t int) int {
 	return 0
 }
 
-// previewed shows the selected row's mail in the split's reader.
-func (m mailListModel) previewed() mailListModel {
-	if !m.split() {
-		return m
-	}
-	if r, ok := m.selectedRow(); ok {
-		msg := m.shown(r)
-		if m.reading == nil || m.reading.ID != msg.ID {
-			m.reading, m.readerTop = &msg, 0
-		}
-	}
-	return m
-}
-
 // read opens the selected row's mail and marks it read; a conversation is
 // read whole.
 func (m mailListModel) read() (mailListModel, tea.Cmd) {
@@ -383,7 +395,10 @@ func (m mailListModel) read() (mailListModel, tea.Cmd) {
 		return m, nil
 	}
 	msg := m.shown(r)
-	m.reading, m.readerTop = &msg, 0
+	if m.reading == nil || m.reading.ID != msg.ID {
+		m = m.closeReader()
+		m.reading = &msg
+	}
 	m.readerFocus = m.split()
 	var unread []string
 	ids := m.rowIDs(r)
@@ -407,17 +422,24 @@ func containsID(ids []string, id string) bool {
 	return false
 }
 
+// closeReader hides the reader and drops its quick reply.
+func (m mailListModel) closeReader() mailListModel {
+	m.reading, m.readerTop, m.readerFocus = nil, 0, false
+	m.replying = false
+	m.quick.Reset()
+	m.quick.Blur()
+	return m
+}
+
 func (m mailListModel) readerKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
-	page := max(1, m.height-2)
+	page := m.readerHeight()
 	last := max(0, len(m.readerLines(m.readerWidth()-4))-page)
 	switch msg.String() {
 	case "esc":
-		if m.split() {
-			m.readerFocus = false
-		} else {
-			m.reading = nil
-		}
-		return m, nil
+		return m.closeReader(), nil
+	case "enter":
+		m.replying = true
+		return m, m.quick.Focus()
 	case "[":
 		m.readerFocus = false
 		return m, nil
@@ -554,7 +576,7 @@ func (m mailListModel) move(ids []string, to, label string) (mailListModel, tea.
 		m.notice = "this server has no " + label + " folder"
 		return m, nil
 	}
-	m.reading, m.readerFocus = nil, false
+	m = m.closeReader()
 	m.visual, m.marked = false, make(map[string]bool)
 	ctx, mb, folder := m.ctx, m.mb, m.folder
 	m.notice = "moving…"
@@ -602,6 +624,33 @@ func (m mailListModel) composeKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) 
 	return m, cmd
 }
 
+// replyKey types the quick reply; Enter sends it as a reply to the mail
+// being read, quoting it as r would.
+func (m mailListModel) replyKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.replying = false
+		m.quick.Blur()
+		return m, nil
+	case "enter":
+		text := strings.TrimSpace(m.quick.Value())
+		if text == "" || m.quickSending || m.reading == nil {
+			return m, nil
+		}
+		d := m.mb.Draft(*m.reading, backend.DraftReply)
+		d.Body = text + d.Body
+		m.quickSending, m.notice = true, "sending…"
+		ctx, mb := m.ctx, m.mb
+		return m, func() tea.Msg {
+			return mailDone{notice: "reply sent", err: mb.SendMail(ctx, d), quick: true}
+		}
+	}
+	m.quick.SetWidth(m.quickWidth())
+	var cmd tea.Cmd
+	m.quick, cmd = m.quick.Update(msg)
+	return m, cmd
+}
+
 func (m mailListModel) searchKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -610,7 +659,8 @@ func (m mailListModel) searchKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	case "enter":
 		q := strings.TrimSpace(m.search.Value())
 		m.search = nil
-		m.query, m.sel, m.offset, m.reading = q, 0, 0, nil
+		m = m.closeReader()
+		m.query, m.sel, m.offset = q, 0, 0
 		m.notice = ""
 		if q != "" {
 			m.notice = "searching…"
@@ -631,33 +681,40 @@ func (m mailListModel) paste(msg tea.PasteMsg) (mailListModel, tea.Cmd) {
 		in, cmd := m.search.Update(msg)
 		m.search = &in
 		return m, cmd
+	case m.replying:
+		var cmd tea.Cmd
+		m.quick, cmd = m.quick.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
 
-// click selects the row at y of the pane and reads it, as Enter would.
+// click selects the row at y of the pane and reads it, as Enter would; in the
+// reader beside the list it focuses the reader, or the quick reply under it.
 func (m mailListModel) click(x, y int) (mailListModel, tea.Cmd) {
-	if m.typing() {
+	if m.composing || m.search != nil {
 		return m, nil
 	}
-	if m.reading != nil && !m.split() {
+	if m.reading != nil && (!m.split() || x >= m.listWidth()) {
+		m.readerFocus = m.split()
+		if y >= 1+m.readerHeight() && y < m.height-1 && !m.replying {
+			m.replying = true
+			return m, m.quick.Focus()
+		}
 		return m, nil
 	}
-	if m.split() && x >= m.listWidth() {
-		m.readerFocus = m.reading != nil
+	_, owners := m.listLines(m.listWidth()-4, m.listHeight(), false)
+	i := y - 1 - m.listTop()
+	if i < 0 || i >= len(owners) || owners[i] < 0 {
 		return m, nil
 	}
-	i := y - 1 - m.listTop() + m.offset
-	if y < 1+m.listTop() || i >= len(m.rows()) {
-		return m, nil
-	}
-	m.sel, m.readerFocus = i, false
+	m.sel = owners[i]
 	return m.read()
 }
 
 // wheel scrolls the list or the reader under the pointer as ↑↓ would.
 func (m mailListModel) wheel(x int, k tea.KeyPressMsg) (mailListModel, tea.Cmd) {
-	if m.typing() {
+	if m.composing || m.search != nil {
 		return m, nil
 	}
 	if m.reading != nil && (!m.split() || x >= m.listWidth()) {
@@ -674,18 +731,53 @@ func (m mailListModel) wheel(x int, k tea.KeyPressMsg) (mailListModel, tea.Cmd) 
 	return m, cmd
 }
 
+// resized fits the folder to a pane width×height.
+func (m mailListModel) resized(width, height int) mailListModel {
+	m.width, m.height = width, height
+	m.quick.SetWidth(m.quickWidth())
+	return m.scrolled()
+}
+
+// beside reports whether the reader is open beside the list.
+func (m mailListModel) beside() bool { return m.reading != nil && m.split() }
+
 func (m mailListModel) listWidth() int {
-	if m.split() {
+	if m.beside() {
 		return m.width * 2 / 5
 	}
 	return m.width
 }
 
 func (m mailListModel) readerWidth() int {
-	if m.split() {
+	if m.beside() {
 		return m.width - m.listWidth()
 	}
 	return m.width
+}
+
+// quickWidth is the quick reply's text width: the reader's edges and
+// padding, the reply box's, and its prompt.
+func (m mailListModel) quickWidth() int { return max(1, m.readerWidth()-4-4-2) }
+
+// quickBox is the quick reply under the mail, its border lit while typing.
+func (m mailListModel) quickBox(width int, focused bool) []string {
+	border := m.st.dimColor
+	if focused && m.replying {
+		border = m.st.accentColor
+	}
+	title := "reply to " + textfmt.Plain(backend.GenericMessageSender(*m.reading))
+	if m.quickSending {
+		title = m.spin + "sending…"
+	}
+	return m.st.areaBox(title, nil, m.quick, width, border)
+}
+
+// readerHeight is how many rows of the mail show above the quick reply.
+func (m mailListModel) readerHeight() int {
+	if m.reading == nil {
+		return max(1, m.height-2)
+	}
+	return max(1, m.height-2-len(m.quickBox(m.readerWidth()-4, false)))
 }
 
 // listTop is how many lines sit above the rows: the search field.
@@ -698,20 +790,77 @@ func (m mailListModel) listTop() int {
 
 func (m mailListModel) listHeight() int { return max(1, m.height-2-m.listTop()) }
 
+// dayBreak is the day heading above row i, when it starts a new day: only
+// conversations get one, from the date of their newest mail.
+func (m mailListModel) dayBreak(rows []mailRow, i int) (string, bool) {
+	r := rows[i]
+	if r.msg >= 0 {
+		return "", false
+	}
+	day := m.shown(r).Timestamp.Local()
+	if r.thread > 0 {
+		prev := m.shown(mailRow{r.thread - 1, -1}).Timestamp.Local()
+		if prev.Year() == day.Year() && prev.YearDay() == day.YearDay() {
+			return "", false
+		}
+	}
+	return dayHeading(day, time.Now()), true
+}
+
+// dayHeading names a day: today, yesterday, else its date.
+func dayHeading(t, now time.Time) string {
+	now = now.Local()
+	switch y := now.AddDate(0, 0, -1); {
+	case t.Year() == now.Year() && t.YearDay() == now.YearDay():
+		return "today"
+	case t.Year() == y.Year() && t.YearDay() == y.YearDay():
+		return "yesterday"
+	case t.Year() == now.Year():
+		return strings.ToLower(t.Format("Mon 2 Jan"))
+	}
+	return strings.ToLower(t.Format("2 Jan 2006"))
+}
+
+// rowHeight is the lines row i takes: two, and its day heading.
+func (m mailListModel) rowHeight(rows []mailRow, i int) int {
+	if _, ok := m.dayBreak(rows, i); ok {
+		return 3
+	}
+	return 2
+}
+
 func (m mailListModel) scrolled() mailListModel {
-	h := m.listHeight()
+	rows := m.rows()
+	m.offset = max(0, min(m.offset, len(rows)-1))
+	if len(rows) == 0 {
+		return m
+	}
 	if m.sel < m.offset {
 		m.offset = m.sel
 	}
-	if m.sel >= m.offset+h {
-		m.offset = m.sel - h + 1
+	// The first row from which the selection still fits.
+	top, used := m.sel, m.rowHeight(rows, m.sel)
+	for top > 0 && used+m.rowHeight(rows, top-1) <= m.listHeight() {
+		top--
+		used += m.rowHeight(rows, top)
 	}
-	m.offset = max(0, m.offset)
+	m.offset = max(m.offset, top)
 	return m
 }
 
+func (m mailListModel) unreadCount() int {
+	n := 0
+	for _, t := range m.threads {
+		if t.Unread > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// title is the folder's tag and name, its unread count and the mode.
 func (m mailListModel) title() string {
-	title := textfmt.Plain(m.folder.Title)
+	title := m.st.badge.Render(" EM ") + " " + m.st.brand.Render(textfmt.Plain(m.folder.Title))
 	switch {
 	case m.visual:
 		n := 0
@@ -720,9 +869,13 @@ func (m mailListModel) title() string {
 				n++
 			}
 		}
-		title += fmt.Sprintf(" · VISUAL (%d selected)", n)
+		title += m.st.subtle.Render(fmt.Sprintf(" · VISUAL (%d selected)", n))
 	case m.query != "":
-		title += " · search"
+		title += m.st.subtle.Render(" · search")
+	default:
+		if n := m.unreadCount(); n > 0 {
+			title += m.st.dim.Render(fmt.Sprintf(" · %d unread", n))
+		}
 	}
 	return title
 }
@@ -730,81 +883,98 @@ func (m mailListModel) title() string {
 func (m mailListModel) view(focused bool) string {
 	m.focused = focused
 	if m.reading != nil && !m.split() {
-		return renderBox(textfmt.Plain(m.folder.Title), m.readerBody(m.width-4, m.height-2),
-			m.width, m.height, m.st.border(focused))
+		return m.readerView(m.width, focused)
 	}
-	listFocused := focused && !(m.split() && m.readerFocus)
-	list := renderBox(m.title(), m.listBody(m.listWidth()-4, m.height-2, listFocused),
+	listFocused := focused && !(m.beside() && m.readerFocus)
+	lines, _ := m.listLines(m.listWidth()-4, m.listHeight(), listFocused)
+	list := renderTitledBox(m.title(), "", append(m.searchLines(m.listWidth()-4), lines...),
 		m.listWidth(), m.height, m.st.border(listFocused))
-	if !m.split() {
+	if !m.beside() {
 		return list
 	}
-	var body []string
-	if m.reading != nil {
-		body = m.readerBody(m.readerWidth()-4, m.height-2)
-	} else {
-		body = centerLines(m.readerWidth()-4, m.height-2, m.st.subtle.Render("No mail selected"))
-	}
-	reader := renderBox("", body, m.readerWidth(), m.height,
-		m.st.border(focused && m.readerFocus))
-	return joinColumns(list, reader)
+	return joinColumns(list, m.readerView(m.readerWidth(), focused && m.readerFocus))
 }
 
-// listBody is the search line, if any, then the rows.
-func (m mailListModel) listBody(width, height int, focused bool) []string {
-	var lines []string
+// readerView is the mail being read in a box width wide, the quick reply
+// at its foot.
+func (m mailListModel) readerView(width int, focused bool) string {
+	inner := width - 4
+	box := m.quickBox(inner, focused)
+	height := m.height - 2 - len(box)
+	body := append(fillLines(m.readerBody(inner, height), height), box...)
+	return renderBox("", body, width, m.height, m.st.border(focused))
+}
+
+// searchLines is the search field being typed, or the search shown.
+func (m mailListModel) searchLines(width int) []string {
 	switch {
 	case m.search != nil:
 		m.search.SetWidth(max(1, width-10))
-		lines = append(lines, m.st.accent.Render("Search    ")+m.search.View(), "")
+		return []string{m.st.accent.Render("Search    ") + m.search.View(), ""}
 	case m.query != "":
-		lines = append(lines, m.st.subtle.Render(textfmt.ClipLine("Search    "+m.query+
-			"  · esc clears", width)), "")
+		return []string{m.st.subtle.Render(textfmt.ClipLine("Search    "+m.query+
+			"  · esc clears", width)), ""}
 	}
-	rows := m.rows()
-	switch {
-	case m.err != nil && len(rows) == 0:
-		return append(lines, centerLines(width, height-len(lines),
-			styleError.Render(textfmt.CleanError(m.err)))...)
-	case m.syncing() || (!m.loaded && m.loading):
-		return append(lines, centerLines(width, height-len(lines),
-			m.spin+m.st.subtle.Render(" Loading emails…"))...)
-	case len(rows) == 0 && m.query != "":
-		return append(lines, centerLines(width, height-len(lines),
-			m.st.subtle.Render("Nothing found"))...)
-	case len(rows) == 0:
-		return append(lines, centerLines(width, height-len(lines),
-			m.st.subtle.Render("No mail here"))...)
-	}
-	now := time.Now()
-	for i := m.offset; i < min(len(rows), m.offset+height-len(lines)); i++ {
-		lines = append(lines, m.rowLine(rows[i], i == m.sel, focused, width, now))
-	}
-	return lines
+	return nil
 }
 
-// rowLine draws a row: the cursor and visual marks, an unread dot, who the
-// conversation is with, its subject and size, and the date at the right.
-func (m mailListModel) rowLine(r mailRow, selected, focused bool, width int, now time.Time) string {
-	t := m.threads[r.thread]
-	marker := "  "
-	if selected {
-		marker = m.st.accent.Render(">") + " "
+// listLines draws the rows from the offset under their day headings, with
+// the row each line belongs to (-1 for a heading or a notice).
+func (m mailListModel) listLines(width, height int, focused bool) ([]string, []int) {
+	rows := m.rows()
+	var notice string
+	switch {
+	case m.err != nil && len(rows) == 0:
+		notice = styleError.Render(textfmt.CleanError(m.err))
+	case m.syncing() || (!m.loaded && m.loading):
+		notice = m.spin + m.st.subtle.Render(" Loading emails…")
+	case len(rows) == 0 && m.query != "":
+		notice = m.st.subtle.Render("Nothing found")
+	case len(rows) == 0:
+		notice = m.st.subtle.Render("No mail here")
 	}
-	ids := m.rowIDs(r)
-	if m.visual && m.marked[ids[0]] {
-		marker = marker[:len(marker)-1] + m.st.accent.Render("*")
-		if !selected {
-			marker = " " + m.st.accent.Render("*")
+	if notice != "" {
+		return centerLines(width, height, notice), nil
+	}
+	var lines []string
+	var owners []int
+	now := time.Now()
+	for i := m.offset; i < len(rows) && len(lines) < height; i++ {
+		if day, ok := m.dayBreak(rows, i); ok {
+			lines = append(lines, " "+m.st.modalRule(day, width-2))
+			owners = append(owners, -1)
+		}
+		for _, line := range m.rowLines(rows[i], i == m.sel, focused, width, now) {
+			lines = append(lines, line)
+			owners = append(owners, i)
 		}
 	}
+	return lines, owners
+}
+
+// rowLines draws a row on two lines: the selection bar, a visual mark and an
+// unread dot, who the conversation is with and the time; then its subject
+// and size. A mail of an expanded conversation shows its sender and an
+// excerpt, further in. Unread rows are bold, read ones dim.
+func (m mailListModel) rowLines(r mailRow, selected, focused bool, width int,
+	now time.Time) []string {
+	t := m.threads[r.thread]
 	msg := m.shown(r)
-	unread := r.msg < 0 && t.Unread > 0
-	who, text := textfmt.Plain(t.With), textfmt.Plain(t.Subject)
+	bar, mark, dot := " ", " ", "  "
+	if selected {
+		bar = m.st.accent.Render("▎")
+	}
+	if m.visual && m.marked[m.rowIDs(r)[0]] {
+		mark = m.st.accent.Render("*")
+	}
+	who, text, indent := textfmt.Plain(t.With), textfmt.Plain(t.Subject), ""
+	unread := t.Unread > 0
+	date := msg.Timestamp.Local().Format("15:04")
 	if r.msg >= 0 {
-		who = "  " + backend.GenericMessageSender(msg)
+		who, indent = backend.GenericMessageSender(msg), "  "
 		text = textfmt.ShortExcerpt(textfmt.Plain(msg.Text))
-		unread = !msg.Outgoing && t.Unread > 0 && m.unreadIn(msg)
+		unread = !msg.Outgoing && unread && m.unreadIn(msg)
+		date = mailDate(msg.Timestamp, now)
 	} else {
 		if text == "" {
 			text = "(no subject)"
@@ -813,28 +983,34 @@ func (m mailListModel) rowLine(r mailRow, selected, focused bool, width int, now
 			text += fmt.Sprintf(" (%d)", n)
 		}
 	}
-	dot := "  "
 	if unread {
 		dot = m.st.accent.Render("●") + " "
 	}
-	date := mailDate(msg.Timestamp, now)
-	whoWidth := min(22, max(8, width/4))
-	who = truncate(who, whoWidth)
-	who += strings.Repeat(" ", whoWidth-textfmt.DisplayWidth(who))
-	room := max(1, width-2-2-whoWidth-2-textfmt.DisplayWidth(date)-1)
+	lead := bar + mark + dot + indent
+	room := max(1, width-textfmt.DisplayWidth(lead))
+	who = truncate(who, max(1, room-textfmt.DisplayWidth(date)-2))
+	gap := strings.Repeat(" ", max(2, room-textfmt.DisplayWidth(who)-textfmt.DisplayWidth(date)))
 	text = truncate(text, room)
-	gap := strings.Repeat(" ", max(1, room-textfmt.DisplayWidth(text)+1))
-	line := who + "  " + text + gap + date
-	switch {
-	case selected && focused:
-		return marker + dot + m.st.selectedRow.Render(line)
-	case unread:
-		return marker + dot + boldLine(textfmt.NickColor(t.With)+who+"\x1b[0m"+"  "+text+gap+date)
-	case r.msg >= 0:
-		return marker + dot + m.st.subtle.Render(line)
+	dateStyle := m.st.subtle
+	if unread {
+		who = boldLine(who)
+	} else {
+		who, text = m.st.subtle.Render(who), m.st.dim.Render(text)
+		dateStyle = m.st.dim
 	}
-	return marker + dot + textfmt.NickColor(t.With) + who + "\x1b[0m" + "  " + text + gap +
-		m.st.subtle.Render(date)
+	if selected {
+		dateStyle = m.st.accent
+	}
+	first := lead + who + gap + dateStyle.Render(date)
+	second := " " + mark + "  " + indent + text
+	if selected && focused {
+		return []string{shadeLine(first, m.st.selBgSGR, width),
+			shadeLine(bar+second[1:], m.st.selBgSGR, width)}
+	}
+	if selected {
+		second = bar + second[1:]
+	}
+	return []string{first, second}
 }
 
 // unreadIn reports whether msg is among its conversation's unread mails;
@@ -910,6 +1086,8 @@ func (m mailListModel) helpKeys() []helpKey {
 		return m.composer.helpKeys()
 	case m.search != nil:
 		return []helpKey{{"enter", "search"}, {"esc", "cancel"}}
+	case m.replying:
+		return []helpKey{{"enter", "send reply"}, {"esc", "stop typing"}}
 	}
 	actions := []helpKey{{"r", "reply"}, {"R", "all"}, {"f", "forward"}, {"d", "trash"}}
 	if m.mb.ArchiveFolder() != "" {
@@ -917,15 +1095,15 @@ func (m mailListModel) helpKeys() []helpKey {
 	}
 	actions = append(actions, helpKey{"m", "move"}, helpKey{"u", "unread"})
 	if m.reading != nil && (m.readerFocus || !m.split()) {
-		keys := []helpKey{{"↑↓", "scroll"}}
+		keys := []helpKey{{"enter", "quick reply"}, {"↑↓", "scroll"}}
 		if _, ok := m.b.MediaSaveable(*m.reading); ok {
 			keys = append(keys, helpKey{"o", "open file"}, helpKey{"s", "save file"})
 		}
 		keys = append(keys, actions...)
 		if m.split() {
-			return append(keys, helpKey{"[", "list"}, helpKey{"esc", "list"})
+			keys = append(keys, helpKey{"[", "list"})
 		}
-		return append(keys, helpKey{"esc", "back"})
+		return append(keys, helpKey{"esc", "close"})
 	}
 	if m.visual {
 		keys := []helpKey{{"space", "pick"}, {"d", "trash"}}
