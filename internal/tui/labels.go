@@ -183,15 +183,15 @@ func (m *labelPicker) View() string {
 		switch {
 		case m.move:
 		case l.Shown:
-			mark = m.st.accent.Render("●")
+			mark = m.st.accent.Render("[x]")
 		default:
-			mark = m.st.dim.Render("○")
+			mark = m.st.dim.Render("[ ]")
 		}
 		count := ""
 		if l.Unread > 0 {
 			count = m.st.dim.Render(fmt.Sprintf("%d unread", l.Unread))
 		}
-		room := max(1, inner-modalMark-3-textfmt.DisplayWidth(count)-1)
+		room := max(1, inner-modalMark-4-textfmt.DisplayWidth(count)-1)
 		name := truncate(textfmt.Plain(l.Name), room)
 		if i == m.sel {
 			name = m.st.brand.Render(name)
@@ -203,7 +203,7 @@ func (m *labelPicker) View() string {
 			i == m.sel, inner))
 	}
 	body = fillLines(body, m.height-4)
-	keys := []helpKey{{"space", "show/hide"}, {"enter", "go to"}, {"esc", "close"}}
+	keys := []helpKey{{"space", "show/hide"}, {"esc", "close"}}
 	if m.move {
 		keys = []helpKey{{"↑↓", "select"}, {"enter", "move here"}, {"esc", "cancel"}}
 	}
@@ -234,6 +234,5 @@ func (m *labelPicker) helpKeys() []helpKey {
 	if m.move {
 		return []helpKey{{"↑↓", "select"}, {"enter", "move here"}, {"esc", "cancel"}}
 	}
-	return []helpKey{{"↑↓", "select"}, {"space", "show/hide"}, {"enter", "go to"},
-		{"esc", "close"}}
+	return []helpKey{{"↑↓", "select"}, {"space", "show/hide"}, {"esc", "close"}}
 }
