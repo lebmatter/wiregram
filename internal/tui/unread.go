@@ -3,9 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"image/color"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -17,7 +18,6 @@ import (
 const (
 	unreadMaxChats  = 24
 	unreadCardLines = 3
-	unreadCardH     = unreadCardLines + 3 // border, kind line, messages
 )
 
 type chatKind int
@@ -38,16 +38,6 @@ func kindOf(e backend.ChatEntry) (chatKind, string) {
 		return kindChannel, rest
 	}
 	return kindGroup, title
-}
-
-func (k chatKind) tag() (string, color.Color) {
-	switch k {
-	case kindDM:
-		return "● DM", colorGreen
-	case kindChannel:
-		return "▶ Channel", colorYellow
-	}
-	return "# Group", colorGroup
 }
 
 type unreadCard struct {
@@ -147,14 +137,27 @@ func (m unreadModel) resized(width, height int) unreadModel {
 	return m.scrolled()
 }
 
-func (m unreadModel) visibleRows() int { return max(1, (m.height-2)/unreadCardH) }
+// cardHeight is the rows card i takes: its lines, its keys when selected,
+// and its border.
+func (m unreadModel) cardHeight(i int) int {
+	return len(m.cardLines(i, max(1, m.width-8))) + 2
+}
 
+// scrolled keeps the selected card whole inside the pane.
 func (m unreadModel) scrolled() unreadModel {
 	if m.selected < m.offset {
 		m.offset = m.selected
 	}
-	if m.selected >= m.offset+m.visibleRows() {
-		m.offset = m.selected - m.visibleRows() + 1
+	room := m.height - 2
+	for m.offset < m.selected {
+		used := 0
+		for i := m.offset; i <= m.selected; i++ {
+			used += m.cardHeight(i)
+		}
+		if used <= room {
+			break
+		}
+		m.offset++
 	}
 	return m
 }
@@ -164,8 +167,41 @@ func (m unreadModel) cardAt(y int) (int, bool) {
 	if y < 1 {
 		return 0, false
 	}
-	i := m.offset + (y-1)/unreadCardH
-	return i, i < len(m.cards)
+	top := 1
+	for i := m.offset; i < len(m.cards); i++ {
+		h := m.cardHeight(i)
+		if y < top+h {
+			return i, true
+		}
+		top += h
+	}
+	return 0, false
+}
+
+type unreadThread struct {
+	card unreadCard
+	msg  backend.Message
+}
+type unreadMarked struct{ err error }
+
+// threadReply is the newest reply in the card, when the backend keeps its
+// thread on the server for t to open.
+func (m unreadModel) threadReply(c unreadCard) (backend.Message, bool) {
+	if _, ok := m.b.(backend.ThreadFetcher); !ok || m.bot != nil {
+		return backend.Message{}, false
+	}
+	for i := len(c.msgs) - 1; i >= 0; i-- {
+		if c.msgs[i].ReplyToID != "" {
+			return c.msgs[i], true
+		}
+	}
+	return backend.Message{}, false
+}
+
+// canMark reports whether m marks the card's chat read: unread chats of the
+// user's own account.
+func (m unreadModel) canMark(c unreadCard) bool {
+	return m.bot == nil && !m.mentions && c.count > 0
 }
 
 func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
@@ -196,10 +232,40 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 				card := m.cards[m.selected]
 				return m, func() tea.Msg { return unreadPicked{card} }
 			}
+		case "t":
+			if m.selected < len(m.cards) {
+				card := m.cards[m.selected]
+				if reply, ok := m.threadReply(card); ok {
+					return m, func() tea.Msg { return unreadThread{card, reply} }
+				}
+			}
+		case "m":
+			if m.selected < len(m.cards) && m.canMark(m.cards[m.selected]) {
+				return m.markRead()
+			}
 		}
 		return m.scrolled(), nil
 	}
 	return m, nil
+}
+
+// markRead marks the selected card's chat read up to its newest message and
+// drops the card.
+func (m unreadModel) markRead() (unreadModel, tea.Cmd) {
+	c := m.cards[m.selected]
+	newest := ""
+	var at time.Time
+	for _, msg := range c.msgs {
+		if newest == "" || !msg.Timestamp.Before(at) {
+			newest, at = msg.ID, msg.Timestamp
+		}
+	}
+	m.cards = append(m.cards[:m.selected:m.selected], m.cards[m.selected+1:]...)
+	m.selected = min(m.selected, max(0, len(m.cards)-1))
+	ctx, b := m.ctx, m.b
+	return m.scrolled(), func() tea.Msg {
+		return unreadMarked{b.MarkRead(ctx, c.entry, newest)}
+	}
 }
 
 func (m unreadModel) name() string {
@@ -228,10 +294,10 @@ func (m unreadModel) view(focused bool) string {
 	case len(m.cards) == 0:
 		body = append(body, m.st.subtle.Render("Nothing unread"))
 	default:
-		end := min(len(m.cards), m.offset+m.visibleRows())
-		for i := m.offset; i < end; i++ {
-			body = append(body, strings.Split(m.card(i, m.width-4, focused), "\n")...)
+		for i := m.offset; i < len(m.cards) && len(body) < m.height-2; i++ {
+			body = append(body, m.card(i, m.width-4, focused)...)
 		}
+		title += fmt.Sprintf(" · %d %s", len(m.cards), plural(len(m.cards), "chat", "chats"))
 		if m.loading {
 			title += " · refreshing…"
 		}
@@ -239,59 +305,230 @@ func (m unreadModel) view(focused bool) string {
 	return renderBox(title, body, m.width, m.height, m.st.border(focused))
 }
 
-func (m unreadModel) card(i, width int, focused bool) string {
+// card draws card i width cells wide: the chat's name, team and any reply
+// waiting in its top border, with the time of its newest message and the
+// count on the right, then its messages.
+func (m unreadModel) card(i, width int, focused bool) []string {
 	c := m.cards[i]
-	kind, title := kindOf(c.entry)
-	tag, border := kind.tag()
-	head := lipgloss.NewStyle().Bold(true).Foreground(border).Render(tag)
-	for _, msg := range c.msgs {
-		if msg.ReplyToID != "" {
-			head += m.st.dim.Render(" · ") + styleQuoteBar.Render("thread")
-			break
+	selected := i == m.selected
+	border := m.st.dimColor
+	nameStyle := styleTitle
+	if selected {
+		border = m.st.subtle.GetForeground()
+		if focused {
+			border, nameStyle = m.st.accentColor, m.st.brand
 		}
 	}
-	if c.waiting {
-		head += m.st.dim.Render(" · ") + m.st.agent.Render(agentIcon+" reply waiting")
+	right := ""
+	if at := newestAt(c.msgs); !at.IsZero() {
+		right = m.st.subtle.Render(whenText(at, time.Now()))
 	}
-	pill := ""
 	if c.count > 0 {
-		pill = m.st.badge.Render(fmt.Sprintf(" %d ", c.count))
+		right = strings.TrimPrefix(right+" "+m.st.badge.Render(fmt.Sprintf(" %d ", c.count)), " ")
 	}
-	inner := width - 4
-	head += strings.Repeat(" ", max(1, inner-lipgloss.Width(head)-lipgloss.Width(pill))) + pill
+	lead := ""
+	if selected {
+		lead = nameStyle.Render("› ")
+	}
+	glyph := "#"
+	if c.entry.IsDM || c.entry.IsSelf {
+		glyph = "@"
+	}
+	lead += m.st.dim.Render(glyph)
+	tail := ""
+	if c.entry.Section != "" {
+		tail += " " + m.st.tag.Render(" "+strings.ToLower(c.entry.Section)+" ")
+	}
+	if c.waiting {
+		tail += " " + m.st.agent.Render(agentIcon+" reply waiting")
+	}
+	// ╭─ lead name tail ──── right ─╮
+	room := width - 6 - textfmt.DisplayWidth(lead) - textfmt.DisplayWidth(tail) -
+		textfmt.DisplayWidth(right) - 1
+	name := truncate(sidebarTitle(c.entry), max(1, room))
+	bs := lipgloss.NewStyle().Foreground(border)
+	head := " " + lead + nameStyle.Render(name) + tail + " "
+	fill := max(1, width-3-textfmt.DisplayWidth(head)-textfmt.DisplayWidth(right)-2)
+	top := bs.Render("╭─") + head + bs.Render(strings.Repeat("─", fill))
+	if right != "" {
+		top += " " + right + " "
+	}
+	top += bs.Render(strings.Repeat("─", max(0, width-1-textfmt.DisplayWidth(top))) + "╮")
 
-	lines := []string{head}
+	inner := width - 4
+	side := bs.Render("│")
+	lines := []string{top}
+	for _, l := range m.cardLines(i, inner) {
+		l = textfmt.ClipLine(l, inner)
+		lines = append(lines, side+" "+l+strings.Repeat(" ", max(0, inner-textfmt.DisplayWidth(l)))+
+			" "+side)
+	}
+	return append(lines, bs.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+}
+
+// unreadNickWidth is the author column, so every message starts in line.
+const unreadNickWidth = 16
+
+// cardLines is card i's body: its messages, a run of the same message from
+// the same sender as one line with ×N, and on the selected card its keys.
+func (m unreadModel) cardLines(i, width int) []string {
+	c := m.cards[i]
+	var lines []string
 	if c.err != nil {
 		lines = append(lines, styleError.Render(textfmt.CleanError(c.err)))
 	}
+	threaded := false
 	for _, msg := range c.msgs {
-		prefix := ""
-		if msg.ReplyToID != "" {
-			prefix = m.st.dim.Render("↳ ")
+		threaded = threaded || msg.ReplyToID != ""
+	}
+	for j := 0; j < len(c.msgs); {
+		msg := c.msgs[j]
+		n := 1
+		for j+n < len(c.msgs) && c.msgs[j+n].Sender == msg.Sender &&
+			backend.GenericMessageText(c.msgs[j+n]) == backend.GenericMessageText(msg) {
+			n++
+		}
+		j += n
+		line := ""
+		if threaded {
+			line = "  "
+			if msg.ReplyToID != "" {
+				line = m.st.dim.Render("↳ ")
+			}
 		}
 		sender := backend.GenericMessageSender(msg)
+		nick := textfmt.NickColor(sender)
 		if m.bot != nil && msg.Outgoing {
-			sender = agentIcon + " " + m.bot.name // the bot wrote it, not the user
+			sender, nick = agentIcon+" "+m.bot.name, "" // the bot wrote it, not the user
 		}
-		text := textfmt.ShortExcerpt(backend.GenericMessageText(msg))
-		lines = append(lines, prefix+textfmt.NickColor(sender)+sender+"\x1b[0m"+
-			m.st.subtle.Render(": ")+text)
+		col := truncate(textfmt.Plain(sender), unreadNickWidth)
+		col += strings.Repeat(" ", unreadNickWidth-textfmt.DisplayWidth(col))
+		switch {
+		case c.entry.IsChannel: // a channel posts as itself
+		case nick == "":
+			line += m.st.agent.Render(col) + " "
+		default:
+			line += nick + col + "\x1b[0m "
+		}
+		repeat := ""
+		if n > 1 {
+			repeat = " " + m.st.tag.Render(fmt.Sprintf(" ×%d ", n))
+		}
+		room := width - textfmt.DisplayWidth(line) - textfmt.DisplayWidth(repeat)
+		lines = append(lines, line+m.excerpt(msg, room)+repeat)
 	}
 	if i == m.selected {
-		if focused {
-			border = m.st.accentColor
+		keys := []helpKey{{"enter", "open"}}
+		if _, ok := m.threadReply(c); ok {
+			keys = append(keys, helpKey{"t", "open thread"})
 		}
-		title = "> " + title
+		if m.canMark(c) {
+			keys = append(keys, helpKey{"m", "mark read"})
+		}
+		var parts []string
+		for _, k := range keys {
+			parts = append(parts, m.st.accent.Render(k.key)+" "+m.st.subtle.Render(k.desc))
+		}
+		lines = append(lines, m.st.dim.Render(strings.Repeat("╌", width)),
+			strings.Join(parts, "   "))
 	}
-	return renderBox(title, lines, width, unreadCardH, border)
+	return lines
 }
 
-func (m unreadModel) helpKeys() []helpKey { return unreadHelp }
+// shortcode is an emoji code such as :fire:, with a letter so times are not.
+var shortcode = regexp.MustCompile(`:[a-z0-9_+-]*[a-z][a-z0-9_+-]*:`)
 
-var unreadHelp = []helpKey{
-	{"↑↓", "select"},
-	{"enter/click", "open chat"},
-	{"/", "search"},
-	{"r", "reload"},
-	{"esc", "back"},
+// excerpt is the message on one line, width cells at most: its media kind as
+// a tag, emoji codes dim and, in a message mentioning the user, @names in the
+// accent.
+func (m unreadModel) excerpt(msg backend.Message, width int) string {
+	kind, text := "", textfmt.Plain(msg.Text)
+	if label := textfmt.Plain(msg.MediaLabel); label != "" {
+		if rest, ok := strings.CutPrefix(label, "["); ok {
+			if k, details, ok := strings.Cut(rest, "]"); ok {
+				kind, label = k, strings.TrimSpace(details)
+			}
+		}
+		switch {
+		case label != "" && text != "":
+			text = label + " — " + text
+		case label != "":
+			text = label
+		}
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" && kind == "" {
+		text = "message"
+	}
+	out := ""
+	if kind != "" {
+		out = m.st.tag.Render(" "+kind+" ") + " "
+		width -= textfmt.DisplayWidth(kind) + 3
+	}
+	text = truncate(text, max(1, width))
+	var b strings.Builder
+	for _, word := range strings.SplitAfter(text, " ") {
+		core := strings.TrimRight(word, " ")
+		switch {
+		case msg.Mentioned && strings.HasPrefix(core, "@") && len(core) > 1:
+			b.WriteString(m.st.accent.Render(core) + word[len(core):])
+		case shortcode.MatchString(core):
+			b.WriteString(shortcode.ReplaceAllStringFunc(core, func(s string) string {
+				return m.st.dim.Render(s)
+			}) + word[len(core):])
+		default:
+			b.WriteString(word)
+		}
+	}
+	return out + b.String()
+}
+
+func newestAt(msgs []backend.Message) time.Time {
+	var at time.Time
+	for _, msg := range msgs {
+		if msg.Timestamp.After(at) {
+			at = msg.Timestamp
+		}
+	}
+	return at
+}
+
+// whenText is a message time for a card: relative today, then yesterday,
+// the weekday this week, else the date.
+func whenText(at, now time.Time) string {
+	at = at.Local()
+	day := func(t time.Time) time.Time {
+		y, mo, d := t.Date()
+		return time.Date(y, mo, d, 0, 0, 0, 0, t.Location())
+	}
+	days := int(day(now).Sub(day(at)).Hours() / 24)
+	switch {
+	case days == 0 && now.Sub(at) < time.Minute:
+		return "now"
+	case days == 0 && now.Sub(at) < time.Hour:
+		return fmt.Sprintf("%dm ago", int(now.Sub(at).Minutes()))
+	case days == 0:
+		return fmt.Sprintf("%dh ago", int(now.Sub(at).Hours()))
+	case days == 1:
+		return "yesterday " + at.Format("15:04")
+	case days < 7:
+		return at.Format("Mon 15:04")
+	case at.Year() == now.Year():
+		return at.Format("Jan 2 15:04")
+	}
+	return at.Format("Jan 2 2006")
+}
+
+func (m unreadModel) helpKeys() []helpKey {
+	keys := []helpKey{{"↑↓", "select"}, {"enter/click", "open chat"}}
+	if m.selected < len(m.cards) {
+		c := m.cards[m.selected]
+		if _, ok := m.threadReply(c); ok {
+			keys = append(keys, helpKey{"t", "open thread"})
+		}
+		if m.canMark(c) {
+			keys = append(keys, helpKey{"m", "mark read"})
+		}
+	}
+	return append(keys, helpKey{"/", "search"}, helpKey{"r", "reload"}, helpKey{"esc", "back"})
 }

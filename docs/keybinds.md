@@ -44,6 +44,8 @@ an empty composer (or right-click it) to open its actions.
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select card |
 | <kbd>Enter</kbd> | Open the chat; a mention opens selected, in its thread on Mattermost |
+| <kbd>t</kbd> | Open the newest reply's thread (Mattermost) |
+| <kbd>m</kbd> | Mark the chat read (Unread) |
 | <kbd>/</kbd> | Search users |
 | <kbd>r</kbd> | Reload |
 | <kbd>Esc</kbd> | Back |

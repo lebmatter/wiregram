@@ -687,6 +687,15 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case unreadPicked:
 		return m.openCard(msg.card)
 
+	case unreadThread:
+		return m.openChatAt(msg.card.entry, &msg.msg)
+
+	case unreadMarked:
+		if msg.err != nil {
+			m.notice = "could not mark read: " + textfmt.CleanError(msg.err)
+		}
+		return m, loadDialogs(m.ctx, m.b, m.archived)
+
 	case unreadClosed:
 		m = m.closeChat()
 		return m, nil

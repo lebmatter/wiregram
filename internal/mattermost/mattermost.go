@@ -1158,6 +1158,7 @@ func (mb *MmBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention
 				ID:      backend.ChatID{Backend: "mattermost", Id: ch.ID},
 				Title:   mb.channelTitle(ctx, *ch, teamNames[ch.TeamID]),
 				IsGroup: true,
+				Section: teamNames[ch.TeamID],
 				Raw:     *ch,
 			},
 			Message: mb.postToMessage(ctx, p),

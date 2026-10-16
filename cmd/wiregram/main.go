@@ -153,6 +153,8 @@ Keyboard shortcuts:
     Up/k, Down/j      Select card
     Enter             Open the chat; a mention opens selected, in its thread
                       on Mattermost
+    t                 Open the newest reply's thread (Mattermost)
+    m                 Mark the chat read (Unread)
     /                 Search users
     r                 Reload
     Esc               Back

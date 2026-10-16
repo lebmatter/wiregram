@@ -142,8 +142,12 @@ These are project constraints, not suggestions:
   hour), Calendar (a Google Calendar's secret iCal URL, a `secret` setting Settings
   masks; a click lists upcoming and recent events) and Hacker News (the Algolia HN API).
 - Each expanded account but email has an unread chip (`u`, `internal/tui/unread.go`): a column
-  of full-width cards, one per chat with unread messages. The card border and tag show the
-  kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
+  of full-width cards as tall as their messages, one per chat with unread messages. The
+  top border holds `#`/`@`, the name and a team tag, with the newest message's time
+  (`whenText`) and the count on the right; borders are dim, the selected card's accent.
+  Authors sit in a fixed column (none in channels), replies get `↳`, repeats collapse to
+  `×N`, media is a tag, emoji codes are dim. The selected card lists its keys: `t` opens
+  the newest reply's thread on `backend.ThreadFetcher` backends, `m` marks the chat read.
 - A message that mentions the user (`Message.Mentioned`: `@you` or a chat-wide
   `@all`/`@channel`/`@here`/`@room`, never a plain reply) is tinted with the theme's
   `mentionBg` in the chat and the thread pane; selection's tint wins. Backends with

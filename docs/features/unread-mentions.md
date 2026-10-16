@@ -6,20 +6,25 @@ accounts have neither: their folders show their unread counts.
 ## Unread
 
 <kbd>u</kbd> (or the **unread** chip) shows a column of full-width cards, one per chat
-with unread messages. The card's border and tag show the kind of chat:
+with unread messages, each only as tall as its messages. The card's top border holds
+`#` (group or channel) or `@` (person) and the chat's name, its team as a tag on
+Mattermost, then on the right the time of the newest message (`5m ago`,
+`yesterday 22:10`) and the unread count.
 
-| Kind | Colour |
-|------|--------|
-| DM | green |
-| Group | blue |
-| Channel | yellow |
+Inside, authors sit in a column so every message starts in line (channels, which post
+as themselves, have none); replies are marked `↳`. The same message sent several
+times in a row shows once with `×3`. Media is a small tag such as `photo` before its
+details, emoji codes like `:fire:` are dim, and in a message mentioning you the
+`@names` are in the accent.
 
-Replies are marked `↳` with a `thread` tag. <kbd>Enter</kbd> opens the chat;
-<kbd>Esc</kbd> in that chat brings you back to Unread. <kbd>r</kbd> reloads.
+The selected card lists its keys: <kbd>Enter</kbd> opens the chat (<kbd>Esc</kbd> there
+brings you back to Unread), <kbd>t</kbd> opens the newest reply's thread where the
+server keeps threads (Mattermost), and <kbd>m</kbd> marks the chat read and drops the
+card. <kbd>r</kbd> reloads.
 
 ## Mentions
 
-<kbd>m</kbd> (or the **Mentions** row) shows the same cards for groups and channels
+<kbd>m</kbd> (or the **@ mentions** chip) shows the same cards for groups and channels
 with recent messages mentioning you. <kbd>Enter</kbd> opens the chat with the mention
 selected, in its thread on Mattermost.
 
