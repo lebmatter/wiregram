@@ -5,9 +5,10 @@ and email, as many of each as you like. Switching between them never reconnects.
 
 ## Account chooser
 
-After the splash comes the account chooser, with the logo. It lists every account with
-a status glyph and its tag, and its [bots](/features/chat-bots) with a violet ✦ if
-it has any, then:
+After the splash comes the account chooser, with the logo. It lists every account in
+columns: its number, a status glyph, its service tag (`TG`, `WA`, `MX`, `MM`, `EM`, lit
+on the selected row), its label and status, then a chip per [bot](/features/chat-bots),
+marked with a violet ✦ (dim while the bot is paused). Under them:
 
 - **Settings…**: open [Settings](/configuration#settings)
 - **Add account**: pick a network and sign in

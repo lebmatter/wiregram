@@ -78,7 +78,7 @@ func newAccountListModel(ctx context.Context, mgr *account.AccountManager, activ
 func (m accountListModel) maxIndex() int { return len(m.accounts) + 2 }
 
 func (m accountListModel) Init() tea.Cmd {
-	_, widgets := m.widgets.start(m.width-4, m.width, m.bodyHeight()+1)
+	_, widgets := m.widgets.start(m.contentWidth(), m.width, m.bodyHeight()+1)
 	return tea.Batch(listenAccounts(m.mgr), widgets)
 }
 
@@ -100,7 +100,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case widgetTick:
 		var cmd tea.Cmd
-		m.widgets, cmd = m.widgets.tick(m.width-4, m.width, m.bodyHeight()+1)
+		m.widgets, cmd = m.widgets.tick(m.contentWidth(), m.width, m.bodyHeight()+1)
 		return m, cmd
 
 	case widgetUpdated:
@@ -135,7 +135,9 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		_, shift, widgets := m.layout()
 		top := 2 + shift + len(m.accounts) + 4 + widgetsGap // the cards' first screen row
-		if p, ok := m.widgets.widgetAt(msg.X-2, msg.Y-top, m.width-4); ok && msg.Y-top < widgets {
+		left := 2 + homePad                                 // the box's left edge and padding
+		if p, ok := m.widgets.widgetAt(msg.X-left, msg.Y-top, m.contentWidth()); ok &&
+			msg.Y-top < widgets {
 			return m, m.widgets.click(p)
 		}
 
@@ -206,22 +208,27 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m accountListModel) bodyHeight() int { return max(4, m.height-2) }
 
+// contentWidth is the cells inside the Accounts box's border and padding.
+func (m accountListModel) contentWidth() int { return m.width - 4 - 2*homePad }
+
 // widgetsGap is the blank row and the small label above the widgets.
 const widgetsGap = 2
 
 // layout returns the logo when it fits above the rows and the widgets, and
 // how far the rows are moved down to make room for it, or up to keep the
 // selection in view; widgets is the height left for their cards under the rows.
+// With the logo, a blank row pads the box's top and bottom and one more
+// separates the logo from the rows.
 func (m accountListModel) layout() (logo []string, shift, widgets int) {
 	rows := len(m.accounts) + 4 // the accounts, a blank row and three actions
 	limit := m.bodyHeight() - 2
-	wants := m.widgets.height(m.width - 4)
-	logo = strings.Split(m.st.logo(m.width-4), "\n")
+	wants := m.widgets.height(m.contentWidth())
+	logo = strings.Split(m.st.logo(m.contentWidth()), "\n")
 	section := 0
 	if wants > 0 {
 		section = widgetsGap + wants
 	}
-	if rows+len(logo)+2+section <= limit {
+	if 1+len(logo)+1+rows+section+1 <= limit {
 		return logo, len(logo) + 2, wants
 	}
 	selRow := m.selected
@@ -283,7 +290,7 @@ func (m accountListModel) View() tea.View {
 		body = m.st.fadeUnder(body, md.box(m.st, m.width, m.bodyHeight()+1), x, y)
 		keys, notice = []helpKey{{"↑↓", "scroll"}, {"esc", "close"}}, ""
 	}
-	content := body + "\n" + m.st.footer(keys, notice, m.width)
+	content := body + "\n" + m.st.keyStrip(keys, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
@@ -293,60 +300,81 @@ func (m accountListModel) View() tea.View {
 // frame is the screen above the footer, also the backdrop of the modals
 // opened from it.
 func (m accountListModel) frame() string {
-	inner := m.width - 4
-	var rows []string
-	for i, a := range m.accounts {
-		s := a.Snapshot()
-		marker := "  "
-		if i == m.selected {
-			marker = m.st.accent.Render("> ")
-		}
-		label := truncate(textfmt.Plain(a.Label()), max(8, inner/2))
-		if a == m.active {
-			label = styleTitle.Render(label)
-		}
-		status := s.Status
-		if a == m.active {
-			status += " · current"
-		}
-		row := fmt.Sprintf("%s%d %s %s  %s  %s", marker, i+1, m.st.accountGlyph(s), label,
-			m.st.dim.Render(backendTag(a.BackendType)), m.st.subtle.Render(status))
-		if m.mgr.Agents != nil {
-			if bots := m.mgr.Agents.AgentsFor(a); len(bots) > 0 {
-				row += "  " + m.st.agentMark(anyEnabled(bots)) + " " +
-					m.st.subtle.Render(botNames(bots))
-			}
-		}
-		if i == m.selected {
-			row = m.st.selectedRow.Render(row)
-		}
-		rows = append(rows, row)
-	}
+	inner := m.contentWidth()
+	rows := m.accountRows(inner)
 	rows = append(rows, "")
 	for i, label := range []string{"Settings…", "Add account…", "Quit"} {
-		index := len(m.accounts) + i
-		if index == m.selected {
-			rows = append(rows, m.st.selectedRow.Render(m.st.accent.Render("> ")+label))
+		if len(m.accounts)+i == m.selected {
+			rows = append(rows, "   "+m.st.brand.Render("› ")+m.st.accent.Render(label))
 		} else {
-			rows = append(rows, m.st.subtle.Render("  "+label))
+			rows = append(rows, m.st.subtle.Render("     "+label))
 		}
 	}
 	logo, shift, widgets := m.layout()
 	if widgets > 0 {
-		rows = append(rows, "", m.st.dim.Render("── Widgets"))
+		rows = append(rows, "", m.st.dim.Render("── widgets"))
 		rows = append(rows, strings.Split(m.widgets.view(inner, widgets), "\n")...)
 	}
 	if shift > 0 {
-		var top []string
+		top := []string{""}
 		for _, line := range logo {
 			top = append(top, lipgloss.PlaceHorizontal(inner, lipgloss.Center, line))
 		}
-		rows = append(append(top, "", ""), rows...)
+		rows = append(append(top, ""), rows...)
 	} else {
 		rows = rows[-shift:]
 	}
 	return m.st.header(m.width) + "\n" +
-		renderBox("Accounts", rows, m.width, m.bodyHeight(), m.st.accentColor)
+		renderBox("accounts", padLines(rows, homePad), m.width, m.bodyHeight(), m.st.accentColor)
+}
+
+// accountRows draws one row per account in columns: the selection caret, the
+// number, the status glyph, the service tag, the label, the status and a chip
+// per bot. The label and status columns are as wide as their widest entry.
+func (m accountListModel) accountRows(width int) []string {
+	status := func(a *account.Account) string {
+		if a == m.active {
+			return a.Snapshot().Status + " · current"
+		}
+		return a.Snapshot().Status
+	}
+	labelW, statusW := 0, 0
+	for _, a := range m.accounts {
+		labelW = max(labelW, textfmt.DisplayWidth(accountLabel(a)))
+		statusW = max(statusW, textfmt.DisplayWidth(status(a)))
+	}
+	const lead = 12 // caret, number, glyph and tag, each with the space after it
+	labelW = max(8, min(labelW, 30, width-lead-statusW-2))
+	var rows []string
+	for i, a := range m.accounts {
+		s := a.Snapshot()
+		selected := i == m.selected
+		caret, tag := "  ", m.st.tag
+		if selected {
+			caret, tag = m.st.brand.Render("› "), m.st.badge
+		}
+		label := truncate(accountLabel(a), labelW)
+		label += strings.Repeat(" ", labelW-textfmt.DisplayWidth(label))
+		if a == m.active {
+			label = styleTitle.Render(label)
+		}
+		st := status(a)
+		row := caret + m.st.dim.Render(fmt.Sprintf("%2d", i+1)) + " " + m.st.accountGlyph(s) + " " +
+			tag.Render(" "+backendTag(a.BackendType)+" ") + " " + label + "  " +
+			m.st.subtle.Render(st) + strings.Repeat(" ", statusW-textfmt.DisplayWidth(st))
+		if m.mgr.Agents != nil {
+			for _, rec := range m.mgr.Agents.AgentsFor(a) {
+				chip := " " + m.st.agentMark(rec.Enabled) + " " +
+					m.st.subtle.Render(textfmt.Plain(rec.Name)) + " "
+				row += "  " + shadeLine(chip, m.st.selBgSGR, 0)
+			}
+		}
+		if selected {
+			row = shadeLine(textfmt.ClipLine(row, width), m.st.selBgSGR, width)
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // sectionRule is a divider that names the section under it.

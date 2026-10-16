@@ -163,7 +163,7 @@ end
 local function render(width, frame)
   local w = current()
   if not w.temp then
-    return { "", "  Fetching the weather for " .. cfg.city .. "…" }
+    return { "", "  Fetching the weather for " .. wiregram.escape(cfg.city) .. "…" }
   end
   local code = tonumber(w.code) or 0
   local cond = conditions[code] or { "Unknown", "cloudy" }
@@ -178,15 +178,15 @@ local function render(width, frame)
   local mins = math.floor((wiregram.now() - (tonumber(w.fetched_at) or 0)) / 60)
   local ago = mins < 1 and "just now" or (mins .. " min ago")
   local text = {
-    w.place,
-    round(w.temp) .. unit .. "  " .. cond[1],
+    "*" .. wiregram.escape(w.place) .. "*",
+    "*" .. round(w.temp) .. unit .. "*  " .. cond[1],
     "H " .. round(w.high) .. "°  L " .. round(w.low) .. "°  wind " .. round(w.wind) .. " " .. speed,
     ago .. " · click for hourly",
   }
   local lines = {}
   for i = 1, 4 do
     if width >= 34 then
-      lines[i] = pad(art[i], 14) .. text[i]
+      lines[i] = wiregram.escape(pad(art[i], 14)) .. text[i]
     else
       lines[i] = text[i]
     end
@@ -211,7 +211,9 @@ end
 local function forecast(width, height)
   local w = current()
   local list = hours(w)
-  if #list == 0 then return { "", "  Fetching the forecast for " .. cfg.city .. "…" } end
+  if #list == 0 then
+    return { "", "  Fetching the forecast for " .. wiregram.escape(cfg.city) .. "…" }
+  end
   local fahrenheit = w["for"] and w["for"]:match("|fahrenheit$")
   local speed = fahrenheit and "mph" or "km/h"
   local lo, hi = math.huge, -math.huge
@@ -232,12 +234,19 @@ local function forecast(width, height)
     local h = list[i]
     local cond = conditions[h.code or -1] or { "Unknown" }
     local fill = hi > lo and math.floor((h.temp - lo) / (hi - lo) * (barW - 1) + 1.5) or barW
-    local mark = (i - 1 == now) and "› " or "  "
-    local line = mark .. string.format("%02d:00", i - 1) .. "  " .. pad(round(h.temp) .. "°", 4) ..
+    local current = i - 1 == now
+    -- The current hour is bold throughout; elsewhere only the temperature is.
+    local temp = pad(round(h.temp) .. "°", 4)
+    if not current then temp = "*" .. temp:gsub(" +$", "") .. "*" .. temp:match(" *$") end
+    local line = string.format("%02d:00", i - 1) .. "  " .. temp ..
       "  " .. pad(string.rep("▇", fill), barW) .. "  "
     if showSky then line = line .. pad(cond[1], 18) end
     line = line .. pad(round(h.rain) .. "%", 4) .. "   " .. round(h.wind) .. " " .. speed
-    lines[#lines + 1] = line
+    if current then
+      lines[#lines + 1] = "› *" .. line .. "*"
+    else
+      lines[#lines + 1] = "  " .. line
+    end
   end
   return lines
 end

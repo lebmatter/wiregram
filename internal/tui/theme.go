@@ -21,14 +21,15 @@ type theme struct {
 	mentionBg string
 	badgeFg   string
 	agent     string // marks Chat Agents: their icon, suggestions and messages
+	bar       string // the account chooser's key strip
 }
 
 // themes is fixed; the first is the default. A new theme is one more entry.
 var themes = [...]theme{
 	{name: "Zest", accent: "#E8FE96", subtle: "#9a92b5", dim: "#6b6188", selBg: "#3a2d5e",
-		mentionBg: "#33401f", badgeFg: "#2b1f4a", agent: "#af87ff"},
+		mentionBg: "#33401f", badgeFg: "#2b1f4a", agent: "#af87ff", bar: "#1f1636"},
 	{name: "Copper", accent: "214", subtle: "245", dim: "240", selBg: "237", mentionBg: "58",
-		badgeFg: "16", agent: "141"},
+		badgeFg: "16", agent: "141", bar: "235"},
 }
 
 const themeSetting = "theme"
@@ -83,6 +84,7 @@ type styles struct {
 	subtle      lipgloss.Style
 	dim         lipgloss.Style
 	badge       lipgloss.Style
+	tag         lipgloss.Style // a service tag such as TG, on the subtle fill
 	selectedRow lipgloss.Style
 	agent       lipgloss.Style
 
@@ -90,6 +92,7 @@ type styles struct {
 	// raw SGRs, re-applied after resets by shadeLine.
 	selBgSGR     string
 	mentionBgSGR string
+	barSGR       string
 
 	// nickColumn draws senders as a fixed-width <nick> column.
 	nickColumn bool
@@ -107,10 +110,13 @@ func newStyles(t theme) *styles {
 		dim:         lipgloss.NewStyle().Foreground(lipgloss.Color(t.dim)),
 		badge: lipgloss.NewStyle().Bold(true).Background(a).
 			Foreground(lipgloss.Color(t.badgeFg)),
+		tag: lipgloss.NewStyle().Bold(true).Background(lipgloss.Color(t.subtle)).
+			Foreground(lipgloss.Color(t.badgeFg)),
 		selectedRow: lipgloss.NewStyle().Bold(true).Background(selBg),
 		agent:       lipgloss.NewStyle().Foreground(lipgloss.Color(t.agent)),
 		selBgSGR:    ansi.NewStyle().BackgroundColor(selBg).String(),
 		mentionBgSGR: ansi.NewStyle().
 			BackgroundColor(lipgloss.Color(t.mentionBg)).String(),
+		barSGR: ansi.NewStyle().BackgroundColor(lipgloss.Color(t.bar)).String(),
 	}
 }

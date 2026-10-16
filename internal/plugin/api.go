@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -33,6 +34,7 @@ func (p *Plugin) registerAPI() {
 		"accounts": p.luaAccounts,
 		"unread":   p.luaUnread,
 		"now":      func(L *lua.LState) int { L.Push(lua.LNumber(time.Now().Unix())); return 1 },
+		"escape":   luaEscape,
 	})
 	kv := L.NewTable()
 	L.SetFuncs(kv, map[string]lua.LGFunction{
@@ -379,6 +381,14 @@ func (p *Plugin) checkURL(raw string) error {
 		return fmt.Errorf("%s is not in the plugin's hosts", u.Hostname())
 	}
 	return nil
+}
+
+// wiregram.escape(s) backslashes the *, _ and \ in s, so text from elsewhere
+// shows as written instead of as markup in a rendered line.
+func luaEscape(L *lua.LState) int {
+	escaper := strings.NewReplacer(`\`, `\\`, `*`, `\*`, `_`, `\_`)
+	L.Push(lua.LString(escaper.Replace(L.CheckString(1))))
+	return 1
 }
 
 // wiregram.json.decode(s) returns a table, or nil and an error.

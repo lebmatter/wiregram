@@ -124,6 +124,27 @@ func (st *styles) accountGlyph(s account.AccountState) string {
 	return st.dim.Render("○")
 }
 
+// keyStrip is the account chooser's footer: bold keys on a filled strip, with
+// the notice on the right, or across the strip when it is long.
+func (s *styles) keyStrip(keys []helpKey, notice string, width int) string {
+	notice = textfmt.Plain(notice)
+	if notice != "" && textfmt.DisplayWidth(notice) > width/2 {
+		return shadeLine(" "+styleNotice.Render(truncate(notice, width-2)), s.barSGR, width)
+	}
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, styleTitle.Render(k.key)+" "+s.subtle.Render(k.desc))
+	}
+	line := " " + strings.Join(parts, "   ")
+	if notice != "" {
+		room := width - textfmt.DisplayWidth(notice) - 1
+		line = textfmt.ClipLine(line, max(0, room-1))
+		line += strings.Repeat(" ", max(1, room-textfmt.DisplayWidth(line))) +
+			styleNotice.Render(notice)
+	}
+	return shadeLine(textfmt.ClipLine(line, width), s.barSGR, width)
+}
+
 // header is the wordmark line on the screens outside an account.
 func (s *styles) header(width int) string {
 	return textfmt.ClipLine(s.brand.Render(" wiregram "), width) + "\x1b[0m"

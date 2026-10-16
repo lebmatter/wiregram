@@ -48,10 +48,12 @@ local function cut(s, n)
   return (take(s, n - 1)) .. "…"
 end
 
--- spread puts left and right at the two ends of a line n cells wide.
-local function spread(left, right, n)
-  left = cut(left, math.max(1, n - width(right) - 2))
-  return left .. string.rep(" ", math.max(2, n - width(left) - width(right))) .. right
+-- spread puts left and right at the two ends of a line n cells wide. left is
+-- plain text, escaped once cut to fit; right may hold markup and shows rw cells.
+local function spread(left, right, n, rw)
+  rw = rw or width(right)
+  left = cut(left, math.max(1, n - rw - 2))
+  return wiregram.escape(left) .. string.rep(" ", math.max(2, n - width(left) - rw)) .. right
 end
 
 local function plural(n, one, many) return n .. " " .. (n == 1 and one or many) end
@@ -62,14 +64,15 @@ local function render(w)
   local lines, any = {}, false
   for _, row in ipairs(counts) do
     local name = row.account.tag .. " " .. row.account.label
-    local right = "nothing unread"
+    local right, rw = "nothing unread", nil
     if row.err then
       right = "couldn't load"
     elseif row.unread > 0 then
       any = true
-      right = plural(row.dms, "DM", "DMs") .. " · " .. row.unread .. " unread"
+      local dms, count = plural(row.dms, "DM", "DMs") .. " · ", " " .. row.unread .. " unread "
+      right, rw = dms .. "__" .. count .. "__", width(dms .. count)
     end
-    lines[#lines + 1] = spread(name, right, w)
+    lines[#lines + 1] = spread(name, right, w, rw)
   end
   return lines, any and "accent" or nil
 end
@@ -114,19 +117,21 @@ local function click()
     local lines = {}
     for i, d in ipairs(detail) do
       if i > 1 then lines[#lines + 1] = "" end
-      lines[#lines + 1] = d.account.tag .. " " .. d.account.label
+      lines[#lines + 1] = "*" .. wiregram.escape(d.account.tag .. " " .. d.account.label) .. "*"
       if d.err then
-        lines[#lines + 1] = "  couldn't load: " .. d.err
+        lines[#lines + 1] = "  couldn't load: " .. wiregram.escape(d.err)
       elseif #d.chats == 0 then
         lines[#lines + 1] = "  nothing unread"
       end
       for _, c in ipairs(d.chats) do
-        lines[#lines + 1] = "  " .. spread(c.title, c.count .. " unread", w - 2)
+        local count = c.count .. " unread"
+        lines[#lines + 1] = "  " .. spread(c.title, "*" .. count .. "*", w - 2, width(count))
         for _, m in ipairs(c.messages) do
           local prefix = "    [" .. m.clock .. "] "
           local body = wrap(m.text, math.max(10, w - width(prefix)))
           for j, l in ipairs(body) do
-            lines[#lines + 1] = (j == 1 and prefix or string.rep(" ", width(prefix))) .. l
+            lines[#lines + 1] = (j == 1 and prefix or string.rep(" ", width(prefix))) ..
+              wiregram.escape(l)
           end
         end
         if c.count > #c.messages and #c.messages > 0 then

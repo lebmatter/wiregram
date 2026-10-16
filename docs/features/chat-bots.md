@@ -141,7 +141,7 @@ No private chat has two bots:
 - A paused bot keeps its chats. Deleting a bot frees them.
 
 In the sidebar a violet ✦ follows the account's name (dim while all its bots are paused),
-and the account chooser shows it beside the bots' names. Each private chat a bot answers
+and the account chooser gives each bot a chip with its own ✦ and name. Each private chat a bot answers
 while on gets a ✦ before its title.
 
 ## Registering a bot on Mattermost

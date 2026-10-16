@@ -17,6 +17,8 @@ import (
 
 const (
 	widgetMinCardW = 44
+	widgetGutter   = 1 // the blank column between cards
+	homePad        = 1 // the cells the home screen adds to renderBox's own padding
 	widgetFrame    = 250 * time.Millisecond
 	maxModalScroll = 1 << 20 // scrolls a modal to its top or bottom
 )
@@ -111,7 +113,7 @@ func (m widgetsModel) tick(width, screenW, screenH int) (widgetsModel, tea.Cmd) 
 			s.updating, s.changes = true, p.Changes()
 			cmds = append(cmds, func() tea.Msg { return widgetUpdated{p: p, err: p.Update(m.ctx)} })
 		}
-		if f, ok, err := p.Render(cardWidth(width, cols, i%cols)-4, m.frame); ok {
+		if f, ok, err := p.Render(cardWidth(width, cols, i%cols)-4-2*homePad, m.frame); ok {
 			s.frame, s.renderErr = f, err
 		}
 	}
@@ -174,6 +176,7 @@ func (md *widgetModal) box(st *styles, screenW, screenH int) string {
 		top := max(0, min(md.offset, len(lines)-h))
 		lines = lines[top : top+h]
 	}
+	lines = st.pluginMarkup(lines)
 	if lines == nil && md.err == nil {
 		lines = []string{st.subtle.Render("Loading…")}
 	}
@@ -191,7 +194,15 @@ func (m widgetsModel) widgetAt(x, y, width int) (*plugin.Plugin, bool) {
 	}
 	rows, heights := m.rows(width)
 	cols := m.columns(width)
-	col := min(cols-1, x/(width/cols))
+	col := -1
+	for c := range cols {
+		if left := cardX(width, cols, c); x >= left && x < left+cardWidth(width, cols, c) {
+			col = c
+		}
+	}
+	if col < 0 {
+		return nil, false // a gutter
+	}
 	for i, row := range rows {
 		if y < heights[i] {
 			if col < len(row) {
@@ -212,7 +223,9 @@ func (m widgetsModel) updated(msg widgetUpdated) widgetsModel {
 	return m
 }
 
-func (m widgetsModel) columns(width int) int { return max(1, width/widgetMinCardW) }
+func (m widgetsModel) columns(width int) int {
+	return max(1, (width+widgetGutter)/(widgetMinCardW+widgetGutter))
+}
 
 // rows splits the widgets into rows of cards, each row as tall as its tallest card.
 func (m widgetsModel) rows(width int) (rows [][]*plugin.Plugin, heights []int) {
@@ -256,7 +269,7 @@ func (m widgetsModel) view(width, height int) string {
 			if line == "" {
 				line = card
 			} else {
-				line = joinColumns(line, card)
+				line = joinColumns(joinColumns(line, gutter(heights[i])), card)
 			}
 		}
 		out = append(out, line)
@@ -277,6 +290,7 @@ func (m widgetsModel) card(p *plugin.Plugin, width, height int) string {
 			err = s.clickErr
 		}
 	}
+	lines = m.st.pluginMarkup(lines)
 	if lines == nil && err == nil {
 		lines = []string{m.st.subtle.Render("Loading…")}
 	}
@@ -287,7 +301,90 @@ func (m widgetsModel) card(p *plugin.Plugin, width, height int) string {
 	if s != nil {
 		border = m.st.pluginBorder(s.frame.Border, border)
 	}
-	return renderBox(p.Title, lines, width, height, border)
+	return renderBox(strings.ToLower(p.Title), padLines(lines, homePad), width, height, border)
+}
+
+// gutter is the blank column between two cards.
+func gutter(height int) string {
+	return strings.TrimSuffix(strings.Repeat(strings.Repeat(" ", widgetGutter)+"\n", height), "\n")
+}
+
+// padLines indents each line by n cells, for a box with more room inside its border.
+func padLines(lines []string, n int) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = strings.Repeat(" ", n) + l
+	}
+	return out
+}
+
+// pluginMarkup styles a plugin's lines: *text* is bold in the accent, __text__ is set on the
+// accent fill, and a backslash keeps the *, _ or \ after it as written. A
+// * opens bold only before a non-space and closes it only after one, so a lone
+// or spaced-out asterisk stays as it is.
+func (s *styles) pluginMarkup(lines []string) []string {
+	if lines == nil {
+		return nil
+	}
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = s.markupLine([]rune(l))
+	}
+	return out
+}
+
+func (s *styles) markupLine(r []rune) string {
+	var b, run strings.Builder
+	bold, fill := false, false
+	flush := func() {
+		switch {
+		case run.Len() == 0:
+		case fill:
+			b.WriteString(s.badge.Render(run.String()))
+		case bold:
+			b.WriteString(s.brand.Render(run.String()))
+		default:
+			b.WriteString(run.String())
+		}
+		run.Reset()
+	}
+	for i := 0; i < len(r); i++ {
+		switch {
+		case r[i] == '\\' && i+1 < len(r) && strings.ContainsRune(`*_\`, r[i+1]):
+			i++
+			run.WriteRune(r[i])
+		case r[i] == '_' && i+1 < len(r) && r[i+1] == '_' && (fill || markupCloses(r, i+2, true)):
+			flush()
+			fill = !fill
+			i++
+		case r[i] == '*' && bold && r[i-1] != ' ':
+			flush()
+			bold = false
+		case r[i] == '*' && !bold && i+1 < len(r) && r[i+1] != ' ' && markupCloses(r, i+1, false):
+			flush()
+			bold = true
+		default:
+			run.WriteRune(r[i])
+		}
+	}
+	flush()
+	return b.String()
+}
+
+// markupCloses reports whether r has, after from, the __ that closes a fill
+// or the * after a non-space that closes bold.
+func markupCloses(r []rune, from int, fill bool) bool {
+	for j := from; j < len(r); j++ {
+		switch {
+		case r[j] == '\\':
+			j++
+		case fill && r[j] == '_' && j+1 < len(r) && r[j+1] == '_':
+			return true
+		case !fill && r[j] == '*' && j > from && r[j-1] != ' ':
+			return true
+		}
+	}
+	return false
 }
 
 // pluginBorder is the colour a plugin named for its border: one of the
@@ -317,10 +414,17 @@ func (s *styles) pluginBorder(name string, def color.Color) color.Color {
 	return def
 }
 
-// cardWidth gives the last column whatever the division leaves over.
+// cardWidth gives the last column whatever the division leaves over, after
+// the gutters between the cards.
 func cardWidth(width, cols, col int) int {
+	room := width - widgetGutter*(cols-1)
 	if col == cols-1 {
-		return width - width/cols*(cols-1)
+		return room - room/cols*(cols-1)
 	}
-	return width / cols
+	return room / cols
+}
+
+// cardX is where the card in column col starts.
+func cardX(width, cols, col int) int {
+	return col * (cardWidth(width, cols, 0) + widgetGutter)
 }

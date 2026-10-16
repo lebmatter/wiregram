@@ -28,7 +28,9 @@ local function update()
   for i = 1, count do
     local hit = data.hits[i]
     if hit then
-      kv.set(tostring(i), string.format("%4d  %s", tonumber(hit.points) or 0, hit.title or ""))
+      local points = tostring(tonumber(hit.points) or 0)
+      kv.set(tostring(i), string.rep(" ", 4 - #points) .. "*" .. points .. "*  " ..
+        wiregram.escape(hit.title or ""))
     else
       kv.delete(tostring(i))
     end

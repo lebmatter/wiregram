@@ -104,7 +104,10 @@ These are project constraints, not suggestions:
   label), then its folders. Enter on
   another account switches to it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
-  logo; its `Settings…` row and the sidebar's last row
+  logo: an `accounts` box padded two cells inside its border, one row per account in
+  columns (`›` caret, number, glyph, service tag on a fill that turns accent when
+  selected, label, status, a chip per bot), the actions indented under them, the widget
+  cards with a one-cell gutter, and a filled key strip (`keyStrip`) for its footer; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
   Themes, Chat, Plugins, AI providers, Reset, Home, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
@@ -117,8 +120,9 @@ These are project constraints, not suggestions:
   HTTPS only to the hosts the plugin declares. Built-ins are embedded from
   `internal/plugin/builtin` and start off unless they declare `on`; user plugins in
   `~/.config/wiregram/plugins/` start on. Enabled plugins with a widget draw
-  a card in the chooser's `── Widgets` section under Quit (`internal/tui/widgets.go`);
-  `render` may name the card's border colour. A widget's `click` may open a plugin
+  a card in the chooser's `── widgets` section under Quit (`internal/tui/widgets.go`);
+  `render` may name the card's border colour, and its lines may hold markup (`*bold in the accent*`,
+  `__on the accent fill__`, backslash escapes; `wiregram.escape` for outside text). A widget's `click` may open a plugin
   modal (`wiregram.modal`, its own width and height, scrolling when render returns more
   lines) centred over the chooser, faded behind it. A plugin that declares the
   `messages` permission may call `wiregram.accounts()` and `wiregram.unread()`, served by

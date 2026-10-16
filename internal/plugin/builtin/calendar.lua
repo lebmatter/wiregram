@@ -469,8 +469,15 @@ local function pad(s, n)
   return s .. string.rep(" ", n - chars)
 end
 
+-- bold sets s in bold, padded to n cells like pad.
+local function bold(s, n)
+  if s == "" then return pad(s, n) end
+  local _, chars = s:gsub("[^\128-\191]", "")
+  return "*" .. s .. "*" .. string.rep(" ", n - chars)
+end
+
 local function what(ev)
-  local s = ev.title ~= "" and ev.title or "(no title)"
+  local s = ev.title ~= "" and wiregram.escape(ev.title) or "(no title)"
   if ev.allday and ev.e - ev.s > DAY then
     s = s .. " (" .. math.floor((ev.e - ev.s) / DAY + 0.5) .. " days)"
   end
@@ -500,7 +507,7 @@ local function render(width, frame)
           time = ev.allday and "" or clock(ev.ls)
           if not ev.allday and not border and ev.s - now <= 15 * 60 then border = "yellow" end
         end
-        lines[#lines + 1] = "  " .. pad(day, 7) .. pad(time, 7) .. what(ev)
+        lines[#lines + 1] = "  " .. bold(day, 7) .. pad(time, 7) .. what(ev)
       end
     end
   end
@@ -521,13 +528,13 @@ local function section(lines, events, now)
   for _, ev in ipairs(events) do
     local z = math.floor(ev.ls / DAY)
     if z ~= lastDay then
-      lines[#lines + 1] = "  " .. dayLabel(z)
+      lines[#lines + 1] = "  *" .. dayLabel(z) .. "*"
       lastDay = z
     end
     local mark = (ev.s <= now and ev.e > now) and "› " or "  "
     local time = ev.allday and "all day" or clock(ev.ls) .. "–" .. clock(ev.le)
     local line = "  " .. mark .. pad(time, 13) .. what(ev)
-    if ev.where ~= "" then line = line .. " · " .. ev.where end
+    if ev.where ~= "" then line = line .. " · " .. wiregram.escape(ev.where) end
     lines[#lines + 1] = line
   end
 end
@@ -539,11 +546,11 @@ local function agenda(width, height)
   for _, ev in ipairs(list) do
     if ev.e > now then upcoming[#upcoming + 1] = ev else table.insert(recent, 1, ev) end
   end
-  local lines = { "── Upcoming · next " .. cfg.ahead .. " days" }
+  local lines = { "*── Upcoming · next " .. cfg.ahead .. " days*" }
   if #upcoming == 0 then lines[#lines + 1] = "  Nothing coming up." end
   section(lines, upcoming, now)
   lines[#lines + 1] = ""
-  lines[#lines + 1] = "── Recent · last " .. cfg.behind .. " days"
+  lines[#lines + 1] = "*── Recent · last " .. cfg.behind .. " days*"
   if #recent == 0 then lines[#lines + 1] = "  Nothing recent." end
   section(lines, recent, now)
   return lines

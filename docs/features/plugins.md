@@ -7,7 +7,7 @@ chooser, under its rows.
 ## Using plugins
 
 Open **Settings → Plugins…** to switch plugins on and off and edit their settings.
-Enabled plugins with a widget draw a card in the chooser's `── Widgets` section. When the
+Enabled plugins with a widget draw a card in the chooser's `── widgets` section. When the
 screen is too short for them, they are left out. A widget may answer a click, often by
 opening a modal over the chooser: ↑/↓, PgUp/PgDn and the wheel scroll it; Esc, Enter or a
 click outside closes it.
@@ -74,7 +74,8 @@ wiregram.widget { height = 2, render = render }
   it `reads messages`. Such a plugin could send what it reads to the hosts it declared,
   so check both before installing one.
 - **Plain text out.** Rendered lines are stripped of control characters, so a plugin
-  can't send terminal escapes. The card clips them to its width.
+  can't send terminal escapes; the only styling is the [markup](#markup) below. The card
+  clips them to its width.
 - **No memory cap.** Memory is not limited beyond the call stack and registry sizes.
   Plugins are local files you chose to install; read a plugin before installing it.
 
@@ -93,6 +94,7 @@ wiregram.widget { height = 2, render = render }
 | `wiregram.http.get(url)` | Returns the body, or `nil, err`. HTTPS to declared hosts only (redirects included), 10 s, 1 MB, status 200. Not available at load time. |
 | `wiregram.json.decode(s)` | Returns a table, or `nil, err`. |
 | `wiregram.now()` | Unix seconds. |
+| `wiregram.escape(s)` | `s` with a backslash before each `*`, `_` and `\`, so it shows as written. See [Markup](#markup). |
 :::
 
 ### Settings
@@ -108,7 +110,7 @@ local cfg = wiregram.settings {
 
 ### Widgets
 
-- **Card.** It sits in the `── Widgets` section under the chooser's rows. It has
+- **Card.** It sits in the `── widgets` section under the chooser's rows. It has
   `height` lines inside (1–12) and is titled with the plugin's title.
 - **`render(width, frame)`** runs four times a second while the chooser is open. It
   returns up to `height` strings for a card `width` cells wide. `frame` counts up, for
@@ -124,6 +126,27 @@ local cfg = wiregram.settings {
   or `"#rrggbb"`. A name it doesn't know leaves the default.
 - **`click()`** (optional) runs when the card is clicked. It waits for a running `update`,
   so it may fetch too. Raise `error(msg, 0)` to show `msg` on the card.
+
+### Markup
+
+Lines from `render`, in widgets and modals alike, may style parts of themselves:
+
+- `*text*` is bold in the theme's accent colour. The opening `*` must come before a non-space and the closing one
+  after a non-space, so a lone or spaced-out `*` stays as it is.
+- `__text__` sits on the accent fill, like a badge. Put spaces inside for padding:
+  `__ 3 unread __`.
+- A backslash keeps the `*`, `_` or `\` after it as written.
+
+Markers take no cells, so measure a line's width without them. Text from elsewhere, such
+as a chat title, a place name or a headline, can hold these characters: pass it through
+`wiregram.escape` after cutting it to fit.
+
+```lua
+local function render(width)
+  local title = "Release notes"           -- cut to fit before escaping
+  return { "*Today*  " .. wiregram.escape(title) .. "  __ new __" }
+end
+```
 
 ### Modals
 
