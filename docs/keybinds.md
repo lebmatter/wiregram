@@ -25,8 +25,9 @@ an empty composer (or right-click it) to open its actions.
 
 | Key | Action |
 |-----|--------|
-| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat or account |
-| <kbd>Enter</kbd> | Open chat (on email, a folder), switch to the selected account, or open a bot, its Inbox, or create one (**New bot…**) in the Bots section |
+| <kbd>↑</kbd>/<kbd>k</kbd>, <kbd>↓</kbd>/<kbd>j</kbd> | Select chat, chip, section header or account |
+| <kbd>Enter</kbd> | Open chat (on email, a folder) or chip, switch to the selected account, fold a section, or open a bot, its inbox, or create one (**new bot…**) in the bots section |
+| <kbd>Space</kbd> | Fold or unfold the selected chat's section |
 | <kbd>c</kbd> | Compose a mail (email) |
 | <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
 | <kbd>u</kbd> | Unread: cards for every chat with unread messages |

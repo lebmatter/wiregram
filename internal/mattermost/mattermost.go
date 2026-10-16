@@ -417,6 +417,10 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 	for _, cw := range channels {
 		title := mb.channelTitle(ctx, cw.Ch, cw.TeamName)
 		isDM := cw.Ch.Type == "D" || cw.Ch.Type == "G"
+		section := ""
+		if !isDM {
+			section = cw.TeamName
+		}
 		mb.mu.Lock()
 		mb.unreads[cw.Ch.ID] = cw.Unread
 		mb.mu.Unlock()
@@ -427,6 +431,7 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 			IsDM:    isDM,
 			IsGroup: !isDM,
 			IsSelf:  cw.Ch.Type == "D" && cw.Ch.Name == mb.UserID+"__"+mb.UserID,
+			Section: section,
 			Raw:     cw.Ch,
 		})
 	}

@@ -32,6 +32,11 @@ type ChatEntry struct {
 	IsDM    bool
 	IsGroup bool
 	IsSelf  bool
+	// IsChannel marks a broadcast channel only its admins post in.
+	IsChannel bool
+	// Section is the server's grouping of the chat, such as its Mattermost
+	// team; the sidebar shows it as a section and drops "[Section] " from Title.
+	Section string
 	Raw     any
 }
 

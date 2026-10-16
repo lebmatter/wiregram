@@ -213,6 +213,26 @@ func (rt *agentRuntime) Answers(accountKey string, entry backend.ChatEntry) bool
 	return rt.agents[rt.claims[accountKey].Owner(entry.ID.Id)] != nil
 }
 
+// BotChats counts the private chats the bot answers on the account, the chat
+// with oneself included; all is set when it answers every DM.
+func (rt *agentRuntime) BotChats(accountKey string, botID int64) (n int, all bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	c := rt.claims[accountKey]
+	if c.All == botID {
+		return 0, true
+	}
+	for _, id := range c.Chats {
+		if id == botID {
+			n++
+		}
+	}
+	if c.Self == botID {
+		n++
+	}
+	return n, false
+}
+
 // Changed signals the UI when suggestions or agent problems change.
 func (rt *agentRuntime) Changed() <-chan struct{} { return rt.changed }
 

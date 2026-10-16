@@ -1,11 +1,11 @@
 # Unread & Mentions
 
-Each expanded account in the sidebar has two rows that collect what needs you. Email
+Each expanded account in the sidebar has two chips that collect what needs you. Email
 accounts have neither: their folders show their unread counts.
 
 ## Unread
 
-<kbd>u</kbd> (or the **Unread** row) shows a column of full-width cards, one per chat
+<kbd>u</kbd> (or the **unread** chip) shows a column of full-width cards, one per chat
 with unread messages. The card's border and tag show the kind of chat:
 
 | Kind | Colour |

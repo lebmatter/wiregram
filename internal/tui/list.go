@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"wiregram/internal/account"
 	"wiregram/internal/backend"
@@ -13,11 +15,12 @@ import (
 )
 
 // chatListModel is the sidebar tree: every account as a header, with the
-// active account expanded to its chats (on email, its folders) and the
-// others collapsed above and below it. Selection indexes run over the
-// selectable rows in display order: accounts above, the top action rows
-// (Unread, Mentions, You, archive and search; on email, Compose and Labels), chats,
-// the account's bots, accounts below, then "Home" and "Settings…".
+// active account expanded to a line of view chips (Unread, Mentions, You,
+// archive and search; on email, Compose and Labels), then its chats in
+// folding sections (on email, its folders), then its bots, and the others
+// collapsed above and below it. Home and Settings are pinned under the tree.
+// Selection indexes run over the stops in display order: every chip, section
+// header and row that Enter acts on.
 type chatListModel struct {
 	st            *styles
 	ctx           context.Context
@@ -35,8 +38,10 @@ type chatListModel struct {
 	mailbox       bool // the chats are email folders
 	// loading is set while the backend's first sync has brought no chats
 	// yet; the tree shows spin, the root's spinner frame, in their place.
-	loading       bool
-	spin          string
+	loading bool
+	spin    string
+	// folded holds the keys of the folded sections, for this session only.
+	folded        map[string]bool
 	confirm       *chatListConfirm
 	offset        int
 	width, height int
@@ -77,6 +82,7 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 		archived:      archived,
 		archiveUnread: archiveUnread,
 		caps:          b.Capabilities(),
+		folded:        make(map[string]bool),
 		width:         w,
 		height:        h,
 	}
@@ -91,73 +97,81 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 	return m
 }
 
-// listAction is a row under the chats and what Enter on it sends.
+// listAction is a chip or bot row and what Enter on it sends.
 type listAction struct {
 	entry backend.ChatEntry
-	mark  string
+	glyph string // styled, in the column where chats show # or @
+	right string // styled, flush right
 	msg   tea.Msg
-	// section is the heading ruled above the row, which starts a section.
-	section string
 }
 
-// top is the action rows above the chats.
+// top is the view chips above the chats.
 func (m chatListModel) top() []listAction {
 	if m.loading {
 		return nil // nothing to act on until the chats arrive
 	}
 	if m.mailbox {
-		acts := []listAction{{entry: backend.ChatEntry{Title: "Compose…"}, msg: chatListCompose{}}}
+		acts := []listAction{{entry: backend.ChatEntry{Title: "compose"}, msg: chatListCompose{}}}
 		if m.labeler {
-			acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Labels…"},
+			acts = append(acts, listAction{entry: backend.ChatEntry{Title: "labels"},
 				msg: chatListLabels{}})
 		}
 		return acts
 	}
-	unread := backend.ChatEntry{Title: "Unread"}
+	unread := backend.ChatEntry{Title: "unread"}
 	for _, e := range m.entries {
 		unread.Unread += e.Unread
 	}
 	acts := []listAction{{entry: unread, msg: chatListUnread{}}}
 	if m.mentions {
-		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Mentions"},
+		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "@ mentions"},
 			msg: chatListMentions{}})
 	}
 	if m.self {
-		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "You"}, msg: chatListSelf{}})
+		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "you"}, msg: chatListSelf{}})
 	}
 	if m.caps.Archive {
-		archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}
+		archive := backend.ChatEntry{Title: "archived", Unread: m.archiveUnread}
 		if m.archived {
-			archive = backend.ChatEntry{Title: "Back to chats"}
+			archive = backend.ChatEntry{Title: "‹ chats"}
 		}
 		acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}})
 	}
-	return append(acts, listAction{entry: backend.ChatEntry{Title: "Search…"}, msg: chatListSearch{}})
+	return append(acts, listAction{entry: backend.ChatEntry{Title: "/ search"},
+		msg: chatListSearch{}})
 }
 
-// bottom is the action rows below the chats: the account's bots.
+// bottom is the rows of the bots section.
 func (m chatListModel) bottom() []listAction {
+	if m.loading || !agentsAllowed(m.mgr, m.active) {
+		return nil
+	}
+	key := m.mgr.AccountKey(m.active)
 	var acts []listAction
-	if !m.loading && agentsAllowed(m.mgr, m.active) {
-		for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
-			acts = append(acts, listAction{
-				entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
-				mark:  m.st.agentMark(rec.Enabled), msg: chatListAgent{id: rec.ID},
-			})
-			if reg, ok := m.mgr.Agents.Registration(rec.ID); ok {
-				// The registered username, which on Telegram ends in bot.
-				acts = append(acts, listAction{
-					entry: backend.ChatEntry{Title: "  Inbox",
-						Unread: m.mgr.Agents.InboxWaiting(rec.ID)},
-					msg: chatListInbox{inboxBot{id: rec.ID, name: rec.Name, handle: reg.Username}},
-				})
+	for _, rec := range m.mgr.Agents.AgentsFor(m.active) {
+		chats := "all DMs"
+		if n, all := m.mgr.Agents.BotChats(key, rec.ID); !all {
+			chats = fmt.Sprintf("%d chats", n)
+			if n == 1 {
+				chats = "1 chat"
 			}
 		}
-		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "New bot…"},
-			msg: chatListAgent{}})
-		acts[0].section = "Bots"
+		acts = append(acts, listAction{
+			entry: backend.ChatEntry{Title: rec.Name + " @" + rec.Handle},
+			glyph: m.st.agentMark(rec.Enabled), right: m.st.dim.Render(chats),
+			msg: chatListAgent{id: rec.ID},
+		})
+		if reg, ok := m.mgr.Agents.Registration(rec.ID); ok {
+			// The registered username, which on Telegram ends in bot.
+			acts = append(acts, listAction{
+				entry: backend.ChatEntry{Title: "inbox", Unread: m.mgr.Agents.InboxWaiting(rec.ID)},
+				glyph: m.st.dim.Render("↳"),
+				msg:   chatListInbox{inboxBot{id: rec.ID, name: rec.Name, handle: reg.Username}},
+			})
+		}
 	}
-	return acts
+	return append(acts, listAction{entry: backend.ChatEntry{Title: "new bot…"},
+		glyph: m.st.dim.Render("+"), msg: chatListAgent{}})
 }
 
 // agentsAllowed reports whether the account can have bots (Chat Agents): they
@@ -180,25 +194,438 @@ func (m chatListModel) others() (above, below []*account.Account) {
 	return nil, m.mgr.Accounts
 }
 
-func (m chatListModel) before() int {
+// listStop is a place the selection can rest and what Enter there does.
+type listStop struct {
+	msg     tea.Msg
+	chat    bool // Enter opens entries[entry]
+	entry   int
+	header  bool   // Enter folds or unfolds section
+	section string // the section's key, for a header or a chat
+	x, w    int    // the columns of a chip; w 0 is the whole row
+}
+
+// listRow is one line of the tree.
+type listRow struct {
+	stops []listStop
+	// draw renders the row; sel is the selected stop's place in stops, or -1.
+	draw func(sel int, focused bool) string
+}
+
+// stopRef locates a stop: its row in the tree, or under it when foot is set.
+type stopRef struct {
+	listStop
+	row, part int
+	foot      bool
+}
+
+// listSection is a group of chats under a ruled header that folds.
+type listSection struct {
+	key, name string // an empty name draws no header and never folds
+	unread    int
+	rows      []listRow
+}
+
+// layout builds the tree and the footer pinned under it for a width.
+func (m chatListModel) layout(width int) (tree, foot []listRow) {
+	above, below := m.others()
+	for i, a := range above {
+		tree = append(tree, m.accountItem(a, i, false, width))
+	}
+	if m.active != nil {
+		tree = append(tree, m.accountItem(m.active, len(above), true, width))
+		tree = append(tree, m.chipRows(width)...)
+		switch {
+		case m.loading:
+			tree = append(tree, static("   "+m.spin+m.st.subtle.Render(" Loading chats…")))
+		case len(m.entries) == 0:
+			tree = append(tree, static(m.st.subtle.Render("   No chats here")))
+		}
+		for _, sec := range m.sections(width) {
+			if sec.name != "" {
+				tree = append(tree, m.headerItem(sec, width))
+				if m.folded[sec.key] {
+					continue
+				}
+			}
+			tree = append(tree, sec.rows...)
+		}
+		if len(below) > 0 {
+			tree = append(tree, static(m.st.dim.Render(strings.Repeat("─", width))))
+		}
+	}
+	for i, a := range below {
+		tree = append(tree, m.accountItem(a, len(above)+1+i, false, width))
+	}
+	home := listAction{entry: backend.ChatEntry{Title: "home"}, glyph: "⌂",
+		msg: chatListAccounts{}}
+	settings := listAction{entry: backend.ChatEntry{Title: "settings…"}, glyph: "⚙",
+		msg: chatListSettings{}}
+	for _, a := range []listAction{home, settings} {
+		foot = append(foot, listRow{stops: []listStop{{msg: a.msg}},
+			draw: func(sel int, focused bool) string {
+				return m.draw(rowParts{prefix: m.st.subtle.Render(a.glyph) + " ",
+					name: a.entry.Title, style: m.st.subtle}, sel == 0, focused, width)
+			}})
+	}
+	return tree, foot
+}
+
+func static(line string) listRow {
+	return listRow{draw: func(int, bool) string { return line }}
+}
+
+// sections groups the chats, then the bots. Within a section the chats with
+// unread messages come first, each half keeping the backend's order.
+func (m chatListModel) sections(width int) []listSection {
+	if m.mailbox {
+		sec := listSection{}
+		for i := range m.entries {
+			sec.rows = append(sec.rows, m.chatItem(i, "", false, width))
+		}
+		return []listSection{sec}
+	}
+	agent := func(backend.ChatEntry) bool { return false }
+	if m.mgr != nil && m.mgr.Agents != nil && m.active != nil {
+		key := m.mgr.AccountKey(m.active)
+		pending := m.mgr.Agents.PendingChats(key, 0)
+		agent = func(e backend.ChatEntry) bool { return pending[e.ID] || m.mgr.Agents.Answers(key, e) }
+	}
+	byKey := make(map[string]*listSection)
+	var keys []string
+	for i, e := range m.entries {
+		key, name := entrySection(e)
+		sec, ok := byKey[key]
+		if !ok {
+			sec = &listSection{key: key, name: name}
+			byKey[key] = sec
+			keys = append(keys, key)
+		}
+		sec.unread += e.Unread
+		sec.rows = append(sec.rows, m.chatItem(i, key, agent(e), width))
+	}
+	// Teams in name order, then the fixed sections.
+	rank := map[string]int{"groups": 1, "rooms": 2, "channels": 3, "direct": 4}
+	sort.SliceStable(keys, func(i, j int) bool {
+		ri, rj := rank[keys[i]], rank[keys[j]]
+		if ri != rj {
+			return ri < rj
+		}
+		return strings.ToLower(byKey[keys[i]].name) < strings.ToLower(byKey[keys[j]].name)
+	})
+	var out []listSection
+	for _, key := range keys {
+		sec := *byKey[key]
+		var unread, read []listRow
+		for _, r := range sec.rows {
+			if m.entries[r.stops[0].entry].Unread > 0 {
+				unread = append(unread, r)
+			} else {
+				read = append(read, r)
+			}
+		}
+		sec.rows = append(unread, read...)
+		out = append(out, sec)
+	}
+	if bots := m.bottom(); len(bots) > 0 {
+		sec := listSection{key: "bots", name: "bots"}
+		for _, a := range bots {
+			sec.unread += a.entry.Unread
+			sec.rows = append(sec.rows, m.actionItem(a, "bots", width))
+		}
+		out = append(out, sec)
+	}
+	return out
+}
+
+// entrySection is the key and name of the section a chat sits in: its team,
+// else the kind of chat it is on its network.
+func entrySection(e backend.ChatEntry) (key, name string) {
+	switch {
+	case e.IsDM || e.IsSelf:
+		return "direct", "direct"
+	case e.Section != "":
+		return "team:" + e.Section, strings.ToLower(e.Section)
+	case e.IsChannel || e.ID.Backend == "mattermost":
+		return "channels", "channels"
+	case e.ID.Backend == "matrix":
+		return "rooms", "rooms"
+	}
+	return "groups", "groups"
+}
+
+// sidebarTitle is the chat's title without what its section already says.
+func sidebarTitle(e backend.ChatEntry) string {
+	title := textfmt.Plain(e.Title)
+	if e.Section != "" {
+		title = strings.TrimPrefix(title, "["+e.Section+"] ")
+	}
+	if e.IsChannel {
+		title = strings.TrimPrefix(title, "Channel: ")
+	}
+	return title
+}
+
+// rowParts is a row's content: prefix, then the name and a dim tail
+// truncated together to fit, then right flush with the edge.
+type rowParts struct {
+	prefix     string // styled, after the selection bar
+	name, tail string
+	style      lipgloss.Style
+	right      string
+	rule       bool // fill the gap before right with a dim rule
+}
+
+// draw renders a row: a bar in the first column and the selection tint when
+// selected, the name bold.
+func (m chatListModel) draw(p rowParts, selected, focused bool, width int) string {
+	bar := " "
+	if selected {
+		bar = m.st.accent.Render("▎")
+		p.style = p.style.Bold(true)
+	}
+	prefix := bar + p.prefix
+	used := textfmt.DisplayWidth(prefix) + textfmt.DisplayWidth(p.right)
+	room := width - used
+	if p.right != "" {
+		room--
+	}
+	text := truncate(p.name+p.tail, max(1, room))
+	name := p.style.Render(text)
+	if len(text) > len(p.name) && strings.HasPrefix(text, p.name) {
+		name = p.style.Render(p.name) + m.st.dim.Render(text[len(p.name):])
+	}
+	gap := max(0, width-used-textfmt.DisplayWidth(text))
+	fill := strings.Repeat(" ", gap)
+	if p.rule && gap > 2 {
+		fill = " " + m.st.dim.Render(strings.Repeat("─", gap-2)) + " "
+	}
+	row := prefix + name + fill + p.right
+	if selected && focused {
+		row = shadeLine(row, m.st.selBgSGR, width)
+	}
+	return row
+}
+
+// accountItem is an account header: ▾ expanded, ▸ collapsed, then its status,
+// service tag, number and label, its unseen count while collapsed and ✦ when
+// it has bots.
+func (m chatListModel) accountItem(a *account.Account, n int, expanded bool, width int) listRow {
+	row := listRow{}
+	if !expanded {
+		row.stops = []listStop{{msg: chatListSwitch{a}}}
+	}
+	row.draw = func(sel int, focused bool) string {
+		state := a.Snapshot()
+		caret, tag, style := m.st.dim.Render("▸"), m.st.tag, m.st.subtle
+		if expanded {
+			caret, tag, style = m.st.accent.Render("▾"), m.st.badge, styleTitle
+		}
+		right := ""
+		if !expanded && state.Unseen > 0 {
+			right = m.st.tag.Render(fmt.Sprintf(" %d ", state.Unseen))
+		}
+		if m.mgr.Agents != nil {
+			if bots := m.mgr.Agents.AgentsFor(a); len(bots) > 0 {
+				right = strings.TrimPrefix(right+" "+m.st.agentMark(anyEnabled(bots)), " ")
+			}
+		}
+		prefix := caret + " " + m.st.accountGlyph(state) + " " +
+			tag.Render(" "+backendTag(a.BackendType)+" ") + " " +
+			m.st.dim.Render(fmt.Sprint(n+1)) + " "
+		return m.draw(rowParts{prefix: prefix, name: accountLabel(a), style: style,
+			right: right}, sel == 0, focused, width)
+	}
+	return row
+}
+
+// chipRows lays the view chips out left to right under the account, wrapping
+// when a chip would cross the edge.
+func (m chatListModel) chipRows(width int) []listRow {
+	const indent = 3
+	var rows []listRow
+	var chips [][]listAction
+	x := indent
+	for _, a := range m.top() {
+		w := chipWidth(a)
+		if len(rows) == 0 || (x > indent && x+w > width) {
+			rows = append(rows, listRow{})
+			chips = append(chips, nil)
+			x = indent
+		}
+		r := len(rows) - 1
+		rows[r].stops = append(rows[r].stops, listStop{msg: a.msg, x: x, w: w})
+		chips[r] = append(chips[r], a)
+		x += w + 1
+	}
+	for r := range rows {
+		acts := chips[r]
+		rows[r].draw = func(sel int, focused bool) string {
+			line := "  "
+			if sel >= 0 {
+				line = m.st.accent.Render("▎") + " "
+			}
+			line += " "
+			for i, a := range acts {
+				if i > 0 {
+					line += " "
+				}
+				line += m.chip(a, i == sel, focused)
+			}
+			return line
+		}
+	}
+	return rows
+}
+
+func chipWidth(a listAction) int {
+	w := textfmt.DisplayWidth(a.entry.Title) + 2
+	if a.entry.Unread > 0 {
+		w += len(fmt.Sprint(a.entry.Unread)) + 2
+	}
+	return w
+}
+
+// chip is a view chip on the selection fill, or the accent fill when it is
+// selected, with its unread count on the accent.
+func (m chatListModel) chip(a listAction, selected, focused bool) string {
+	body := " " + a.entry.Title + " "
+	switch {
+	case selected && focused:
+		body = m.st.badge.Render(body)
+	case selected || a.entry.Unread > 0:
+		body = shadeLine(styleTitle.Render(body), m.st.selBgSGR, 0)
+	default:
+		body = shadeLine(m.st.subtle.Render(body), m.st.selBgSGR, 0)
+	}
+	if a.entry.Unread > 0 {
+		body += m.st.badge.Render(fmt.Sprintf(" %d ", a.entry.Unread))
+	}
+	return body
+}
+
+// headerItem is a section's ruled header, with its unread count while folded.
+func (m chatListModel) headerItem(sec listSection, width int) listRow {
+	folded := m.folded[sec.key]
+	return listRow{stops: []listStop{{header: true, section: sec.key}},
+		draw: func(sel int, focused bool) string {
+			caret, right := "▾", ""
+			if folded {
+				caret = "▸"
+				if sec.unread > 0 {
+					right = m.st.tag.Render(fmt.Sprintf(" %d ", sec.unread))
+				}
+			}
+			return m.draw(rowParts{prefix: " " + m.st.dim.Render(caret) + " ", name: sec.name,
+				style: m.st.dim, right: right, rule: true}, sel == 0, focused, width)
+		}}
+}
+
+// chatItem is a chat row: # for groups and channels, @ for people, ✦ when a
+// bot answers it or has a suggestion waiting; dim when it has nothing unread.
+func (m chatListModel) chatItem(i int, section string, agent bool, width int) listRow {
+	e := m.entries[i]
+	glyph := ""
+	if !m.mailbox {
+		glyph = m.st.dim.Render("#") + " "
+		if e.IsDM || e.IsSelf {
+			glyph = m.st.dim.Render("@") + " "
+		}
+		if agent {
+			glyph = m.st.agent.Render(agentIcon) + " "
+		}
+	}
+	return listRow{stops: []listStop{{chat: true, entry: i, section: section}},
+		draw: func(sel int, focused bool) string {
+			style, right := m.st.subtle, ""
+			if e.Unread > 0 {
+				style, right = lipgloss.NewStyle(), m.st.badge.Render(fmt.Sprintf(" %d ", e.Unread))
+			}
+			return m.draw(rowParts{prefix: "  " + glyph, name: sidebarTitle(e), style: style,
+				right: right}, sel == 0, focused, width)
+		}}
+}
+
+// actionItem is a bot section row.
+func (m chatListModel) actionItem(a listAction, section string, width int) listRow {
+	return listRow{stops: []listStop{{msg: a.msg, section: section}},
+		draw: func(sel int, focused bool) string {
+			name, tail := a.entry.Title, ""
+			if at := strings.Index(name, " @"); at > 0 {
+				name, tail = name[:at], name[at:]
+			}
+			right := a.right
+			if a.entry.Unread > 0 {
+				right = m.st.badge.Render(fmt.Sprintf(" %d ", a.entry.Unread))
+			}
+			return m.draw(rowParts{prefix: "  " + a.glyph + " ", name: name, tail: tail,
+				style: m.st.subtle, right: right}, sel == 0, focused, width)
+		}}
+}
+
+func listStops(tree, foot []listRow) []stopRef {
+	var refs []stopRef
+	for i, r := range tree {
+		for j, s := range r.stops {
+			refs = append(refs, stopRef{listStop: s, row: i, part: j})
+		}
+	}
+	for i, r := range foot {
+		for j, s := range r.stops {
+			refs = append(refs, stopRef{listStop: s, row: i, part: j, foot: true})
+		}
+	}
+	return refs
+}
+
+func (m chatListModel) refs() []stopRef {
+	return listStops(m.layout(m.width))
+}
+
+// treeHeight is the rows the tree scrolls in, above the footer and its rule.
+func treeHeight(height, foot int) int {
+	return max(1, height-foot-1)
+}
+
+// firstChat is the selection index of the first chat row, else of the first
+// stop under the active account.
+func (m chatListModel) firstChat() int {
+	for i, r := range m.refs() {
+		if r.chat {
+			return i
+		}
+	}
 	above, _ := m.others()
 	return len(above)
 }
 
-// firstChat is the selection index of the first chat.
-func (m chatListModel) firstChat() int {
-	return m.before() + len(m.top())
+// selectEntry selects entries[i], unfolding its section.
+func (m chatListModel) selectEntry(i int) chatListModel {
+	if i < 0 || i >= len(m.entries) {
+		return m
+	}
+	if key, _ := entrySection(m.entries[i]); !m.mailbox {
+		delete(m.folded, key)
+	}
+	for j, r := range m.refs() {
+		if r.chat && r.entry == i {
+			m.selected = j
+			break
+		}
+	}
+	return m.scrolled()
 }
 
 func (m chatListModel) maxIndex() int {
-	above, below := m.others()
-	return len(above) + len(m.top()) + len(m.entries) + len(m.bottom()) + len(below) + 1
+	return max(0, len(m.refs())-1)
 }
 
 // chatIndex maps the selection to an entry, if a chat is selected.
 func (m chatListModel) chatIndex() (int, bool) {
-	i := m.selected - m.firstChat()
-	return i, i >= 0 && i < len(m.entries)
+	refs := m.refs()
+	if m.selected < 0 || m.selected >= len(refs) || !refs[m.selected].chat {
+		return 0, false
+	}
+	return refs[m.selected].entry, true
 }
 
 func (m chatListModel) Init() tea.Cmd { return nil }
@@ -210,52 +637,55 @@ func (m chatListModel) refreshUnread() chatListModel {
 	return m
 }
 
-// row maps a selection index to its display row. The active account's
-// header sits above its top actions, a separator between them and the
-// chats, and the Bots heading above the first bot.
-func (m chatListModel) row(index int) int {
-	before := m.before()
-	if index < before {
-		return index
+// itemAt maps a cell of the list on screen to a selection index; headers of
+// accounts, placeholders and rules are not selectable.
+func (m chatListModel) itemAt(x, y int) (int, bool) {
+	tree, foot := m.layout(m.width)
+	th := treeHeight(m.height, len(foot))
+	row, inFoot := y+m.offset, false
+	if y >= th {
+		row, inFoot = y-th-1, true
 	}
-	top := len(m.top())
-	if index < before+top {
-		return index + 1
-	}
-	if index < before+top+len(m.entries) {
-		return index + 2
-	}
-	r := index + 2 + max(0, 1-len(m.entries)) // "No chats here" or loading placeholder
-	for i, a := range m.bottom() {
-		if a.section != "" && before+top+len(m.entries)+i <= index {
-			r++
-		}
-	}
-	return r
-}
-
-// itemAt maps a body row on screen to a selection index; headers,
-// placeholders and separators are not selectable.
-func (m chatListModel) itemAt(y int) (int, bool) {
-	r := y + m.offset
-	for i := 0; i <= m.maxIndex(); i++ {
-		if m.row(i) == r {
+	for i, r := range listStops(tree, foot) {
+		if r.foot == inFoot && r.row == row && (r.w == 0 || x >= r.x && x < r.x+r.w) {
 			return i, true
 		}
 	}
 	return 0, false
 }
 
+// scrolled keeps the selected row inside the tree's window.
 func (m chatListModel) scrolled() chatListModel {
-	r := m.row(m.selected)
-	if r < m.offset {
-		m.offset = r
+	tree, foot := m.layout(m.width)
+	refs := listStops(tree, foot)
+	th := treeHeight(m.height, len(foot))
+	if m.selected >= 0 && m.selected < len(refs) && !refs[m.selected].foot {
+		r := refs[m.selected].row
+		if r < m.offset {
+			m.offset = r
+		}
+		if r >= m.offset+th {
+			m.offset = r - th + 1
+		}
 	}
-	if r >= m.offset+m.height {
-		m.offset = r - m.height + 1
-	}
-	m.offset = max(0, m.offset)
+	m.offset = max(0, min(m.offset, len(tree)-th))
 	return m
+}
+
+// toggle folds or unfolds a section, leaving the selection on its header.
+func (m chatListModel) toggle(key string) chatListModel {
+	if m.folded[key] {
+		delete(m.folded, key)
+	} else {
+		m.folded[key] = true
+	}
+	for i, r := range m.refs() {
+		if r.header && r.section == key {
+			m.selected = i
+			break
+		}
+	}
+	return m.scrolled()
 }
 
 func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
@@ -331,35 +761,24 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 				return m, nil
 			}
 			m.confirm = m.askDelete(entry, true)
+		case "space", " ":
+			refs := m.refs()
+			if m.selected < len(refs) && refs[m.selected].section != "" {
+				return m.toggle(refs[m.selected].section), nil
+			}
 		case "enter":
-			above, below := m.others()
-			idx := m.selected
-			switch {
-			case idx < len(above):
-				to := above[idx]
-				return m, func() tea.Msg { return chatListSwitch{to} }
+			refs := m.refs()
+			if m.selected >= len(refs) {
+				return m, nil
 			}
-			idx -= len(above)
-			top := m.top()
-			if idx < len(top) {
-				act := top[idx].msg
-				return m, func() tea.Msg { return act }
-			}
-			idx -= len(top)
-			acts := m.bottom()
+			r := refs[m.selected]
 			switch {
-			case idx < len(m.entries):
-				return m, func() tea.Msg { return chatListChoice{idx} }
-			case idx-len(m.entries) < len(acts):
-				act := acts[idx-len(m.entries)].msg
-				return m, func() tea.Msg { return act }
-			case idx-len(m.entries)-len(acts) < len(below):
-				to := below[idx-len(m.entries)-len(acts)]
-				return m, func() tea.Msg { return chatListSwitch{to} }
-			case idx-len(m.entries)-len(acts) == len(below):
-				return m, func() tea.Msg { return chatListAccounts{} }
-			default:
-				return m, func() tea.Msg { return chatListSettings{} }
+			case r.header:
+				return m.toggle(r.section), nil
+			case r.chat:
+				return m, func() tea.Msg { return chatListChoice{r.entry} }
+			case r.msg != nil:
+				return m, func() tea.Msg { return r.msg }
 			}
 		}
 
@@ -382,108 +801,34 @@ func (m chatListModel) title() string {
 	return "Chats"
 }
 
-// accountRow is an account header in the tree: ▾ expanded, ▸ collapsed.
-func (m chatListModel) accountRow(a *account.Account, expanded, selected, focused bool, width int) string {
-	arrow := "▸ "
-	if expanded {
-		arrow = "▾ "
-	}
-	tag := accountShort(m.mgr, m.mgr.AccountKey(a))
-	label := accountLabel(a)
-	marker := "  "
-	if selected {
-		marker = "> "
-	}
-	state := a.Snapshot()
-	text := marker + arrow + m.st.accountGlyph(state) + " " + tag + " " + label
-	if !expanded && state.Unseen > 0 {
-		text += fmt.Sprintf(" (%d)", state.Unseen)
-	}
-	mark := ""
-	if m.mgr.Agents != nil {
-		if bots := m.mgr.Agents.AgentsFor(a); len(bots) > 0 {
-			mark = " " + m.st.agentMark(anyEnabled(bots))
-		}
-	}
-	row := truncate(text, width-textfmt.DisplayWidth(mark))
-	row += strings.Repeat(" ", max(0, width-textfmt.DisplayWidth(mark)-textfmt.DisplayWidth(row)))
-	switch {
-	case selected && focused:
-		return m.st.selectedRow.Render(row) + mark
-	case selected:
-		return styleTitle.Render(row) + mark
-	case expanded:
-		return styleTitle.Foreground(m.st.accentColor).Render(row) + mark
-	}
-	return m.st.subtle.Render(row) + mark
-}
-
-// body renders the tree rows for a width×height area.
+// body renders the tree for a width×height area: its scrolled window, then
+// the footer under a rule.
 func (m chatListModel) body(width, height int, focused bool) []string {
-	above, below := m.others()
+	tree, foot := m.layout(width)
+	refs := listStops(tree, foot)
+	var cur stopRef
+	if m.selected >= 0 && m.selected < len(refs) {
+		cur = refs[m.selected]
+	} else {
+		cur.row = -1
+	}
+	part := func(row int, inFoot bool) int {
+		if cur.row == row && cur.foot == inFoot {
+			return cur.part
+		}
+		return -1
+	}
+	th := treeHeight(height, len(foot))
 	var rows []string
-	index := 0
-	for _, a := range above {
-		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
-		index++
+	for r := m.offset; r < len(tree) && len(rows) < th; r++ {
+		rows = append(rows, tree[r].draw(part(r, false), focused))
 	}
-	if m.active != nil {
-		rows = append(rows, m.accountRow(m.active, true, false, focused, width))
+	for len(rows) < th {
+		rows = append(rows, "")
 	}
-	actionRow := func(a listAction) {
-		if a.section != "" {
-			rows = append(rows, "    "+m.st.dim.Render(sectionRule("── "+a.section+" ",
-				max(1, width-4))))
-		}
-		line := m.st.chatListLine(a.entry, false, a.mark, index == m.selected, focused,
-			max(1, width-4))
-		if index != m.selected {
-			line = m.st.subtle.Render(line)
-		}
-		rows = append(rows, "    "+line)
-		index++
-	}
-	for _, a := range m.top() {
-		actionRow(a)
-	}
-	rows = append(rows, "    "+m.st.dim.Render(strings.Repeat("─", max(1, width-4))))
-	var pending map[backend.ChatID]bool
-	answers := func(backend.ChatEntry) bool { return false }
-	if m.mgr != nil && m.mgr.Agents != nil && m.active != nil {
-		key := m.mgr.AccountKey(m.active)
-		pending = m.mgr.Agents.PendingChats(key, 0)
-		answers = func(e backend.ChatEntry) bool { return m.mgr.Agents.Answers(key, e) }
-	}
-	for _, entry := range m.entries {
-		agent := pending[entry.ID] || answers(entry)
-		rows = append(rows, "    "+m.st.chatListLine(entry, agent, "", index == m.selected,
-			focused, max(1, width-4)))
-		index++
-	}
-	switch {
-	case m.loading:
-		rows = append(rows, "      "+m.spin+m.st.subtle.Render(" Loading chats…"))
-	case len(m.entries) == 0:
-		rows = append(rows, m.st.subtle.Render("      No chats here"))
-	}
-	for _, a := range m.bottom() {
-		actionRow(a)
-	}
-	for _, a := range below {
-		rows = append(rows, m.accountRow(a, false, index == m.selected, focused, width))
-		index++
-	}
-	for _, title := range []string{"Home", "Settings…"} {
-		line := m.st.chatListLine(backend.ChatEntry{Title: title}, false, "", index == m.selected,
-			focused, width)
-		if index != m.selected {
-			line = m.st.dim.Render(line)
-		}
-		rows = append(rows, line)
-		index++
-	}
-	if m.offset < len(rows) {
-		rows = rows[m.offset:]
+	rows = append(rows, m.st.dim.Render(strings.Repeat("─", width)))
+	for r := range foot {
+		rows = append(rows, foot[r].draw(part(r, true), focused))
 	}
 	if len(rows) > height {
 		rows = rows[:height]
@@ -501,7 +846,8 @@ func (m chatListModel) helpKeys() []helpKey {
 		return []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"c", "compose"},
 			{"a", "manage accounts"}, {"r", "refresh"}}
 	}
-	keys := []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"/", "search"}, {"u", "unread"}}
+	keys := []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"space", "fold"},
+		{"/", "search"}, {"u", "unread"}}
 	if m.mentions {
 		keys = append(keys, helpKey{"m", "mentions"})
 	}

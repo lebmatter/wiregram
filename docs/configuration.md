@@ -27,7 +27,7 @@ renames each to `*.bak`.
 
 ## Settings
 
-Open Settings from the account chooser's `Settings…` row or the sidebar's last row.
+Open Settings from the account chooser's `Settings…` row or the sidebar's settings… row.
 Accounts are listed on the left, followed by:
 
 - **+ Add account…**: pick a network and sign in.

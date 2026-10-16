@@ -31,7 +31,7 @@ func termSize() (width, height int) {
 const twoPaneWidth = 100
 
 // sidebarWidth is the chat list width in two-pane mode, borders included.
-const sidebarWidth = 30
+const sidebarWidth = 40
 
 // Colours that mean the same in every theme; the rest come from styles.
 var (
@@ -614,42 +614,6 @@ func truncate(text string, width int) string {
 		return text
 	}
 	return textfmt.ClipLine(text, width-1) + "…"
-}
-
-// chatListLine is a chat row: the title, led by the agent icon when agent is
-// set (an agent answers the chat or has a suggestion waiting), then mark and
-// the unread pill at the right edge.
-func (s *styles) chatListLine(entry backend.ChatEntry, agent bool, mark string, selected,
-	focused bool, width int) string {
-	pill := ""
-	if entry.Unread > 0 {
-		pill = " " + s.badge.Render(fmt.Sprintf(" %d ", entry.Unread))
-	}
-	if mark != "" {
-		pill = " " + mark + pill
-	}
-	marker := "  "
-	if selected {
-		marker = "> "
-	}
-	lead := ""
-	if agent {
-		lead = agentIcon + " "
-	}
-	room := max(1, width-2-textfmt.DisplayWidth(lead)-textfmt.DisplayWidth(pill))
-	rest := truncate(textfmt.Plain(entry.Title), room)
-	rest += strings.Repeat(" ", max(0, room-textfmt.DisplayWidth(rest)))
-	plain := lipgloss.NewStyle()
-	switch {
-	case selected && focused:
-		plain = s.selectedRow
-	case selected:
-		plain = styleTitle
-	}
-	if lead != "" {
-		lead = s.agent.Inherit(plain).Render(lead)
-	}
-	return plain.Render(marker) + lead + plain.Render(rest) + pill
 }
 
 // agentIcon marks Chat Agents: an account that has one, a DM it answers or

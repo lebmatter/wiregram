@@ -7,8 +7,8 @@ Email accounts read mail over IMAP and send over SMTP. Set one up with the
 
 An email account's chats are its folders: **Inbox**, **Sent**, **Archive** (where the
 server has one; on Gmail, archiving moves mail to All Mail, which has no row) and the
-labels you show (see [Labels](#labels)). Each has its unread count. Under them sit
-**Compose…** and **Labels…**. Entering the account opens the inbox.
+labels you show (see [Labels](#labels)). Each has its unread count. Above them sit
+the **compose** and **labels** chips. Entering the account opens the inbox.
 
 ## Conversations
 
@@ -97,7 +97,7 @@ A mail's attachments come to at most 25 MB. One draft is kept at a time.
 ## Labels
 
 Gmail labels (on other servers, folders) can be shown in the sidebar. The labels are read
-when you sign in and again every few minutes. **Labels…** opens a list of every label,
+when you sign in and again every few minutes. The **labels** chip opens a list of every label,
 each ticked when it is in the sidebar:
 
 | Key | Action |

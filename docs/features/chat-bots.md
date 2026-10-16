@@ -58,9 +58,9 @@ wiregram
 
 ## Creating a bot
 
-Each expanded account in the chat sidebar (except email) ends with a **── Bots** section
-under Unread, Mentions (where the network has them), Archived chats (Telegram only) and Search…: one **NAME @handle ✦** row per bot,
-then **New bot…**. Without a provider, an alert over the screen asks you to add one in
+Each expanded account in the chat sidebar (except email) ends with a **bots** section
+under its chats: one **✦ NAME @handle** row per bot with the number of chats it answers
+(or `all DMs`), then **+ new bot…**. Without a provider, an alert over the screen asks you to add one in
 Settings → AI providers first (any key or click closes it); otherwise a
 short scripted wizard opens. Every step is a fixed choice or a typed value;
 <kbd>Esc</kbd> goes back a question.
@@ -146,7 +146,7 @@ No private chat has two bots:
 ### Your own chat
 
 On Telegram (Saved Messages), Mattermost and WhatsApp the picker has a **You** row under
-the radio list: a tick for your chat with yourself, the sidebar's You row. It is apart
+the radio list: a tick for your chat with yourself, the sidebar's you chip. It is apart
 from All private chats and Selected users, so a bot can answer it whichever of those it
 has, and only one bot of the account can tick it (another bot's shows `[-]` and its
 name). There you are the one asking: every message you write in that chat, in wiregram
@@ -157,7 +157,7 @@ itself.
 
 In the sidebar a violet ✦ follows the account's name (dim while all its bots are paused),
 and the account chooser gives each bot a chip with its own ✦ and name. Each private chat a bot answers
-while on gets a ✦ before its title.
+while on shows a ✦ in place of its `@`.
 
 ## Registering a bot on Mattermost
 
@@ -207,7 +207,7 @@ chats and messages it receives while wiregram runs.
 
 ### The bot inbox
 
-A registered bot (on Mattermost or Telegram) gets an **Inbox** row under its row in the Bots section, with the number
+A registered bot (on Mattermost or Telegram) gets an **↳ inbox** row under its row in the bots section, with the number
 of replies waiting for approval. <kbd>Enter</kbd> on it opens the bot's own private chats
 as cards over its connection, those with a reply waiting first, marked
 **✦ reply waiting**. <kbd>Enter</kbd> or a click on a card opens the chat, titled

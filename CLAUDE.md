@@ -94,15 +94,24 @@ These are project constraints, not suggestions:
   `bubbles/help` footer with the notice on the right. Help hides keys the
   backend's `capabilities` rule out. The footer is never expanded; the full
   shortcut list lives only in `wiregram -h` (`usageText`).
-- The sidebar is an account tree (`internal/tui/list.go`): every
-  account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
-  has a bot), the active one expanded to Unread, Mentions, You (`backend.SelfChatter`: the chat with oneself on
-  Telegram, Mattermost and WhatsApp), archive (Telegram only) and search
-  on top, then its chats, then a `── Bots` section: a `NAME @handle` row per bot, then
-  `New bot…`. An email account is expanded to `Compose…` and `Labels…`
+- The sidebar is an account tree (`internal/tui/list.go`), `sidebarWidth` (40) wide:
+  every account is a row (`▸`/`▾`, status glyph, `TG` tag on a fill that turns accent
+  when expanded, number, label, unseen count while collapsed, a violet `✦` when it
+  has a bot), the active one expanded to a line of chips, each a stop for ↑/↓: unread,
+  @ mentions, you (`backend.SelfChatter`: the chat with oneself on Telegram, Mattermost
+  and WhatsApp), archived (Telegram only) and / search. Then its chats in sections under
+  ruled headers that Space, Enter or a click folds for the session (`folded`): the team
+  (`ChatEntry.Section`, whose `[Team] ` title prefix the sidebar drops) on Mattermost,
+  else groups (rooms on Matrix) and channels (`ChatEntry.IsChannel`, without
+  `Channel: `), then direct (`entrySection`). Rows start with `#`, `@`, or `✦` when a
+  bot answers the chat; unread chats come first with an accent count, read ones dimmed.
+  Then a bots section: a `✦ NAME @handle` row per bot with its chat count, then
+  `+ new bot…`. An email account is expanded to compose and labels chips
   (`backend.Labeler`, the modal in `internal/tui/labels.go` that shows or hides each
-  label), then its folders. Enter on
-  another account switches to it. There are no modes.
+  label), then its folders in server order. home and settings… are pinned under the
+  tree, which scrolls above them. The selected row has an accent `▎` in its first
+  column and, when focused, the selection tint. Enter on another account switches to
+  it. There are no modes.
 - After the splash comes the account chooser (`internal/tui/account.go`) with the
   logo: an `accounts` box padded two cells inside its border, one row per account in
   columns (`›` caret, number, glyph, service tag on a fill that turns accent when
@@ -132,13 +141,13 @@ These are project constraints, not suggestions:
   click shows their newest messages), Weather (Open-Meteo; a click shows today hour by
   hour), Calendar (a Google Calendar's secret iCal URL, a `secret` setting Settings
   masks; a click lists upcoming and recent events) and Hacker News (the Algolia HN API).
-- Each expanded account but email has an Unread row (`u`, `internal/tui/unread.go`): a column
+- Each expanded account but email has an unread chip (`u`, `internal/tui/unread.go`): a column
   of full-width cards, one per chat with unread messages. The card border and tag show the
   kind: DM green, group blue, channel yellow. Replies get `↳` and a `thread` tag.
 - A message that mentions the user (`Message.Mentioned`: `@you` or a chat-wide
   `@all`/`@channel`/`@here`/`@room`, never a plain reply) is tinted with the theme's
   `mentionBg` in the chat and the thread pane; selection's tint wins. Backends with
-  `backend.MentionFetcher` get a Mentions row (`m`) under Unread: the same cards,
+  `backend.MentionFetcher` get a mentions chip (`m`) beside it: the same cards,
   one per group or channel with recent mentions (Telegram's MyMentions search over
   recent groups, Mattermost's mention search, Matrix highlight notifications,
   WhatsApp's in-memory messages). Email has none.
@@ -146,7 +155,7 @@ These are project constraints, not suggestions:
   the chat and Tab moves focus; narrower terminals show one pane at a time.
 - The root `tuiModel` owns the screen's only bus subscription and routes
   events for the open chat into it, so the list and chat never race.
-- `>` marks the selected row in lists. The selected message in a chat is
+- `>` marks the selected row in lists (the sidebar uses an accent `▎`). The selected message in a chat is
   tinted with `colorSelBg` across its whole block (`shadeLine`); selection
   never moves a column.
 - Every backend's messages share one block (`messageBlock`,

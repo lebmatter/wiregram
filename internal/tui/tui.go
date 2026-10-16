@@ -853,7 +853,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 			return m, nil
 		}
 		m.focus = focusList
-		i, ok := m.list.itemAt(mouse.Y - 1)
+		i, ok := m.list.itemAt(mouse.X-2, mouse.Y-1)
 		if !ok || mouse.Y < 1 || mouse.Y > m.list.height {
 			return m, nil
 		}
@@ -1058,14 +1058,14 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.archiveUnread = msg.archiveUnread
 		m.list = newChatListModel(m.ctx, m.st, m.mgr, m.active, m.b, msg.entries, m.archived, msg.archiveUnread)
 		m.list.width, m.list.height = old.width, old.height
+		m.list.folded = old.folded
 		m.list.selected = min(old.selected, m.list.maxIndex())
 		m.list.offset = old.offset
 		// New activity re-sorts the chats; stay on the chat, not the row.
 		if selectedChat != (backend.ChatID{}) {
 			for i, e := range m.list.entries {
 				if e.ID == selectedChat {
-					m.list.selected = m.list.firstChat() + i
-					m.list = m.list.scrolled()
+					m.list = m.list.selectEntry(i)
 					break
 				}
 			}
@@ -1078,7 +1078,7 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.goToLabel = ""
 		for i, e := range m.entries {
 			if label != "" && e.ID.Id == label {
-				m.list.selected = m.list.firstChat() + i
+				m.list = m.list.selectEntry(i)
 				return m.chooseChat(i)
 			}
 		}

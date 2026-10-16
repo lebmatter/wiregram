@@ -14,7 +14,7 @@ for the current screen; [Keybinds](/keybinds) and `wiregram -h` list all of them
 3. **Chat mode.** The chat list and the open chat. Inside an account the screen is
    the body and a footer with the keys for what has focus; notices show on the right
    of the footer.
-4. **Settings.** Opened from the chooser's `Settings…` row or the sidebar's last row.
+4. **Settings.** Opened from the chooser's `Settings…` row or the sidebar's settings… row.
    See [Configuration](/configuration#settings).
 
 ## Layout
@@ -23,11 +23,15 @@ Terminals 100 columns wide or wider show the chat list as a sidebar beside the o
 <kbd>Tab</kbd> moves focus between them. Narrower terminals show one pane at a time.
 
 The sidebar is an account tree. Every account is a row with an arrow, a status glyph,
-a tag such as `TG1` (backend and position) and its label. The active account is expanded
-to Unread, Mentions, You (the chat with yourself: Saved Messages on Telegram, your own
-DM on Mattermost and WhatsApp), Search… (and Archived chats on Telegram), then its chats, then its
-[bot](/features/chat-bots) rows; an email account to Compose… and Labels…, then its
-[folders](/features/email#folders). <kbd>Enter</kbd> on another account switches to it. The last two rows open Home (the account chooser) and Settings.
+a tag such as `TG` with the account's number, and its label. The active account is
+expanded to a line of chips: unread, @ mentions, you (the chat with yourself: Saved
+Messages on Telegram, your own DM on Mattermost and WhatsApp), archived (Telegram) and
+/ search; then its chats in folding sections (teams on Mattermost, else groups or rooms
+and channels, then direct), unread chats first; then its [bots](/features/chat-bots).
+An email account is expanded to compose and labels chips, then its
+[folders](/features/email#folders). <kbd>Space</kbd> folds a section.
+<kbd>Enter</kbd> on another account switches to it. home (the account chooser) and
+settings… are pinned at the bottom of the sidebar.
 
 Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 

@@ -30,13 +30,14 @@ func peerKeyToID(key peerKey) backend.ChatID {
 func chatToChatEntry(ch chat) backend.ChatEntry {
 	_, isSelf := ch.peer.(*tg.InputPeerSelf)
 	return backend.ChatEntry{
-		ID:      peerKeyToID(ch.key),
-		Title:   ch.title,
-		Unread:  ch.unread,
-		IsDM:    ch.key.kind == 'u',
-		IsGroup: ch.key.kind == 'g' || ch.key.kind == 'c',
-		IsSelf:  isSelf,
-		Raw:     ch,
+		ID:        peerKeyToID(ch.key),
+		Title:     ch.title,
+		Unread:    ch.unread,
+		IsDM:      ch.key.kind == 'u',
+		IsGroup:   ch.key.kind == 'g' || ch.key.kind == 'c',
+		IsSelf:    isSelf,
+		IsChannel: ch.broadcast,
+		Raw:       ch,
 	}
 }
 

@@ -33,7 +33,7 @@ Email accounts ask for an IMAP server (imap.gmail.com by default), the
 address, and an app password, or Google sign-in in the browser when the build
 embeds a Google OAuth client. An email account's chats are its folders:
 Inbox, Sent, Archive (where the server has one) and the Gmail labels (other
-servers' folders) picked in its Labels… row (Space shows or hides one, Enter
+servers' folders) picked with its labels chip (Space shows or hides one, Enter
 goes to it). A folder opens as a list of conversations, grouped by reply
 headers or subject. Mail is cached in wiregram.db for the window set in an
 email account's Settings (90 days by default); mail on the server is never
@@ -43,9 +43,12 @@ around and search; any key or click closes it.
 Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
-The sidebar lists every account with the active one expanded to its chats;
-Enter on another account switches to it; the last two rows open Home (the
-account list) and Settings.
+The sidebar lists every account with the active one expanded to a line of
+chips (unread, @ mentions, you, archived, / search), then its chats in
+sections that Space folds (teams on Mattermost, else groups or rooms and
+channels, then direct), unread chats first, then its bots; Enter on another
+account switches to it; home (the account list) and settings… stay pinned
+at the bottom.
 Plugins are Lua scripts; enabled ones may add widget cards under the
 account list, such as the built-in Unread (unread private chats per account;
 click it to read them), Weather (click it for today's hourly forecast),
@@ -56,10 +59,10 @@ Switch them and set them up in Settings > Plugins. Your own go in
 
 AI powered chat bots answer an account's incoming private messages as you,
 through an OpenAI-compatible provider added in Settings > AI providers. Every account
-but email can have several: under its Search… sits a Bots section with a
+but email can have several: under its chats sits a bots section with a
 NAME @handle row for each, which opens the bot's settings in place of the
 chat (a bot registered on Mattermost or Telegram also gets an Inbox row: its
-own private chats, where what you send goes out as the bot), then New bot….
+own private chats, where what you send goes out as the bot), then new bot….
 On Telegram, bots are created through a manager bot of yours (Bot Management
 on in @BotFather), whose token goes in a bot pane's Manager bot row.
 A bot answers all of the account's private chats or the ones picked for it;
@@ -129,10 +132,11 @@ Keyboard shortcuts:
     Esc, Ctrl+C       Quit (asks first)
 
   Chat list
-    Up/k, Down/j      Select chat or account
-    Enter             Open chat (on email, a folder), switch to the selected
-                      account, or open a bot's settings or create one
-                      (New bot…), under Bots
+    Up/k, Down/j      Select chat, chip, section or account
+    Enter             Open chat (on email, a folder) or chip, switch to the
+                      selected account, fold a section, or open a bot's
+                      settings or create one (new bot…), under bots
+    Space             Fold or unfold the selected chat's section
     c                 Compose a mail (email)
     /                 Search users (a modal over the screen); on Mattermost
                       also channels, joining a public one when picked

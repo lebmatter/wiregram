@@ -27,21 +27,32 @@ a modal with more detail, such as the Weather widget's hourly forecast.
 ## Account tree
 
 In chat mode, the sidebar lists every account as a row: `▸`/`▾`, a status glyph, the
-tag (`TG`, `WA`, `MX`, `MM`, `EM`) and the account's label. The active account is
-expanded to:
+tag (`TG`, `WA`, `MX`, `MM`, `EM`, on the accent fill when expanded), the account's
+number and label, its unseen count while collapsed and a violet ✦ when it has bots. The
+active account is expanded to:
 
-- its chats, newest first, with unread badges
-- **Unread** and **Mentions** (see [Unread & Mentions](/features/unread-mentions))
-- **Search…**, which opens the user search
+- a line of chips: **unread** (with the total), **@ mentions** (see
+  [Unread & Mentions](/features/unread-mentions)), **you** (your chat with yourself),
+  **archived** (Telegram only) and **/ search**, which opens the user search
+- its chats in sections with a ruled header: the team on Mattermost, else **groups**
+  (**rooms** on Matrix) and **channels**, then **direct** for private chats. Each row
+  starts with `#` for a group or channel, `@` for a person or a violet ✦ when a bot
+  answers it. Within a section the chats with unread messages come first with their
+  count; read ones follow, dimmed
+- a **bots** section (see [Chat bots](/features/chat-bots))
 
-An email account is expanded to its folders instead, then **Compose…** and **Labels…**
+<kbd>Space</kbd> (or <kbd>Enter</kbd> or a click on its header) folds a section, which then
+shows its unread total; folds last until wiregram quits.
+
+An email account is expanded to **compose** and **labels** chips, then its folders
 (see [Email](/features/email#folders)).
 
 While a WhatsApp or Matrix account is still fetching its chats for the first time
 after connecting, it shows a spinner and `Loading chats…` in place of them and these
 rows. An email folder shows `Loading emails…` until the first sync fills it.
 
-<kbd>Enter</kbd> on another account switches to it. The last two rows open Home (the account chooser) and Settings.
+<kbd>Enter</kbd> on another account switches to it. **home** (the account chooser) and
+**settings…** stay pinned at the bottom of the sidebar while the tree scrolls.
 
 ## Adding an account
 
