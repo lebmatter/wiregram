@@ -271,8 +271,11 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []rowKin
 	now := time.Now()
 	for i, msg := range thread {
 		// The first reply's day goes on the reply count's rule instead.
-		if i > 1 && startsDay(thread, i) {
+		switch {
+		case i > 1 && startsDay(thread, i):
 			add(-1, m.st.dividerLine(dayLabel(msg.Timestamp, now), m.st.subtle, inner))
+		case i > 1 && !continues(thread, i):
+			add(-1, "") // a gap before each new sender
 		}
 		// The thread is the chain itself, so replies are drawn without a pointer.
 		msg.ReplyToID = ""

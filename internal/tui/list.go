@@ -474,7 +474,15 @@ func (m chatListModel) chipRows(width int) []listRow {
 			return line
 		}
 	}
-	return rows
+	// A blank row between wrapped chip rows keeps their fills apart.
+	var spaced []listRow
+	for i, r := range rows {
+		if i > 0 {
+			spaced = append(spaced, static(""))
+		}
+		spaced = append(spaced, r)
+	}
+	return spaced
 }
 
 func chipWidth(a listAction) int {

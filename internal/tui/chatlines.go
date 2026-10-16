@@ -133,6 +133,9 @@ func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Mess
 			top = append(top, s.dividerLine(fmt.Sprintf("unread · %d", len(unread)), s.accent,
 				lineWidth))
 		}
+		if len(top) == 0 && i > 0 && !continues(messages, i) {
+			top = append(top, "") // a gap before each new sender
+		}
 		dividers[i] = len(top)
 		lines = append(top, lines...)
 		blocks[i] = lines
