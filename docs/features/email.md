@@ -34,6 +34,8 @@ Mails are grouped by their reply headers, or failing those, by a `Re:` or `Fwd:`
 Your replies join the conversations they answer, wherever they are filed.
 
 <kbd>Space</kbd> expands a conversation into its mails, oldest first, and collapses it again.
+While no mail is open, <kbd>←</kbd> moves to the sidebar and <kbd>→</kbd> back to the folder
+(terminals 100 columns or wider).
 
 ## Reading
 

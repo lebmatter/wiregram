@@ -1005,6 +1005,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	editing := m.agentOpen && (m.agentPane.editing || m.agentPane.confirm != nil ||
 		m.agentPane.picker != nil) || m.mailOpen && m.mail.typing() && m.focus == focusChat
 
+	// With no mail being read, ←/→ move between the sidebar and the folder.
+	mailIdle := m.mailOpen && m.mail.reading == nil && !m.mail.typing()
 	k := msg.String()
 	switch {
 	case k == "tab" && m.twoPane() && m.paneOpen() && !editing &&
@@ -1015,10 +1017,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			m.focus = focusChat
 		}
 		return m, nil
-	case k == "left" && m.twoPane() && paneFocused && m.unreadOpen:
+	case k == "left" && m.twoPane() && paneFocused && (m.unreadOpen || mailIdle):
 		m.focus = focusList
 		return m, nil
-	case k == "right" && m.twoPane() && !paneFocused && m.unreadOpen && m.list.confirm == nil:
+	case k == "right" && m.twoPane() && !paneFocused && (m.unreadOpen || mailIdle) &&
+		m.list.confirm == nil:
 		m.focus = focusChat
 		return m, nil
 	case k == "esc" && !paneFocused && m.paneOpen() && m.list.confirm == nil:

@@ -215,6 +215,8 @@ Keyboard shortcuts:
     Up/k, Down/j      Select a conversation, or a mail in an expanded one
     PgUp/PgDn, g/G    Page, top, bottom
     Space             Expand or collapse the conversation
+    Left, Right       With no mail open, move to the sidebar and back
+                      (wide terminals)
     Enter             Read the mail (a conversation: its newest), marking it
                       read; panes 120+ columns wide open the reader beside
                       the list, focused; ] and [ move between them
