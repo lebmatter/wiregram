@@ -364,8 +364,12 @@ func (m accountListModel) accountRows(width int) []string {
 			m.st.subtle.Render(st) + strings.Repeat(" ", statusW-textfmt.DisplayWidth(st))
 		if m.mgr.Agents != nil {
 			for _, rec := range m.mgr.Agents.AgentsFor(a) {
-				chip := " " + m.st.agentMark(rec.Enabled) + " " +
-					m.st.subtle.Render(textfmt.Plain(rec.Name)) + " "
+				name := textfmt.Plain(rec.Name)
+				if selected { // on the accent fill, like the tag, to stand out of the tint
+					row += "  " + m.st.badge.Render(" "+agentIcon+" "+name+" ")
+					continue
+				}
+				chip := " " + m.st.agentMark(rec.Enabled) + " " + m.st.subtle.Render(name) + " "
 				row += "  " + shadeLine(chip, m.st.selBgSGR, 0)
 			}
 		}
