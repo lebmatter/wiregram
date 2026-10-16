@@ -24,12 +24,13 @@ type labelPicker struct {
 	input  textinput.Model
 	sel    int // index into shown()
 	notice string
+	dirty  bool // a label was shown or hidden since the sidebar last reloaded
 	width  int
 	height int
 }
 
 // labelPickerTop is how many lines sit above the labels: the boxed filter and
-// the heading rule.
+// the heading.
 const labelPickerTop = 4
 
 func newLabelPicker(st *styles, lb backend.Labeler) (*labelPicker, error) {
@@ -95,6 +96,7 @@ func (m *labelPicker) setShown(name string, on bool) bool {
 			m.labels[i].Shown = on
 		}
 	}
+	m.dirty = true
 	return true
 }
 
@@ -153,7 +155,7 @@ func (m *labelPicker) size() (int, int) { return m.width, m.height }
 
 func (m *labelPicker) View() string {
 	inner := m.width - 4
-	m.input.SetWidth(max(1, inner-6))
+	m.input.SetWidth(max(1, inner-4))
 	shown := m.shown()
 	title, heading := "labels", "labels"
 	if m.move {
@@ -162,11 +164,11 @@ func (m *labelPicker) View() string {
 	if len(shown) > 0 {
 		heading += fmt.Sprintf(" · %d", len(shown))
 	}
-	rule := m.st.modalRule(heading, inner)
+	rule := m.st.dim.Render(textfmt.ClipLine(heading, inner))
 	if m.notice != "" {
 		rule = styleError.Render(textfmt.ClipLine(m.notice, inner))
 	}
-	body := append(m.st.modalField("/", m.input.View(), inner), rule)
+	body := append(m.st.modalField("", m.input.View(), inner), rule)
 	if len(shown) == 0 {
 		text := "  no labels"
 		if len(m.labels) == 0 {

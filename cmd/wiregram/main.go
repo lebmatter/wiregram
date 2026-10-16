@@ -285,15 +285,15 @@ Keyboard shortcuts:
 
   Chat picker (a modal over the bot's settings)
     Up/Down           Select All private chats, Selected users or a person
-    Space             Pick the radio row, or tick or untick the person;
+    Space             Pick the radio row, or tick or untick the person,
+                      saved at once;
                       chats another bot answers show its name and cannot
                       be ticked (all is unavailable while another bot
                       answers any)
     Type              Under Selected users, filter the people recently
                       chatted with; on Telegram and Mattermost it also
                       searches everyone, for a DM yet to start
-    Enter             Save
-    Esc               Cancel (a click outside it cancels too)
+    Enter, Esc        Close (a click outside it closes too)
 
   New bot and Add provider (form modals)
     Enter             Answer or pick

@@ -206,7 +206,10 @@ func (s *styles) modalBox(title string, body []string, width, height int) string
 // modalField is a modal's input line in a dim box three rows tall, the
 // prompt in the accent.
 func (s *styles) modalField(prompt, input string, width int) []string {
-	line := s.accent.Render(prompt) + " " + input
+	line := input
+	if prompt != "" {
+		line = s.accent.Render(prompt) + " " + input
+	}
 	return strings.Split(renderBox("", []string{line}, width, 3, s.dimColor), "\n")
 }
 

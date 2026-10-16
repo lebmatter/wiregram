@@ -823,7 +823,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		if pick, done := m.labels.click(mouse.X-x, mouse.Y-y); done {
 			return m.closeLabels(pick)
 		}
-		return m, nil
+		return m, m.labelsChanged()
 	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		if right {
@@ -893,6 +893,8 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		done, cmd = m.agentPane.picker.click(mouse.X-x, mouse.Y-y)
 		if done {
 			m.agentPane.picker = nil
+		} else {
+			m.agentPane = m.agentPane.saveChats()
 		}
 	case m.agentOpen && mouse.Y == 1 && !m.agentPane.editing:
 		// The status chip pauses or resumes the bot.
@@ -987,7 +989,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		if done {
 			return m.closeLabels(open)
 		}
-		return m, cmd
+		return m, tea.Batch(cmd, m.labelsChanged())
 	}
 	if m.searchOpen {
 		m.search, cmd = m.search.Update(msg)
@@ -1420,6 +1422,16 @@ func (m tuiModel) confirmShown() (c *confirmModal, x, y int, ok bool) {
 func (m tuiModel) labelsAt() (x, y int) {
 	w, h := m.labels.size()
 	return modalRect(m.width, m.bodyHeight(), w, h)
+}
+
+// labelsChanged reloads the list as soon as the Labels modal shows or hides a
+// label, so the sidebar follows each toggle.
+func (m tuiModel) labelsChanged() tea.Cmd {
+	if !m.labels.dirty {
+		return nil
+	}
+	m.labels.dirty = false
+	return loadDialogs(m.ctx, m.b, m.archived)
 }
 
 // closeLabels closes the Labels modal and reloads the list for the labels it

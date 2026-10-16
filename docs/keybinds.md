@@ -182,10 +182,9 @@ A bot's **NAME @handle** row in the account's Bots section.
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Select **All private chats**, **Selected users** or a person |
-| <kbd>Space</kbd> | Pick the radio row, or tick or untick the person (chats another bot answers can't be ticked) |
+| <kbd>Space</kbd> | Pick the radio row, or tick or untick the person, saved at once (chats another bot answers can't be ticked) |
 | Type | Under Selected users, filter the people recently chatted with; on Telegram and Mattermost it also searches everyone |
-| <kbd>Enter</kbd> | Save |
-| <kbd>Esc</kbd> | Cancel (a click outside it cancels too) |
+| <kbd>Enter</kbd>, <kbd>Esc</kbd> | Close (a click outside it closes too) |
 
 The New bot… and Add provider… wizards: <kbd>Enter</kbd> answers or picks,
 <kbd>↑</kbd>/<kbd>↓</kbd> choose, <kbd>Esc</kbd> goes back a question.

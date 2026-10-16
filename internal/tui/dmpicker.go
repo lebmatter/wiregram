@@ -47,6 +47,7 @@ type dmPicker struct {
 	busy   bool // searching or resolving a pick
 	sel    int  // m.top() rows, then index into items()
 	notice string
+	dirty  bool // the choice changed since it was last stored
 	width  int
 	height int
 }
@@ -159,6 +160,7 @@ func (m *dmPicker) setAll(all bool) {
 			return
 		}
 	}
+	m.dirty = m.dirty || m.all != all
 	m.all = all
 	m.notice = ""
 }
@@ -178,7 +180,7 @@ func (m *dmPicker) pick(i int) tea.Cmd {
 			m.notice = "Bot " + m.selfBy + " answers your own chat"
 			return nil
 		}
-		m.self = !m.self
+		m.self, m.dirty = !m.self, true
 		return nil
 	}
 	items := m.items()
@@ -208,7 +210,7 @@ func (m *dmPicker) tick(c agent.AgentChat) {
 		return
 	}
 	m.picked[c.ID] = !m.picked[c.ID]
-	m.notice = ""
+	m.dirty, m.notice = true, ""
 }
 
 // rowCount is how many rows the arrows move through.
@@ -219,18 +221,16 @@ func (m *dmPicker) rowCount() int {
 	return m.top() + len(m.items())
 }
 
-// key handles a key press: save when the choice should be stored, done when
-// the modal closes.
-func (m *dmPicker) key(msg tea.KeyPressMsg) (save, done bool, cmd tea.Cmd) {
+// key handles a key press and reports whether the modal closes. Every change
+// marks the picker dirty; the pane stores it at once.
+func (m *dmPicker) key(msg tea.KeyPressMsg) (done bool, cmd tea.Cmd) {
 	k := msg.String()
 	switch k {
-	case "esc", "ctrl+c":
-		return false, true, nil
-	case "enter":
-		return m.allBy == "" || m.selfOK, true, nil
+	case "esc", "ctrl+c", "enter":
+		return true, nil
 	}
 	if m.allBy != "" && !m.selfOK {
-		return false, false, nil
+		return false, nil
 	}
 	m.notice = ""
 	switch k {
@@ -242,12 +242,12 @@ func (m *dmPicker) key(msg tea.KeyPressMsg) (save, done bool, cmd tea.Cmd) {
 		cmd = m.pick(m.sel)
 	default:
 		if m.all || m.allBy != "" {
-			return false, false, nil
+			return false, nil
 		}
 		m.input, cmd = m.input.Update(msg)
-		return false, false, tea.Batch(cmd, m.edited())
+		return false, tea.Batch(cmd, m.edited())
 	}
-	return false, false, cmd
+	return false, cmd
 }
 
 func (m *dmPicker) paste(msg tea.PasteMsg) tea.Cmd {
@@ -324,7 +324,7 @@ func (m *dmPicker) update(msg tea.Msg) tea.Cmd {
 		}
 		// The person joins the known DMs, so the filter keeps showing them.
 		m.dms = append(m.dms, msg.chat)
-		m.picked[msg.chat.ID] = true
+		m.picked[msg.chat.ID], m.dirty = true, true
 	}
 	return nil
 }
@@ -391,13 +391,13 @@ func (m *dmPicker) View() string {
 		body = append(body, "", m.st.subtle.Render(textfmt.ClipLine(
 			"   Every private chat of this account, now and later.", inner)))
 	default:
-		m.input.SetWidth(max(1, inner-6))
-		body = append(body, m.st.modalField("/", m.input.View(), inner)...)
+		m.input.SetWidth(max(1, inner-4))
+		body = append(body, m.st.modalField("", m.input.View(), inner)...)
 		body = append(body, m.heading(inner))
 		body = append(body, m.people(inner)...)
 	}
 	body = fillLines(body, m.height-4)
-	keys := []helpKey{{"space", "tick"}, {"enter", "save"}, {"esc", "cancel"}}
+	keys := []helpKey{{"space", "tick"}, {"esc", "close"}}
 	count := ""
 	if !m.all && m.allBy == "" {
 		_, _, chats := m.chosen()
@@ -423,7 +423,7 @@ func (m *dmPicker) heading(width int) string {
 	if m.busy {
 		heading += " · searching…"
 	}
-	return m.st.modalRule(heading, width)
+	return m.st.dim.Render(textfmt.ClipLine(heading, width))
 }
 
 // check is a tick box: ticked in the accent, held by another bot dim.
@@ -511,8 +511,7 @@ func (m *dmPicker) helpKeys() []helpKey {
 	if m.allBy != "" && !m.selfOK {
 		return []helpKey{{"esc", "close"}}
 	}
-	return []helpKey{{"↑↓", "select"}, {"space", "pick/tick"}, {"enter", "save"},
-		{"esc", "cancel"}}
+	return []helpKey{{"↑↓", "select"}, {"space", "pick/tick"}, {"esc", "close"}}
 }
 
 // selfRow is the tick for the user's chat with themselves.

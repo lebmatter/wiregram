@@ -223,7 +223,8 @@ func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
 		return m.botDone(msg)
 	case dmSearchDebounce, dmSearchResults, dmResolved:
 		if m.picker != nil {
-			return m, m.picker.update(msg)
+			cmd := m.picker.update(msg)
+			return m.saveChats(), cmd
 		}
 	}
 	return m, nil
@@ -232,14 +233,12 @@ func (m agentPaneModel) Update(msg tea.Msg) (agentPaneModel, tea.Cmd) {
 func (m agentPaneModel) key(msg tea.KeyPressMsg) (agentPaneModel, tea.Cmd) {
 	k := msg.String()
 	if m.picker != nil {
-		save, done, cmd := m.picker.key(msg)
-		if save {
-			return m.saveChats(), nil
-		}
+		done, cmd := m.picker.key(msg)
 		if done {
 			m.picker = nil
+			return m, nil
 		}
-		return m, cmd
+		return m.saveChats(), cmd
 	}
 	if m.confirm != nil {
 		yes, done := m.confirm.key(k)
@@ -572,15 +571,24 @@ func (m agentPaneModel) openPicker() agentPaneModel {
 	return m
 }
 
-// saveChats stores the picker's choice; on failure the picker stays open with
-// the reason.
+// saveChats stores the picker's choice as soon as it changes; on failure the
+// picker goes back to what was stored and shows the reason.
 func (m agentPaneModel) saveChats() agentPaneModel {
+	if m.picker == nil || !m.picker.dirty {
+		return m
+	}
+	m.picker.dirty = false
 	all, self, chats := m.picker.chosen()
 	if err := m.mgr.Agents.Db.SetAgentChats(m.rec.ID, all, self, chats); err != nil {
+		m.picker.all, m.picker.self = m.rec.AllChats, m.rec.SelfChat
+		clear(m.picker.picked)
+		for _, c := range m.chats {
+			m.picker.picked[c.ID] = true
+		}
 		m.picker.notice = textfmt.CleanError(err)
 		return m
 	}
-	m.rec.AllChats, m.rec.SelfChat, m.chats, m.picker = all, self, chats, nil
+	m.rec.AllChats, m.rec.SelfChat, m.chats = all, self, chats
 	m.mgr.Agents.Reload()
 	m.notice = "Saved"
 	return m

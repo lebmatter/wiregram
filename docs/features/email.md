@@ -117,7 +117,7 @@ each ticked when it is in the sidebar:
 
 | Key | Action |
 |-----|--------|
-| <kbd>Space</kbd>, click | Show or hide the label in the sidebar |
+| <kbd>Space</kbd>, click | Show or hide the label in the sidebar, at once |
 | <kbd>Enter</kbd> | Show the label and open it |
 | Type | Filter the labels |
 | <kbd>Esc</kbd> | Close |
