@@ -16,7 +16,7 @@ import (
 // active account expanded to its chats (on email, its folders) and the
 // others collapsed above and below it. Selection indexes run over the
 // selectable rows in display order: accounts above, the top action rows
-// (Unread, Mentions, archive and search; on email, Compose and Labels), chats,
+// (Unread, Mentions, You, archive and search; on email, Compose and Labels), chats,
 // the account's bots, accounts below, then "Home" and "Settings…".
 type chatListModel struct {
 	st            *styles
@@ -30,6 +30,7 @@ type chatListModel struct {
 	archiveUnread int
 	caps          backend.Capabilities
 	mentions      bool // the backend can list mentions
+	self          bool // the backend has a chat with oneself
 	labeler       bool // the backend has labels to show in the sidebar
 	mailbox       bool // the chats are email folders
 	// loading is set while the backend's first sync has brought no chats
@@ -56,6 +57,7 @@ type chatListSettings struct{}
 type chatListSearch struct{}
 type chatListUnread struct{}
 type chatListMentions struct{}
+type chatListSelf struct{}
 type chatListArchiveToggle struct{}
 type chatListAgent struct{ id int64 } // 0 creates a bot
 type chatListInbox struct{ bot inboxBot }
@@ -79,6 +81,7 @@ func newChatListModel(ctx context.Context, st *styles, mgr *account.AccountManag
 		height:        h,
 	}
 	_, m.mentions = b.(backend.MentionFetcher)
+	_, m.self = b.(backend.SelfChatter)
 	_, m.labeler = b.(backend.Labeler)
 	_, m.mailbox = b.(backend.Mailbox)
 	if s, ok := b.(backend.Syncer); ok {
@@ -118,6 +121,9 @@ func (m chatListModel) top() []listAction {
 	if m.mentions {
 		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "Mentions"},
 			msg: chatListMentions{}})
+	}
+	if m.self {
+		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "You"}, msg: chatListSelf{}})
 	}
 	if m.caps.Archive {
 		archive := backend.ChatEntry{Title: "Archived chats", Unread: m.archiveUnread}

@@ -218,6 +218,12 @@ type DMFinder interface {
 	FindPeople(ctx context.Context, query string) ([]UserCandidate, error)
 }
 
+// SelfChatter is implemented by backends with a private chat with oneself
+// (Telegram's Saved Messages), which the sidebar's You row opens.
+type SelfChatter interface {
+	SelfChat(ctx context.Context) (ChatEntry, error)
+}
+
 // Profiler is implemented by backends whose server can describe a user, so
 // clicking a sender opens their profile.
 type Profiler interface {

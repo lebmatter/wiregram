@@ -24,7 +24,8 @@ Terminals 100 columns wide or wider show the chat list as a sidebar beside the o
 
 The sidebar is an account tree. Every account is a row with an arrow, a status glyph,
 a tag such as `TG1` (backend and position) and its label. The active account is expanded
-to Unread, Mentions, Search… (and Archived chats on Telegram), then its chats, then its
+to Unread, Mentions, You (the chat with yourself: Saved Messages on Telegram, your own
+DM on Mattermost and WhatsApp), Search… (and Archived chats on Telegram), then its chats, then its
 [bot](/features/chat-bots) rows; an email account to Compose… and Labels…, then its
 [folders](/features/email#folders). <kbd>Enter</kbd> on another account switches to it. The last two rows open Home (the account chooser) and Settings.
 

@@ -96,7 +96,8 @@ These are project constraints, not suggestions:
   shortcut list lives only in `wiregram -h` (`usageText`).
 - The sidebar is an account tree (`internal/tui/list.go`): every
   account is a row (`▸`/`▾`, status glyph, `TG1` tag, label, a violet `✦` when it
-  has a bot), the active one expanded to Unread, Mentions, archive (Telegram only) and search
+  has a bot), the active one expanded to Unread, Mentions, You (`backend.SelfChatter`: the chat with oneself on
+  Telegram, Mattermost and WhatsApp), archive (Telegram only) and search
   on top, then its chats, then a `── Bots` section: a `NAME @handle` row per bot, then
   `New bot…`. An email account is expanded to `Compose…` and `Labels…`
   (`backend.Labeler`, the modal in `internal/tui/labels.go` that shows or hides each

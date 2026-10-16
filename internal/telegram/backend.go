@@ -636,6 +636,11 @@ func (tb *TelegramBackend) OpenUserCandidate(ctx context.Context, c backend.User
 	return chatToChatEntry(entry), nil
 }
 
+func (tb *TelegramBackend) SelfChat(ctx context.Context) (backend.ChatEntry, error) {
+	return chatToChatEntry(chat{key: peerKey{'u', tb.C.AccountID}, peer: &tg.InputPeerSelf{},
+		title: "Saved Messages"}), nil
+}
+
 // CanMention is true for groups: Telegram mentions people by username there.
 func (tb *TelegramBackend) CanMention(ch backend.ChatEntry) bool {
 	entry := entryToChat(ch)

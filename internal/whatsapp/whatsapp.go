@@ -1385,6 +1385,16 @@ func (wa *WaBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandid
 	return entry, nil
 }
 
+// SelfChat is the chat with the user's own number, WhatsApp's "Message yourself".
+func (wa *WaBackend) SelfChat(ctx context.Context) (backend.ChatEntry, error) {
+	if wa.Jid.IsEmpty() {
+		return backend.ChatEntry{}, fmt.Errorf("open your own chat: not signed in")
+	}
+	entry := wa.chatEntry(waChatEntry{jid: wa.Jid.ToNonAD()})
+	entry.Title, entry.IsSelf = "You", true
+	return entry, nil
+}
+
 // Emoji.
 
 func (wa *WaBackend) RecentEmoji() []string { return wa.recentEmoji }

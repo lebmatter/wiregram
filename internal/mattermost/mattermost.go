@@ -1508,6 +1508,21 @@ func (mb *MmBackend) openDM(ctx context.Context, user mmUser) (backend.ChatEntry
 	}, nil
 }
 
+// SelfChat opens the DM channel whose both members are the user.
+func (mb *MmBackend) SelfChat(ctx context.Context) (backend.ChatEntry, error) {
+	var ch mmChannel
+	if err := mb.apiJSON(ctx, "POST", "/channels/direct", []string{mb.UserID, mb.UserID}, &ch); err != nil {
+		return backend.ChatEntry{}, fmt.Errorf("open your own chat: %w", err)
+	}
+	return backend.ChatEntry{
+		ID:     backend.ChatID{Backend: "mattermost", Id: ch.ID},
+		Title:  "You",
+		IsDM:   true,
+		IsSelf: true,
+		Raw:    ch,
+	}, nil
+}
+
 func (mb *MmBackend) RecentEmoji() []string { return mb.recentEmoji }
 
 func (mb *MmBackend) RememberEmoji(value string) {

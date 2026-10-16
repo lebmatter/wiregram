@@ -106,6 +106,12 @@ type tuiRetryDialogs struct{}
 type agentRuntimeChanged struct{}
 type agentApproveDone struct{ err error }
 
+// selfChatOpened answers the sidebar's You row.
+type selfChatOpened struct {
+	entry backend.ChatEntry
+	err   error
+}
+
 func listenAgents(ctx context.Context, mgr *account.AccountManager) tea.Cmd {
 	return func() tea.Msg {
 		select {
@@ -936,7 +942,8 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) isListMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tuiDialogsLoaded, tuiRetryDialogs, chatListChoice, chatListRefresh,
-		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListAccounts, chatListSettings, chatListSwitch,
+		chatListArchiveToggle, chatListSearch, chatListUnread, chatListMentions, chatListSelf, selfChatOpened,
+		chatListAccounts, chatListSettings, chatListSwitch,
 		chatListDeleteDone, chatListAgent, chatListInbox, chatListLabels, chatListCompose:
 		return true
 	}
@@ -1128,6 +1135,24 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		m.unreadOpen = true
 		m.focus = focusChat
 		return m.sized(), cmd
+
+	case chatListSelf:
+		sc, ok := m.b.(backend.SelfChatter)
+		if !ok {
+			return m, nil
+		}
+		ctx := m.ctx
+		return m, func() tea.Msg {
+			entry, err := sc.SelfChat(ctx)
+			return selfChatOpened{entry, err}
+		}
+
+	case selfChatOpened:
+		if msg.err != nil {
+			m.notice = textfmt.CleanError(msg.err)
+			return m, nil
+		}
+		return m.openChat(msg.entry)
 
 	case chatListAccounts:
 		m = m.closeChat()
