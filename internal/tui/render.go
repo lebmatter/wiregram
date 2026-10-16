@@ -179,6 +179,32 @@ func renderBox(title string, body []string, width, height int, border color.Colo
 	return b.String()
 }
 
+// renderTitledBox is renderBox with styled text set into the top edge: left
+// after the corner, right before the other.
+func renderTitledBox(left, right string, body []string, width, height int,
+	border color.Color) string {
+	box := strings.SplitN(renderBox("", body, width, height, border), "\n", 2)
+	if len(box) < 2 {
+		return box[0]
+	}
+	bs := lipgloss.NewStyle().Foreground(border)
+	if right != "" {
+		right = " " + right + " "
+	}
+	left = " " + textfmt.ClipLine(left, max(1, width-8-textfmt.DisplayWidth(right))) + "\x1b[0m "
+	fill := max(0, width-4-textfmt.DisplayWidth(left)-textfmt.DisplayWidth(right))
+	return bs.Render("╭─") + left + bs.Render(strings.Repeat("─", fill)) + right +
+		bs.Render("─╮") + "\n" + box[1]
+}
+
+// chatName is the chat as titles show it: # or @, then its name.
+func chatName(e backend.ChatEntry) string {
+	if e.IsDM || e.IsSelf {
+		return "@" + sidebarTitle(e)
+	}
+	return "#" + sidebarTitle(e)
+}
+
 // fadeUnder draws box over bg with its top-left corner at column x and row
 // y, with bg reduced to plain dim text so the box is all that stands out.
 func (s *styles) fadeUnder(bg, box string, x, y int) string {
@@ -315,53 +341,70 @@ func bottomLines(lines []string, height int) []string {
 	return append(out, lines...)
 }
 
+// quote is a reply's pointer to the message it answers: "↳ sender  excerpt".
 func (s *styles) quote(orig *backend.Message) string {
-	bar := styleQuoteBar.Render("┃ ")
+	arrow := s.accent.Render("↳ ")
 	if orig == nil {
-		return bar + s.subtle.Render("earlier message")
+		return arrow + s.dim.Render("earlier message")
 	}
-	return bar + s.subtle.Render(backend.GenericMessageSender(*orig)+": "+
-		textfmt.ShortExcerpt(backend.GenericMessageText(*orig)))
+	return arrow + s.subtle.Render(textfmt.Plain(backend.GenericMessageSender(*orig))) + "  " +
+		s.dim.Render(textfmt.ShortExcerpt(backend.GenericMessageText(*orig)))
 }
+
+// timeWidth is "HH:MM" and the space after it.
+const timeWidth = 6
 
 // textIndent is the column message text starts at: after the 2-cell gutter,
-// the timestamp and, with the <nick> style outside channels, the nick column.
-// With the nick: style only a message's first line follows its nick.
+// the time and, with the column nick style outside channels, the nick column.
+// With the inline style only a message's first line follows its nick.
 func (s *styles) textIndent(entry backend.ChatEntry) int {
 	if kind, _ := kindOf(entry); kind == kindChannel || !s.nickColumn {
-		return 2 + 8
+		return 2 + timeWidth
 	}
-	return 2 + 8 + textfmt.NickWidth + 3
+	return 2 + timeWidth + textfmt.NickWidth + 2
 }
 
-// messageHeader is "[HH:MM] <nick>", or just the time in channels, where
-// every post comes from the channel itself. The time is dim unless the
-// message is unread, when the whole block is bold instead.
-func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry, unread bool) string {
-	stamp := msg.Timestamp.Format("[15:04]")
+// messageHeader is "HH:MM name:", or the time and a fixed nick column with
+// the column style, or just the time in channels, where every post comes
+// from the channel itself. cont leaves the name out of a message following
+// one from the same sender. The time is dim unless the message is unread,
+// when the whole block is bold instead, or selected, when it is the accent.
+func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry,
+	unread, selected, cont bool) string {
+	stamp := msg.Timestamp.Format("15:04")
 	if msg.Timestamp.IsZero() {
-		stamp = "[--:--]" // a WhatsApp quote carries no time
+		stamp = "--:--" // a WhatsApp quote carries no time
 	}
-	if !unread {
+	switch {
+	case selected:
+		stamp = s.accent.Render(stamp)
+	case !unread:
 		stamp = s.dim.Render(stamp)
 	}
 	if kind, _ := kindOf(entry); kind == kindChannel {
 		return stamp
 	}
-	if !s.nickColumn {
-		if msg.Outgoing && msg.Agent != "" {
-			return stamp + " " + s.agent.Render(agentIcon+" "+textfmt.Plain(msg.Agent)+":")
+	name, color := textfmt.Plain(backend.GenericMessageSender(msg)), backend.MessageNickColor(msg, entry)
+	agent := msg.Outgoing && msg.Agent != ""
+	if agent {
+		name = agentIcon + " " + textfmt.Plain(msg.Agent)
+	}
+	render := func(text string) string {
+		if agent {
+			return s.agent.Render(text)
 		}
-		return stamp + " " + backend.MessageNickColor(msg, entry) +
-			backend.GenericMessageSender(msg) + ":\x1b[0m"
+		return color + text + "\x1b[0m"
 	}
-	if msg.Outgoing && msg.Agent != "" {
-		return stamp + " " + s.agent.Render("<"+textfmt.FormatNick(agentIcon+" "+
-			textfmt.Plain(msg.Agent))+">")
+	if !s.nickColumn {
+		if cont {
+			return stamp
+		}
+		return stamp + " " + render(name+":")
 	}
-	nick, _ := strings.CutPrefix(backend.GenericMessagePrefix(msg, entry),
-		msg.Timestamp.Format("[15:04]"))
-	return stamp + nick
+	if cont {
+		return stamp + strings.Repeat(" ", 1+textfmt.NickWidth+1)
+	}
+	return stamp + " " + render(textfmt.FormatNick(name)) + " "
 }
 
 // shadeLine paints line on the background bg (an SGR), padded to width. The

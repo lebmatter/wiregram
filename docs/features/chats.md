@@ -24,29 +24,34 @@ Email has folders of conversations instead of chats; see [Email](/features/email
 Each message is one block:
 
 ```
-  [14:02] alice: are you coming tonight?
-* [14:03] you: ┃ alice: are you coming tonight?
-          on my way
-          👍 2 · ✓✓
+  14:02 alice: are you coming tonight?
+* 14:03 you: ↳ alice  are you coming tonight?
+        on my way
+         👍 2   ↳ 1 reply · last 14:05  · ✓✓
 ```
 
-- A 2-cell gutter, with `*` when the message was edited while you watched.
-- `[HH:MM]` and the sender; your own messages are `you`. Channels drop the sender.
+- A 2-cell gutter, with `*` when the message was edited while you watched. The selected
+  message has an accent bar there, its time in the accent and its block tinted.
+- `HH:MM` and the sender; your own messages are `you`. Channels drop the sender, and a
+  message soon after another from the same sender leaves the name out.
 - The nick style, in **Settings → Chat…**, sets how the sender is drawn. `nick:` (the
   default) starts the text right after the name and wraps it under the time. `<nick>`
   pads every name to one column so all text lines up:
 
   ```
-    [14:02] <alice       > are you coming tonight?
+    14:02 alice         are you coming tonight?
   ```
 - The text, keeping its line breaks. Bold, italic, strikethrough, code and links are
-  drawn from each network's own formatting; links are underlined.
-- Under the text: an image or link preview card, then a dim meta row with reactions
-  (your own count in copper), the reply count, pinned, and `✓`/`✓✓` for sent and read.
-  Clicking a reaction adds yours or takes it back; the reaction blinks as it changes.
+  drawn from each network's own formatting; links are underlined, `@names` coloured,
+  emoji codes like `:fire:` dim, and lines starting `> ` are quotes behind a dim bar.
+- Under the text: an image or link preview card, then a meta row: reactions as chips
+  (your own count in the accent), a `↳ N replies · last HH:MM` chip, pinned, and
+  `✓`/`✓✓` for sent and read. Clicking a reaction adds yours or takes it back; the
+  reaction blinks as it changes. Clicking the replies chip opens the thread.
 
-Private chats are named by the person's first name, else username. Groups show their
-title and channels show `Channel: TITLE`.
+Private chats are named by the person's first name, else username, groups and channels
+by their title. Titles put `@` before a person and `#` before a group or channel, with
+the team as a tag on Mattermost.
 
 A message that mentions you (`@you`, or a chat-wide `@all`, `@channel`, `@here` or
 `@room`) is tinted. A plain reply to you is not a mention.
@@ -56,16 +61,22 @@ before a caption. See [Media](/features/media).
 
 ## Replies and quotes
 
-A reply puts `┃ sender: excerpt` on its header row. If the original is older than the
-loaded history, Wiregram fetches it, or reads `earlier message` where it can't.
+A reply puts a dim `↳ sender  excerpt` pointer on its header row, with its text below; a
+run of replies to the same message shows the pointer once. If the original is older
+than the loaded history, Wiregram fetches it, or reads `earlier message` where it can't.
 **Go to quote** in the message's actions jumps to the original.
 
 ## Threads
 
 Replies form threads. In wide terminals, selecting a threaded message opens the thread
-pane beside the chat; <kbd>Enter</kbd> there replies in the thread and <kbd>Esc</kbd>
-closes it. On Mattermost, where threads live on the server, opening one fetches the
-whole thread once.
+pane beside the chat, titled `thread · #chat`; <kbd>Alt+T</kbd>, a click on its replies
+chip or **Thread** in its actions open it too (in the chat's place on narrow terminals).
+The open thread's replies chip is solid. The pane shows that first message with its day and
+time, then the reply count and the replies. <kbd>Enter</kbd> there replies in the thread,
+<kbd>↑</kbd>/<kbd>↓</kbd> still move through the chat, and <kbd>Esc</kbd> closes it. On
+Mattermost, where threads live on the server, opening one fetches the whole thread once.
+
+The footer's badge reads `CHAT`, or `THREAD` while the thread pane is open.
 
 ## Profiles
 
@@ -102,7 +113,8 @@ Below come only the actions the message allows:
 
 ## Composing
 
-Type and press <kbd>Enter</kbd> to send. <kbd>Esc</kbd> cancels a reply.
+Type and press <kbd>Enter</kbd> to send. The input, in the chat and the thread pane,
+wraps long text and grows with it up to eight rows, then scrolls. <kbd>Esc</kbd> cancels a reply.
 
 - **Upload** with <kbd>Ctrl+U</kbd>: browse folders, or press <kbd>/</kbd> or
   <kbd>~</kbd> to type a path (<kbd>Tab</kbd> completes). Add an optional caption and

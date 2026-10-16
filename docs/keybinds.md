@@ -84,6 +84,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Ctrl+U</kbd> | Upload file (browse, or <kbd>/</kbd> to type a path) |
 | <kbd>Ctrl+F</kbd> | Search messages (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> cancels) |
 | <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
+| <kbd>Alt+T</kbd> | Open the selected message's thread beside the chat |
 | <kbd>Alt+H</kbd> | Toggle private mode (hide history) |
 | <kbd>Alt+L</kbd> | Lock the chat (also locks when the terminal loses focus) |
 | <kbd>Alt+D</kbd> | Delete chat (you only) |
@@ -135,7 +136,8 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 
 ## Thread
 
-The thread pane opens by itself on a threaded message in wide terminals.
+The thread pane opens by itself on a threaded message in wide terminals, and with
+<kbd>Alt+T</kbd>, a click on a message's replies chip, or **Thread** in its actions.
 
 | Key | Action |
 |-----|--------|

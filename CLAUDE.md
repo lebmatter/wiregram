@@ -160,26 +160,37 @@ These are project constraints, not suggestions:
 - The root `tuiModel` owns the screen's only bus subscription and routes
   events for the open chat into it, so the list and chat never race.
 - `>` marks the selected row in lists (the sidebar uses an accent `▎`). The selected message in a chat is
-  tinted with `colorSelBg` across its whole block (`shadeLine`); selection
-  never moves a column.
+  tinted with `colorSelBg` across its whole block (`shadeLine`), with an accent `▎` in its
+  gutter (`gutterBar`) and its time in the accent; selection never moves a column.
 - Every backend's messages share one block (`messageBlock`,
   `internal/tui/chatlines.go`), in the chat and the thread pane: a 2-cell
-  gutter (`*` when edited live), `[HH:MM] sender: text` with later lines under the time,
+  gutter (`*` when edited live), `HH:MM sender: text` with later lines under the time,
   or with the `<nick>` style (Settings' Chat…, `nick_style`, `styles.nickColumn`)
-  `[HH:MM] <sender>` in a fixed-width nick column, then the text; the user is always
-  `you`. Channels drop the nick. A reply puts `┃ sender: excerpt` on the header row with its text
-  below; an original older than the loaded history is fetched by ID
+  `HH:MM sender` in a fixed-width nick column, then the text; the user is always
+  `you`. Channels drop the nick, and a message soon after one from the same sender leaves
+  it out (`continues`). A reply puts a dim `↳ sender  excerpt` pointer on the header row with
+  its text below, once per run of replies to the same message; an original older than the loaded history is fetched by ID
   (`backend.QuoteFetcher`) or, on WhatsApp, taken from the copy the reply
-  carries (`Message.Quote`), else it reads `earlier message`. Under the text come any image or preview card, then a dim meta row:
-  reactions (your own count in copper) · reply count · pinned · `✓`/`✓✓`.
-  Media `[tags]` are dim and links are underlined.
+  carries (`Message.Quote`), else it reads `earlier message`. Under the text come any image or preview card, then a meta row:
+  reaction chips (your own count in the accent), a `↳ N replies · last HH:MM` chip (solid
+  while its thread is open; a click opens it) · pinned · `✓`/`✓✓`.
+  Media `[tags]` are dim, links are underlined, `@names` coloured, emoji codes dim and
+  `> ` lines quoted (`styles.inline`). The unread divider counts the unread messages.
   Formatting reaches the TUI as `Message.Spans` (bold, italic, strike, code,
   link), which each backend fills from its own markup: Telegram entities,
   `backend.Markdown` for Mattermost and formatted Matrix bodies,
   `backend.WhatsApp` for WhatsApp. `Message.Source` keeps the text as written for editing. Threads
-  (`internal/tui/thread.go`) are built from loaded reply chains; opening one
-  fetches the whole thread once from backends that keep threads on the server
-  (`backend.ThreadFetcher`, Mattermost).
+  (`internal/tui/thread.go`) are built from loaded reply chains; selecting a threaded
+  message opens its thread (`followThread`), as do Alt+T, the replies chip and the
+  actions' Thread, beside the chat at 5/9 of its width, titled `thread · #chat` with
+  `esc close`. The pane starts at
+  the top with the root (`blockOpts.root`: day, time and sender on a line, the text from
+  the left edge), then the reply count rule and the replies. Opening one fetches the whole
+  thread once from backends that keep threads on the server (`backend.ThreadFetcher`,
+  Mattermost). Chat and thread titles and composers use `renderTitledBox`/`chatName`
+  (`#name` or `@name`, the team tag, `message #name` over a `❯` prompt; both inputs are
+  textareas that wrap and grow to `composerMaxRows`, `newComposerArea`), and the footer
+  leads with a `CHAT` or `THREAD` badge.
 - Search users (`/`), the forward picker and the mention picker are one modal
   (`userSearchModel`, `internal/tui/search.go`) drawn over the screen with
   `fadeUnder`: search users centred on the body, forward and mention on the chat.
@@ -198,7 +209,8 @@ These are project constraints, not suggestions:
   it centred over the chat with everything behind it reduced to plain dim
   text (`fadeUnder`); the footer shows the modal's keys.
 - Private chats show the first name, else username, else `Deleted Account`.
-  Groups show the title; channels show `Channel: TITLE`.
+  Groups show the title; channels show `Channel: TITLE`, which the sidebar, cards and
+  pane titles show as `#TITLE` (`chatName`, `sidebarTitle`).
 - Non-text messages render as bracket tags (`[photo] 1280x720, 245 KB`), with
   ` — ` before a caption. See `internal/telegram/media.go` for the full set.
 - A message with a link preview gets a small rounded card (site, title, two

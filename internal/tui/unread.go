@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -434,9 +433,6 @@ func (m unreadModel) cardLines(i, width int) []string {
 	}
 	return lines
 }
-
-// shortcode is an emoji code such as :fire:, with a letter so times are not.
-var shortcode = regexp.MustCompile(`:[a-z0-9_+-]*[a-z][a-z0-9_+-]*:`)
 
 // excerpt is the message on one line, width cells at most: its media kind as
 // a tag, emoji codes dim and, in a message mentioning the user, @names in the

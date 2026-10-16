@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -63,7 +64,7 @@ type chatViewModel struct {
 	firstUnread      string          // ID of the oldest message unread on open
 	unread           map[string]bool // IDs of the messages unread on open
 
-	input textinput.Model
+	input textarea.Model
 	sends chan chatOutgoing
 	queue []chatOutgoing
 
@@ -95,7 +96,7 @@ type chatViewModel struct {
 	spin     spinner.Model
 
 	threadRoot  string
-	threadInput textinput.Model
+	threadInput textarea.Model
 	// threadScroll is how many lines the thread pane is scrolled up from its end.
 	threadScroll int
 
@@ -258,10 +259,7 @@ type chatSearchDebounce struct{}
 func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry backend.ChatEntry, histories *[]string, kitty *kittyImages) chatViewModel {
 	ctx, cancel := context.WithCancel(ctx)
 	w, h := termSize()
-	ti := textinput.New()
-	ti.Prompt = ""
-	ti.Placeholder = "Message " + textfmt.Plain(entry.Title) + "…"
-	ti.Focus()
+	ti := newComposerArea(st, "message "+chatName(entry)+"…")
 	caps := b.Capabilities()
 	return chatViewModel{
 		st:              st,
@@ -279,6 +277,7 @@ func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry 
 		images:          make(map[string]*chatImage),
 		kitty:           kitty,
 		input:           ti,
+		threadInput:     newComposerArea(st, "reply…"),
 		sends:           make(chan chatOutgoing),
 		spin:            spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(st.accent)),
 		focused:         true,
@@ -1001,6 +1000,10 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			return m, nil
 		}
 		m = m.askDeleteChat(true)
+	case "alt+t", "alt+T":
+		if sel, ok := m.selectedMsg(); ok && m.inThread(sel) && !m.privateMode {
+			return m.openThread(sel)
+		}
 	case "alt+h", "alt+H":
 		m.privateMode = !m.privateMode
 		if m.privateMode {
@@ -1021,6 +1024,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			}
 		}
 		var cmd tea.Cmd
+		m.fitInputs()
 		m.input, cmd = m.input.Update(msg)
 		return m, tea.Batch(typing, cmd)
 	}
@@ -1035,12 +1039,14 @@ func (m chatViewModel) mentionAllowed() bool {
 		return false
 	}
 	in := m.activeInput()
-	before := []rune(in.Value())[:in.Position()]
+	lines := strings.Split(in.Value(), "\n")
+	line := []rune(lines[min(in.Line(), len(lines)-1)])
+	before := line[:min(in.Column(), len(line))]
 	return len(before) == 0 || unicode.IsSpace(before[len(before)-1])
 }
 
 // activeInput is the input being typed in: the thread's while it is open.
-func (m *chatViewModel) activeInput() *textinput.Model {
+func (m *chatViewModel) activeInput() *textarea.Model {
 	if m.subMode == chatSubThread {
 		return &m.threadInput
 	}
@@ -1049,11 +1055,7 @@ func (m *chatViewModel) activeInput() *textinput.Model {
 
 // insertMention puts text into the composer at the cursor.
 func (m chatViewModel) insertMention(text string) chatViewModel {
-	in := m.activeInput()
-	value := []rune(in.Value())
-	pos := in.Position()
-	in.SetValue(string(value[:pos]) + text + string(value[pos:]))
-	in.SetCursor(pos + len([]rune(text)))
+	m.activeInput().InsertString(text)
 	return m
 }
 
@@ -1244,7 +1246,7 @@ func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 	case "esc", "ctrl+c":
 		m.subMode = chatSubNone
 		m.searchResults = nil
-		return m, nil
+		return m.followThread()
 	case "up":
 		if m.searchSelected > 0 {
 			m.searchSelected--
@@ -1265,7 +1267,7 @@ func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		}
 		m.subMode = chatSubNone
 		m.searchResults = nil
-		return m.followThread()
+		return m, nil
 	default:
 		return m.searchEdited(msg)
 	}
@@ -1295,6 +1297,7 @@ func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.subMode {
 	case chatSubNone:
+		m.fitInputs()
 		m.input, cmd = m.input.Update(msg)
 	case chatSubMenu:
 		m.menu, cmd, _, _ = m.menu.edited(msg)
@@ -1303,6 +1306,7 @@ func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	case chatSubEdit:
 		m.editInput, cmd = m.editInput.Update(msg)
 	case chatSubThread:
+		m.fitInputs()
 		m.threadInput, cmd = m.threadInput.Update(msg)
 	case chatSubUpload:
 		if m.upload.step == uploadTyping {
@@ -1518,6 +1522,9 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		}
 		m.selected = i
 		sel = m.messages[i]
+		if hit.kind == rowMeta && !msg.right && repliesAt(sel, m.threadInfo(sel.ID), hit.col) {
+			return m.openThread(sel)
+		}
 		m, follow = m.followThread()
 	}
 	if hit.kind&rowHeader != 0 && !msg.right && m.senderAt(sel, hit.col) {
@@ -1551,10 +1558,16 @@ func (m chatViewModel) senderAt(sel backend.Message, col int) bool {
 	if sel.Outgoing || sel.SenderID == "" {
 		return false
 	}
-	header := strings.TrimRight(ansi.Strip(m.st.messageHeader(sel, m.entry, false)), " ")
-	// The gutter and "[HH:MM] " come before the name.
+	for i, msg := range m.messages {
+		if msg.ID == sel.ID && continues(m.messages, i) {
+			return false // the name is left out
+		}
+	}
+	header := strings.TrimRight(ansi.Strip(m.st.messageHeader(sel, m.entry, false, false,
+		false)), " :")
+	// The gutter and "HH:MM " come before the name.
 	x := col + m.st.textIndent(m.entry)
-	return x >= 2+8 && x < 2+textfmt.DisplayWidth(header)
+	return x >= 2+timeWidth && x < 2+textfmt.DisplayWidth(header)
 }
 
 // openAttachment downloads sel's attachment and opens it in the desktop's
@@ -1702,7 +1715,7 @@ func (m chatViewModel) chatOwners(width int) ([]int, []rowKind) {
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
 	_, owners, kinds := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
-		m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, m.flashing(),
+		m.changedMessages, m.images, m.quotes, m.openRoot(), m.firstUnread, m.unread, m.flashing(),
 		inner, height)
 	return screenRows(owners, height, -1), screenRows(kinds, height, rowText)
 }
@@ -1768,15 +1781,19 @@ func (m chatViewModel) View() string {
 }
 
 func (m chatViewModel) chatBox(width, height int, focused bool) string {
-	title := textfmt.Plain(m.entry.Title)
+	name := chatName(m.entry)
+	title := m.st.dim.Render(name[:1]) + styleTitle.Render(name[1:])
+	if m.entry.Section != "" {
+		title += " " + m.st.tag.Render(" "+strings.ToLower(m.entry.Section)+" ")
+	}
 	if m.bot != nil {
-		title = agentIcon + " @" + m.bot.handle + " · " + title
+		title = m.st.agent.Render(agentIcon+" @"+m.bot.handle) + m.st.dim.Render(" · ") + title
 	}
 	if m.typing {
-		title += " · typing…"
+		title += m.st.subtle.Render(" · typing…")
 	}
 	if m.privateMode {
-		title += " · private"
+		title += m.st.subtle.Render(" · private")
 	}
 	inner, bodyHeight := width-4, height-2
 	var body []string
@@ -1794,7 +1811,7 @@ func (m chatViewModel) chatBox(width, height int, focused bool) string {
 		composer := m.composer(inner, focused)
 		body = append(m.messageLines(inner, bodyHeight-len(composer)), composer...)
 	}
-	return renderBox(title, body, width, height, m.st.border(focused))
+	return renderTitledBox(title, "", body, width, height, m.st.border(focused))
 }
 
 // messageLines is the scrolled message log plus any uploads in flight.
@@ -1803,16 +1820,17 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, nil, false, "", nil, reactionKey{}, width, height)
+		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, "", "", nil, reactionKey{}, width, height)
 	} else {
-		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, nil, false, m.firstUnread, m.unread, m.flashing(), width, height)
+		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, m.openRoot(), m.firstUnread, m.unread, m.flashing(), width, height)
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, m.st.subtle.Render("No messages yet. Say hi!"))
 	}
 	lines = bottomLines(lines, max(0, height))
 	for _, u := range m.uploads {
-		prefix := "  " + m.st.messageHeader(backend.Message{Outgoing: true, Timestamp: u.started}, m.entry, false) + " "
+		prefix := "  " + m.st.messageHeader(backend.Message{Outgoing: true, Timestamp: u.started},
+			m.entry, false, false, false) + " "
 		lines = append(lines, textfmt.ClipLine(prefix+m.spin.View()+
 			m.st.subtle.Render(fmt.Sprintf("uploading %s (%s)…", filepath.Base(u.path), textfmt.FormatSize(u.size))), width))
 	}
@@ -1826,7 +1844,7 @@ func (m chatViewModel) composer(width int, focused bool) []string {
 	if m.subMode == chatSubEdit {
 		return m.st.composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
 	}
-	box := m.st.composerBox("", m.replyBar(), "› ", m.input, width, border)
+	box := m.st.areaBox("message "+chatName(m.entry), m.replyBar(), m.input, width, border)
 	if m.suggestion != "" && m.subMode == chatSubNone {
 		box = append(m.suggestionCard(width), box...)
 	}
@@ -1898,6 +1916,61 @@ func (s *styles) composerBox(title string, above []string, prompt string, input 
 	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
 }
 
+// composerMaxRows is the most rows a message input grows to before it scrolls.
+const composerMaxRows = 8
+
+// newComposerArea is a message input that wraps its text and grows with it,
+// up to composerMaxRows. Enter is the chat's, so it never inserts a newline.
+func newComposerArea(st *styles, placeholder string) textarea.Model {
+	ta := textarea.New()
+	ta.Prompt = ""
+	ta.ShowLineNumbers = false
+	ta.Placeholder = placeholder
+	ta.DynamicHeight = true
+	ta.MinHeight = 1
+	ta.MaxHeight = composerMaxRows
+	ta.EndOfBufferCharacter = ' '
+	ta.KeyMap.InsertNewline.SetEnabled(false)
+	s := textarea.DefaultStyles(true)
+	plain := lipgloss.NewStyle()
+	s.Focused.CursorLine, s.Focused.EndOfBuffer, s.Focused.Text = plain, plain, plain
+	s.Focused.Placeholder = st.dim
+	s.Blurred = s.Focused
+	ta.SetStyles(s)
+	ta.Focus()
+	return ta
+}
+
+// fitInputs gives the inputs the width their composers draw them at, so
+// their height and scrolling match what is on screen.
+func (m *chatViewModel) fitInputs() {
+	const frame = 4 + 4 + 2 // the pane's and the composer's edges and padding, the prompt
+	chatWidth, split := m.threadSplit()
+	m.input.SetWidth(max(1, chatWidth-frame))
+	threadWidth := m.width
+	if split {
+		threadWidth -= chatWidth
+	}
+	m.threadInput.SetWidth(max(1, threadWidth-frame))
+}
+
+// areaBox is composerBox for a growing input: the prompt on its first row,
+// later rows under the text.
+func (s *styles) areaBox(title string, above []string, area textarea.Model, width int,
+	border color.Color) []string {
+	const prompt = "❯ "
+	area.SetWidth(max(1, width-4-textfmt.DisplayWidth(prompt)))
+	lines := above
+	for i, row := range strings.Split(area.View(), "\n") {
+		lead := "  "
+		if i == 0 {
+			lead = s.accent.Render(prompt)
+		}
+		lines = append(lines, lead+row)
+	}
+	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
+}
+
 // centerLines places text in the middle of a width×height area.
 func centerLines(width, height int, text string) []string {
 	block := lipgloss.Place(width, max(1, height), lipgloss.Center, lipgloss.Center, text)
@@ -1936,6 +2009,9 @@ func (m chatViewModel) helpKeys() []helpKey {
 		return m.confirm.helpKeys()
 	}
 	keys := []helpKey{{"↑↓", "messages"}, {"enter", "send · actions"}}
+	if sel, ok := m.selectedMsg(); ok && m.inThread(sel) {
+		keys = append(keys, helpKey{"M-t", "open thread"})
+	}
 	if m.suggestion != "" {
 		keys = []helpKey{{"^Y", "approve"}, {"^E", "edit"}, {"^X", "discard"}, keys[0]}
 	}

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 
 	"wiregram/internal/backend"
@@ -133,13 +132,12 @@ func (m chatViewModel) threadSplit() (int, bool) {
 	if m.subMode != chatSubThread || m.width < threadPaneMinWidth {
 		return m.width, false
 	}
-	return m.width * 3 / 5, true
+	return m.width * 5 / 9, true
 }
 
 // followThread opens the selected message's thread beside the chat while
 // browsing, and closes it once the selection leaves every thread.
 func (m chatViewModel) followThread() (chatViewModel, tea.Cmd) {
-	// Most mails are replies; their threads open only on Alt+T.
 	if m.width < threadPaneMinWidth || m.privateMode {
 		return m, nil
 	}
@@ -160,14 +158,39 @@ func (m chatViewModel) followThread() (chatViewModel, tea.Cmd) {
 	return m.openThread(sel)
 }
 
+// openRoot is the root of the thread open beside the chat, or "".
+func (m chatViewModel) openRoot() string {
+	if m.subMode != chatSubThread {
+		return ""
+	}
+	return m.threadRoot
+}
+
+// threadInfo is the replies chip of the loaded message id.
+func (m chatViewModel) threadInfo(id string) threadInfo {
+	t := threadInfo{open: id == m.openRoot()}
+	for _, msg := range m.messages {
+		if msg.ReplyToID == id {
+			t.count++
+			if msg.Timestamp.After(t.last) {
+				t.last = msg.Timestamp
+			}
+		}
+	}
+	return t
+}
+
+// inThread reports whether msg belongs to a thread of two or more messages.
+func (m chatViewModel) inThread(msg backend.Message) bool {
+	return len(m.threadMessages(m.threadRootOf(msg).ID)) > 1
+}
+
 func (m chatViewModel) openThread(sel backend.Message) (chatViewModel, tea.Cmd) {
 	root := m.threadRootOf(sel)
 	m.threadRoot = root.ID
 	m.subMode = chatSubThread
 	m.threadScroll = 0
-	m.threadInput = textinput.New()
-	m.threadInput.Prompt = ""
-	m.threadInput.Placeholder = "Reply in thread…"
+	m.threadInput = newComposerArea(m.st, "reply…")
 	cmds := []tea.Cmd{m.threadInput.Focus(), m.fetchThread(root.ID)}
 	if m.threadLoading() {
 		cmds = append(cmds, m.spin.Tick)
@@ -206,6 +229,7 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 		return m, func() tea.Msg { return chatMentionReq{} }
 	}
 	var cmd tea.Cmd
+	m.fitInputs()
 	m.threadInput, cmd = m.threadInput.Update(msg)
 	return m, cmd
 }
@@ -215,17 +239,20 @@ func (m chatViewModel) threadBox(width, height int, focused bool) string {
 	composer := m.threadComposer(inner, focused)
 	rows := height - 2 - len(composer)
 	lines, _, _ := m.threadLines(inner, rows)
-	body := append(screenRows(scrolled(lines, rows, m.threadScroll), rows, ""), composer...)
-	return renderBox("Thread", body, width, height, m.st.border(focused))
+	body := append(topRows(scrolled(lines, rows, m.threadScroll), rows, ""), composer...)
+	left := styleTitle.Render("thread") + m.st.dim.Render(" · ") + m.st.subtle.Render(chatName(m.entry))
+	right := m.st.accent.Render("esc") + m.st.subtle.Render(" close")
+	return renderTitledBox(left, right, body, width, height, m.st.border(focused))
 }
 
 func (m chatViewModel) threadComposer(inner int, focused bool) []string {
-	return m.st.composerBox("", nil, "› ", m.threadInput, inner, m.st.border(focused))
+	return m.st.areaBox("reply in thread", nil, m.threadInput, inner, m.st.border(focused))
 }
 
 // threadLines lays out the thread inner columns wide and returns, for each
 // line, the index into threadMessages it belongs to (-1 for none) and what
-// it draws.
+// it draws. The root comes first with its own header line, then a rule with
+// the reply count, then the replies in the chat's columns.
 func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []rowKind) {
 	thread := m.threadMessages(m.threadRoot)
 	var lines []string
@@ -241,23 +268,19 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []rowKin
 	if len(thread) == 0 {
 		add(-1, m.st.subtle.Render("The thread's first message is no longer loaded."))
 	}
-	replies := make(map[string]int)
-	for _, msg := range thread {
-		replies[msg.ReplyToID]++
-	}
-	// The root's count is already on the divider below it.
-	delete(replies, m.threadRoot)
 	now := time.Now()
 	for i, msg := range thread {
 		// The first reply's day goes on the reply count's rule instead.
-		if i != 1 && startsDay(thread, i) {
+		if i > 1 && startsDay(thread, i) {
 			add(-1, m.st.dividerLine(dayLabel(msg.Timestamp, now), m.st.subtle, inner))
 		}
-		// The thread is the chain itself, so replies are drawn without a quote.
+		// The thread is the chain itself, so replies are drawn without a pointer.
 		msg.ReplyToID = ""
-		block, blockKinds := m.st.messageBlock(m.b, msg, m.entry, nil, replies[msg.ID],
-			m.changedMessages[msg.ID], m.unread[msg.ID], m.images[msg.ID],
-			m.flashing().on(msg.ID), inner, imageRows(height))
+		block, blockKinds := m.st.messageBlock(m.b, msg, m.entry, blockOpts{
+			edited: m.changedMessages[msg.ID], unread: m.unread[msg.ID],
+			cont: i > 1 && continues(thread, i), img: m.images[msg.ID],
+			flash: m.flashing().on(msg.ID), root: i == 0,
+		}, inner, imageRows(height))
 		if bg := m.st.blockShade(msg, false); bg != "" {
 			for j := range block {
 				block[j] = shadeLine(block[j], bg, inner)
@@ -267,12 +290,13 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []rowKin
 		copy(kinds[len(kinds)-len(block):], blockKinds)
 		if i == 0 {
 			n := len(thread) - 1
-			label := fmt.Sprintf(" %d %s ", n, plural(n, "reply", "replies"))
+			label := fmt.Sprintf("%d %s ", n, plural(n, "reply", "replies"))
 			if n > 0 && startsDay(thread, 1) {
 				label += "· " + dayLabel(thread[1].Timestamp, now) + " "
 			}
-			rest := max(0, inner-2-textfmt.DisplayWidth(label))
-			add(-1, m.st.dim.Render("──"+label+strings.Repeat("─", rest)))
+			add(-1, m.st.dim.Render(strings.Repeat("─", inner)),
+				m.st.subtle.Render(label)+m.st.dim.Render(strings.Repeat("─",
+					max(0, inner-textfmt.DisplayWidth(label)))))
 			if m.threadLoading() {
 				add(-1, "", centerLines(inner, 1, m.spin.View()+m.st.subtle.Render("loading thread…"))[0], "")
 			}
@@ -288,8 +312,22 @@ func (m chatViewModel) threadOwners(width int) ([]int, []rowKind) {
 	inner := width - 4
 	height := m.height - 2 - len(m.threadComposer(inner, false))
 	_, owners, kinds := m.threadLines(inner, height)
-	return screenRows(scrolled(owners, height, m.threadScroll), height, -1),
-		screenRows(scrolled(kinds, height, m.threadScroll), height, rowText)
+	return topRows(scrolled(owners, height, m.threadScroll), height, -1),
+		topRows(scrolled(kinds, height, m.threadScroll), height, rowText)
+}
+
+// topRows keeps the last height rows, padding at the bottom so a short
+// thread starts at the top of its pane.
+func topRows[T any](rows []T, height int, blank T) []T {
+	height = max(0, height)
+	if len(rows) > height {
+		return rows[len(rows)-height:]
+	}
+	out := append(make([]T, 0, height), rows...)
+	for len(out) < height {
+		out = append(out, blank)
+	}
+	return out
 }
 
 // scrolled drops the rows the thread pane is scrolled past, so the last of
@@ -338,6 +376,10 @@ func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, msgHit, bool)
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
 		return backend.Message{}, msgHit{}, false
 	}
+	indent := m.st.textIndent(m.entry)
+	if owners[row] == 0 {
+		indent = 2 // the root's text starts at the left edge
+	}
 	return m.threadMessages(m.threadRoot)[owners[row]],
-		msgHit{kinds[row], x - left - 2 - m.st.textIndent(m.entry)}, true
+		msgHit{kinds[row], x - left - 2 - indent}, true
 }

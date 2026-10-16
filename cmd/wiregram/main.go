@@ -199,6 +199,7 @@ Keyboard shortcuts:
     @                 Mention a member (group chats, at the start of a word):
                       channel members first on Mattermost; Telegram members
                       with a username; Matrix room members; WhatsApp group
+    Alt+T             Open the selected message's thread beside the chat
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
@@ -246,7 +247,8 @@ Keyboard shortcuts:
     Esc               Close, keeping the draft (c opens it again)
     Ctrl+X            Discard the draft
 
-  Thread (opens by itself on a threaded message in wide terminals)
+  Thread (opens by itself on a threaded message in wide terminals; also Alt+T,
+  a click on a replies chip, or Thread in the actions)
     Up/Down           Move through the chat's messages
     Enter             Reply in thread; with an empty input, open the
                       selected message's actions

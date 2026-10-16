@@ -93,6 +93,7 @@ type styles struct {
 	selBgSGR     string
 	mentionBgSGR string
 	barSGR       string
+	dimFgSGR     string // the dim colour as a foreground SGR
 
 	// nickColumn draws senders as a fixed-width <nick> column.
 	nickColumn bool
@@ -117,6 +118,7 @@ func newStyles(t theme) *styles {
 		selBgSGR:    ansi.NewStyle().BackgroundColor(selBg).String(),
 		mentionBgSGR: ansi.NewStyle().
 			BackgroundColor(lipgloss.Color(t.mentionBg)).String(),
-		barSGR: ansi.NewStyle().BackgroundColor(lipgloss.Color(t.bar)).String(),
+		barSGR:   ansi.NewStyle().BackgroundColor(lipgloss.Color(t.bar)).String(),
+		dimFgSGR: ansi.NewStyle().ForegroundColor(lipgloss.Color(t.dim)).String(),
 	}
 }

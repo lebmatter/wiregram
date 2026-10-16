@@ -1242,6 +1242,12 @@ func (m tuiModel) footer() string {
 	case m.chatOpen && m.focus == focusChat:
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
+		mode := " CHAT "
+		if m.chat.subMode == chatSubThread {
+			mode = " THREAD "
+		}
+		badge := m.st.badge.Render(mode) + " "
+		return badge + m.st.footer(keys, notice, m.width-textfmt.DisplayWidth(badge))
 	case m.list.confirm != nil:
 		keys = m.list.confirm.modal.helpKeys()
 	default:
@@ -1574,7 +1580,7 @@ func (m tuiModel) suggestionAct(act string) (tuiModel, tea.Cmd) {
 	case "edit":
 		rt.Discard(key)
 		m.chat.input.SetValue(sug.Text)
-		m.chat.input.CursorEnd()
+		m.chat.input.MoveToEnd()
 		m.focus = focusChat
 	case "discard":
 		rt.Discard(key)
