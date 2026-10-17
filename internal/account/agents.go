@@ -482,13 +482,25 @@ func (rt *agentRuntime) enqueue(acct *Account, key ConvKey, ag *runningAgent,
 		rt.fail(key.AgentID, err)
 		return
 	}
+	// The echo of an agent's own reply is not the owner answering. send records
+	// the ID before the next reply starts, so a later echo is always found; one
+	// arriving sooner can only touch the reply already sent.
+	mine := false
+	if msg.Outgoing {
+		var err error
+		if mine, err = rt.Db.WasSent(key.AccountKey, LogChatID(key.Chat, key.Bot),
+			msg.ID); err != nil {
+			rt.fail(key.AgentID, err) // taken as the owner's: better no reply than a late one
+		}
+	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if msg.Outgoing {
+		if mine {
+			return
+		}
 		// The owner answered, so a waiting draft or one being drafted is stale.
-		// The echo of the agent's own reply, behind its prefix, is not the owner.
-		mine := strings.HasPrefix(text, ag.record.ReplyPrefix()+": ")
-		if w := rt.workers[key]; w != nil && !mine {
+		if w := rt.workers[key]; w != nil {
 			w.owner++
 		}
 		if _, ok := rt.pending[key]; ok {

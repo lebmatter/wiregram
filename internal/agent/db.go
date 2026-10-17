@@ -840,6 +840,18 @@ func (d *AgentDB) RecordSent(accountKey, chatID, messageID, agentName string) er
 	return nil
 }
 
+// WasSent reports whether an agent sent the chat's message.
+func (d *AgentDB) WasSent(accountKey, chatID, messageID string) (bool, error) {
+	var n int
+	err := d.db.QueryRow(`SELECT COUNT(*) FROM agent_sent
+		WHERE account_key = ? AND chat_id = ? AND message_id = ?`,
+		accountKey, chatID, messageID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("find agent message: %w", err)
+	}
+	return n > 0, nil
+}
+
 // SentBy maps the IDs of the chat's agent-sent messages to the agent's name.
 func (d *AgentDB) SentBy(accountKey, chatID string) (map[string]string, error) {
 	rows, err := d.db.Query(
