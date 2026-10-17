@@ -384,9 +384,9 @@ lowest package that needs them rather than importing sideways.
   when the agent is). `SetActive` only scopes unread suppression and typing.
 - `Publish` never blocks and no lock is held across a channel operation;
   backends release their own mutex before publishing. Lock order is
-  `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`; in the mail backend,
-  `connMu` (the IMAP connection, held through syncs) → `mu`, so the screen reads the
-  special folders under `mu` without waiting on a sync.
+  `agentRuntime.reloadMu` → `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`; in the
+  mail backend, `connMu` (the IMAP connection, held through syncs) → `mu`, so the screen
+  reads the special folders under `mu` without waiting on a sync.
 - The chat lock lives in the chat model (`locked`): the root sets it on `tea.BlurMsg`
   (focus reporting) and Alt+L; there is no idle timer. Media plays through
   `tea.ExecProcess`.

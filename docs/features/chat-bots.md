@@ -23,6 +23,10 @@ Every conversation a bot answers is sent to the AI provider you configure.
 - On Mattermost, where threads live on the server, a bot answers where the message
   was written: inside its thread, with that thread as the conversation, or in the main
   chat. On Telegram, Matrix and WhatsApp its reply quotes the message it answers.
+- If you answer a chat yourself while a bot is still drafting, its draft is dropped.
+- A bot sends at most 20 replies an hour in one chat and 120 an hour in all, so no one
+  can run up your provider bill by writing to it. Past that it waits for the hour to
+  pass, and the bot pane says why. Your own chat has no limit.
 
 Violet marks everything bot-related: the ✦ icon, the suggestion card and the messages
 a bot sent.

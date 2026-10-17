@@ -47,6 +47,10 @@ const (
 	agentContext           = 20
 	agentTimeout           = 45 * time.Second
 	agentRetentionInterval = time.Hour
+	// A stranger can keep a bot answering, and every reply costs a model call:
+	// at most this many replies an hour in one chat, and from one bot in all.
+	agentChatRepliesPerHour  = 20
+	agentAgentRepliesPerHour = 120
 )
 
 // ConvKey names one agent conversation: an agent, the account it answers on
@@ -95,15 +99,22 @@ type binding struct {
 type convWorker struct {
 	wake chan struct{}
 	last backend.Message // newest incoming message; guarded by agentRuntime.mu
+	// owner counts the owner's messages, so a reply drafted while the owner
+	// answered is dropped; guarded by agentRuntime.mu.
+	owner uint64
 }
 
 // agentRuntime runs every enabled agent on the account it belongs to. Lock
-// order is rt.mu, then the bus locks inside backend.Bus; the bus never calls
-// back out, so holding rt.mu across Subscribe or Close cannot deadlock.
+// order is rt.reloadMu, rt.mu, then the bus locks inside backend.Bus; the bus
+// never calls back out, so holding rt.mu across Subscribe or Close cannot
+// deadlock.
 type agentRuntime struct {
 	Db  *agent.AgentDB
 	mgr *AccountManager
 
+	// reloadMu serialises Reload, so an older read of the database never
+	// replaces a newer one.
+	reloadMu   sync.Mutex
 	mu         sync.Mutex
 	agents     map[int64]*runningAgent        // enabled agents only
 	records    map[string][]agent.AgentRecord // account key → agents, paused ones too
@@ -119,6 +130,10 @@ type agentRuntime struct {
 	// counts sends whose ID is not known yet, during which echoes are ignored.
 	selfSent    map[string]bool
 	selfSending map[backend.ChatID]int
+	// When each conversation and each agent last asked its model, for the
+	// hourly reply limits.
+	chatAsked  map[ConvKey][]time.Time
+	agentAsked map[int64][]time.Time
 
 	changed chan struct{}
 	ctx     context.Context
@@ -142,6 +157,8 @@ func NewAgentRuntime(ctx context.Context, db *agent.AgentDB, mgr *AccountManager
 		subscribed:  make(map[*Account]*binding),
 		selfSent:    make(map[string]bool),
 		selfSending: make(map[backend.ChatID]int),
+		chatAsked:   make(map[ConvKey][]time.Time),
+		agentAsked:  make(map[int64][]time.Time),
 		changed:     make(chan struct{}, 1),
 		ctx:         ctx,
 		cancel:      cancel,
@@ -246,6 +263,8 @@ func (rt *agentRuntime) notify() {
 // Reload rereads agents and re-subscribes accounts. Call it after any change
 // to agents, their chats or providers.
 func (rt *agentRuntime) Reload() {
+	rt.reloadMu.Lock()
+	defer rt.reloadMu.Unlock()
 	list, err := rt.Db.ListAgents()
 	if err != nil {
 		return
@@ -466,7 +485,12 @@ func (rt *agentRuntime) enqueue(acct *Account, key ConvKey, ag *runningAgent,
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if msg.Outgoing {
-		// The owner answered, so a waiting draft is stale.
+		// The owner answered, so a waiting draft or one being drafted is stale.
+		// The echo of the agent's own reply, behind its prefix, is not the owner.
+		mine := strings.HasPrefix(text, ag.record.ReplyPrefix()+": ")
+		if w := rt.workers[key]; w != nil && !mine {
+			w.owner++
+		}
 		if _, ok := rt.pending[key]; ok {
 			delete(rt.pending, key)
 			rt.notify()
@@ -512,9 +536,9 @@ func (rt *agentRuntime) serve(acct *Account, key ConvKey, w *convWorker) {
 			return
 		}
 		rt.mu.Lock()
-		trigger := w.last
+		trigger, owner := w.last, w.owner
 		rt.mu.Unlock()
-		rt.respond(acct, key, trigger)
+		rt.respond(acct, key, w, owner, trigger)
 		idle.Reset(agentWorkerIdle)
 	}
 }
@@ -535,7 +559,10 @@ func (rt *agentRuntime) settle(w *convWorker) bool {
 	}
 }
 
-func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Message) {
+// respond answers the conversation, unless the owner writes in it (owner no
+// longer matches w.owner) before the reply is ready.
+func (rt *agentRuntime) respond(acct *Account, key ConvKey, w *convWorker, owner uint64,
+	trigger backend.Message) {
 	rt.mu.Lock()
 	ag := rt.agents[key.AgentID]
 	rt.mu.Unlock()
@@ -580,6 +607,10 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		}
 		history = thread
 	}
+	if err := rt.allow(key, trigger.Sender); err != nil {
+		rt.fail(key.AgentID, err)
+		return
+	}
 	if ag.record.Auto {
 		b.SetTyping(rt.ctx, entry)
 	}
@@ -599,16 +630,21 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, trigger backend.Mess
 		rt.fail(key.AgentID, err)
 		return
 	}
+	rt.mu.Lock()
+	stale := w.owner != owner
+	if !stale && !ag.record.Auto {
+		rt.pending[key] = Suggestion{ChatTitle: trigger.Sender, Text: reply,
+			ReplyTo: replyTarget(b, trigger), At: time.Now()}
+	}
+	rt.mu.Unlock()
+	if stale {
+		return // the owner answered while the model was busy
+	}
 	if ag.record.Auto {
 		if err := rt.send(b, entry, key, ag.record, reply, replyTarget(b, trigger)); err != nil {
 			rt.fail(key.AgentID, err)
 			return
 		}
-	} else {
-		rt.mu.Lock()
-		rt.pending[key] = Suggestion{ChatTitle: trigger.Sender, Text: reply,
-			ReplyTo: replyTarget(b, trigger), At: time.Now()}
-		rt.mu.Unlock()
 	}
 	rt.mu.Lock()
 	delete(rt.problems, key.AgentID)
@@ -671,6 +707,58 @@ func agentView(msgs []backend.Message, rec agent.AgentRecord) []agent.AgentLogge
 		out = out[len(out)-agentContext:]
 	}
 	return out
+}
+
+// allow counts a model call for the conversation, or refuses it when the chat
+// or its agent is over its hourly limit. The user's own chat has no limit.
+func (rt *agentRuntime) allow(key ConvKey, sender string) error {
+	if key.Self {
+		return nil
+	}
+	now := time.Now()
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	chat := recent(rt.chatAsked[key], now)
+	all := recent(rt.agentAsked[key.AgentID], now)
+	switch {
+	case len(chat) >= agentChatRepliesPerHour:
+		rt.chatAsked[key], rt.agentAsked[key.AgentID] = chat, all
+		return fmt.Errorf("%d replies to %s this hour; more wait until the hour is up",
+			agentChatRepliesPerHour, sender)
+	case len(all) >= agentAgentRepliesPerHour:
+		rt.chatAsked[key], rt.agentAsked[key.AgentID] = chat, all
+		return fmt.Errorf("%d replies this hour; more wait until the hour is up",
+			agentAgentRepliesPerHour)
+	}
+	rt.chatAsked[key] = append(chat, now)
+	rt.agentAsked[key.AgentID] = append(all, now)
+	return nil
+}
+
+// recent is the times within the last hour of now, oldest first.
+func recent(times []time.Time, now time.Time) []time.Time {
+	i := 0
+	for i < len(times) && now.Sub(times[i]) >= time.Hour {
+		i++
+	}
+	return times[i:]
+}
+
+// forgetAsked drops the reply-limit records with nothing in the last hour.
+func (rt *agentRuntime) forgetAsked() {
+	now := time.Now()
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for key, times := range rt.chatAsked {
+		if len(recent(times, now)) == 0 {
+			delete(rt.chatAsked, key)
+		}
+	}
+	for id, times := range rt.agentAsked {
+		if len(recent(times, now)) == 0 {
+			delete(rt.agentAsked, id)
+		}
+	}
 }
 
 func (rt *agentRuntime) fail(agentID int64, err error) {
@@ -1038,6 +1126,7 @@ func (rt *agentRuntime) retentionLoop() {
 				rt.Db.PurgeOldMessages(rec.ID, rec.RetentionDays)
 			}
 		}
+		rt.forgetAsked()
 		select {
 		case <-rt.ctx.Done():
 			return
