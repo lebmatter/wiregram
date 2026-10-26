@@ -88,8 +88,9 @@ type mmPost struct {
 }
 
 type mmPostMetadata struct {
-	Files  []mmFileInfo `json:"files,omitempty"`
-	Embeds []mmEmbed    `json:"embeds,omitempty"`
+	Files     []mmFileInfo `json:"files,omitempty"`
+	Embeds    []mmEmbed    `json:"embeds,omitempty"`
+	Reactions []mmReaction `json:"reactions,omitempty"`
 }
 
 type mmEmbed struct {
@@ -569,6 +570,11 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		mediaLabel = fmt.Sprintf("[%d file(s)]", len(p.FileIDs))
 	}
 
+	var reactions []backend.MessageReaction
+	if p.Metadata != nil {
+		reactions = mb.aggregateReactions(p.Metadata.Reactions)
+	}
+
 	var editDate int
 	if p.EditAt > 0 {
 		editDate = int(p.EditAt / 1000)
@@ -582,6 +588,7 @@ func (mb *MmBackend) postToMessage(ctx context.Context, p mmPost) backend.Messag
 		Timestamp:  time.UnixMilli(p.CreateAt).Local(),
 		Outgoing:   outgoing,
 		Pinned:     p.IsPinned,
+		Reactions:  reactions,
 		EditDate:   editDate,
 		ReplyToID:  p.RootID,
 		MediaLabel: mediaLabel,
@@ -729,15 +736,14 @@ func mmFileLabel(f mmFileInfo) string {
 }
 
 func (mb *MmBackend) History(ctx context.Context, ch backend.ChatEntry) ([]backend.Message, error) {
-	return mb.fetchPosts(ctx, ch.ID.Id, "", 25)
+	return mb.loadPosts(ctx, ch.ID.Id, "", 25)
 }
 
 func (mb *MmBackend) OlderHistory(ctx context.Context, ch backend.ChatEntry, beforeID string) ([]backend.Message, error) {
-	return mb.fetchPosts(ctx, ch.ID.Id, beforeID, 25)
+	return mb.loadPosts(ctx, ch.ID.Id, beforeID, 25)
 }
 
-// UnreadMessages reads the newest posts, which the unread count covers, and
-// skips the per-post reaction requests a History page makes.
+// UnreadMessages reads the newest posts, which the unread count covers.
 func (mb *MmBackend) UnreadMessages(ctx context.Context, ch backend.ChatEntry, limit int) ([]backend.Message, error) {
 	msgs, err := mb.loadPosts(ctx, ch.ID.Id, "", limit)
 	if err != nil {
@@ -780,16 +786,6 @@ func (mb *MmBackend) Thread(ctx context.Context, ch backend.ChatEntry, rootID st
 	for i, p := range posts {
 		messages[i] = mb.postToMessage(ctx, p)
 	}
-	mb.loadReactions(ctx, messages)
-	return messages, nil
-}
-
-func (mb *MmBackend) fetchPosts(ctx context.Context, channelID, before string, perPage int) ([]backend.Message, error) {
-	messages, err := mb.loadPosts(ctx, channelID, before, perPage)
-	if err != nil {
-		return nil, err
-	}
-	mb.loadReactions(ctx, messages)
 	return messages, nil
 }
 
@@ -814,16 +810,6 @@ func (mb *MmBackend) loadPosts(ctx context.Context, channelID, before string, pe
 		messages = append(messages, mb.postToMessage(ctx, p))
 	}
 	return messages, nil
-}
-
-func (mb *MmBackend) loadReactions(ctx context.Context, messages []backend.Message) {
-	for i, msg := range messages {
-		var reactions []mmReaction
-		if err := mb.apiJSON(ctx, "GET", "/posts/"+msg.ID+"/reactions", nil, &reactions); err != nil {
-			continue
-		}
-		messages[i].Reactions = mb.aggregateReactions(reactions)
-	}
 }
 
 func (mb *MmBackend) aggregateReactions(reactions []mmReaction) []backend.MessageReaction {
