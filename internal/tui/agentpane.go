@@ -155,8 +155,7 @@ func (m agentPaneModel) resized(width, height int) agentPaneModel {
 func (m agentPaneModel) rows() []agentRow {
 	_, registered := m.mgr.Agents.Registration(m.rec.ID)
 	var rows []agentRow
-	// Status is the chip above the rows, switched with p.
-	for f := fieldName; f <= fieldDelete; f++ {
+	for f := fieldStatus; f <= fieldDelete; f++ {
 		switch {
 		case f == fieldManager && !m.mgr.Agents.NeedsManager(m.acct),
 			f == fieldBotAccount && !registered && !m.mgr.Agents.CanRegister(m.acct),
@@ -637,7 +636,7 @@ func (m agentPaneModel) label(r agentRow) (string, string) {
 	}
 	switch r.field {
 	case fieldStatus:
-		return "Status", on(m.rec.Enabled, "on", "paused")
+		return "Status", on(m.rec.Enabled, "live", "paused")
 	case fieldName:
 		return "Name", m.rec.Name
 	case fieldHandle:
