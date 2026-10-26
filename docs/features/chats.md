@@ -105,7 +105,10 @@ with a `+` reaction search field over a row of matching emoji: type to filter,
 Below come only the actions the message allows:
 
 - reply, thread, go to quote
-- edit (your own messages; the original text, formatting and all, is kept for editing)
+- edit (your own messages; the original text, formatting and all, is kept for editing),
+  within the network's time limit: 48 hours on Telegram (none for channel posts and
+  Saved Messages), 20 minutes on WhatsApp, the server's limit on Mattermost, none on
+  Matrix
 - forward
 - open, play or save the attachment
 - pin

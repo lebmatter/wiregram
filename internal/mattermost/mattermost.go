@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ type MmBackend struct {
 	lastRead    map[string]string    // channelID → last read post ID
 	userCache   map[string]mmUser
 	recentEmoji []string
+	editLimit   time.Duration // the server's PostEditTimeLimit; zero is none
 
 	events backend.Bus
 
@@ -210,9 +212,28 @@ func (mb *MmBackend) apiJSON(ctx context.Context, method, path string, body, res
 }
 
 func (mb *MmBackend) Run(ctx context.Context) error {
+	mb.loadEditLimit(ctx)
 	mb.StartWebSocket(ctx)
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// loadEditLimit reads how long the server lets posts be edited. Without it
+// Editable allows any age and the server has the last word.
+func (mb *MmBackend) loadEditLimit(ctx context.Context) {
+	var cfg struct {
+		PostEditTimeLimit string `json:"PostEditTimeLimit"`
+	}
+	if err := mb.apiJSON(ctx, "GET", "/config/client?format=old", nil, &cfg); err != nil {
+		return
+	}
+	seconds, err := strconv.Atoi(cfg.PostEditTimeLimit)
+	if err != nil || seconds <= 0 {
+		return
+	}
+	mb.mu.Lock()
+	mb.editLimit = time.Duration(seconds) * time.Second
+	mb.mu.Unlock()
 }
 
 func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc, report func(error)) error {
@@ -960,6 +981,16 @@ func (mb *MmBackend) Editable(msg backend.Message) error {
 	}
 	if msg.Multiline {
 		return fmt.Errorf("multiline messages cannot be edited in wiregram's single-line editor")
+	}
+	mb.mu.Lock()
+	limit := mb.editLimit
+	mb.mu.Unlock()
+	if limit > 0 && time.Since(msg.Timestamp) > limit {
+		span := fmt.Sprintf("%d minutes", int(limit.Minutes()))
+		if limit%time.Hour == 0 {
+			span = fmt.Sprintf("%d hours", int(limit.Hours()))
+		}
+		return fmt.Errorf("this server only lets posts be edited for %s", span)
 	}
 	return nil
 }

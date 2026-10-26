@@ -939,7 +939,14 @@ func (wa *WaBackend) UploadPlaceholder(path, caption string) backend.Message {
 }
 
 func (wa *WaBackend) Editable(msg backend.Message) error {
-	return backend.GenericEditable(msg)
+	if err := backend.GenericEditable(msg); err != nil {
+		return err
+	}
+	if time.Since(msg.Timestamp) > whatsmeow.EditWindow {
+		return fmt.Errorf("WhatsApp only lets messages be edited for %d minutes",
+			int(whatsmeow.EditWindow.Minutes()))
+	}
+	return nil
 }
 
 func (wa *WaBackend) Edit(ctx context.Context, ch backend.ChatEntry, msg backend.Message, text string) error {

@@ -369,7 +369,7 @@ func (tb *TelegramBackend) Editable(msg backend.Message) error {
 	if !ok {
 		return fmt.Errorf("select one of your sent messages to edit")
 	}
-	return editableMessage(m)
+	return editableMessage(m, tb.C.AccountID)
 }
 
 func (tb *TelegramBackend) Edit(ctx context.Context, ch backend.ChatEntry, msg backend.Message, text string) error {
