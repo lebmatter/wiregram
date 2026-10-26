@@ -12,7 +12,7 @@ import (
 )
 
 // pluginHost gives plugins with the "messages" permission the online accounts
-// and their unread private chats. Plugins call it from their own goroutines,
+// and their unread chats. Plugins call it from their own goroutines,
 // so it reads the accounts through List and Snapshot only.
 type pluginHost struct{ mgr *account.AccountManager }
 
@@ -40,7 +40,7 @@ func (h pluginHost) Accounts() []plugin.HostAccount {
 	return out
 }
 
-func (h pluginHost) UnreadDMs(ctx context.Context, key string, n int) ([]plugin.UnreadChat,
+func (h pluginHost) Unread(ctx context.Context, key string, n int) ([]plugin.UnreadChat,
 	error) {
 	accounts, _ := h.online()
 	var b backend.Backend
@@ -56,16 +56,17 @@ func (h pluginHost) UnreadDMs(ctx context.Context, key string, n int) ([]plugin.
 	if err != nil {
 		return nil, fmt.Errorf("list chats: %w", err)
 	}
-	var dms []backend.ChatEntry
+	var unread []backend.ChatEntry
 	for _, e := range entries {
-		if e.IsDM && !e.IsSelf && e.Unread > 0 {
-			dms = append(dms, e)
+		if !e.IsSelf && e.Unread > 0 {
+			unread = append(unread, e)
 		}
 	}
-	out := make([]plugin.UnreadChat, len(dms))
+	out := make([]plugin.UnreadChat, len(unread))
 	var wg sync.WaitGroup
-	for i, e := range dms {
-		out[i] = plugin.UnreadChat{Title: textfmt.Plain(e.Title), Count: e.Unread, Last: e.LastAt}
+	for i, e := range unread {
+		out[i] = plugin.UnreadChat{Title: textfmt.Plain(sidebarTitle(e)), DM: e.IsDM,
+			Count: e.Unread, Last: e.LastAt}
 		if n == 0 {
 			continue
 		}

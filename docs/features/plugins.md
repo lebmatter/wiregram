@@ -16,7 +16,7 @@ click outside closes it.
 
 | Plugin | What it shows | Reaches | Starts |
 |--------|---------------|---------|--------|
-| **Unread** | Per online account, how many private chats have unread messages. Click the card for their newest messages | Your accounts (the `messages` permission) | on |
+| **Unread** | Per online account, unread messages in DMs and, apart from them, in groups and channels. Click the card for their newest messages | Your accounts (the `messages` permission) | on |
 | **Weather** | Current conditions for one city, with a small animated sky. Click the card for today's forecast hour by hour. Settings: city, units, refresh | Open-Meteo | on |
 | **Calendar** | The next events of a Google Calendar, from its secret iCal address. Click the card for the upcoming and recent events by day. Settings: secret iCal URL, upcoming and recent days, refresh | calendar.google.com | off |
 | **Hacker News** | The top front-page stories | The Algolia HN API | off |
@@ -70,7 +70,7 @@ wiregram.widget { height = 2, render = render }
 - **Scoped API.** Every `wiregram.*` function is bound to its own plugin. A plugin can
   reach only its own settings, its own key-value rows and the hosts it declared.
 - **Messages by permission.** Only a plugin that declares `permissions = { "messages" }`
-  can list your accounts and read their unread private messages. Settings → Plugins marks
+  can list your accounts and read their unread messages. Settings → Plugins marks
   it `reads messages`. Such a plugin could send what it reads to the hosts it declared,
   so check both before installing one.
 - **Plain text out.** Rendered lines are stripped of control characters, so a plugin
@@ -89,7 +89,7 @@ wiregram.widget { height = 2, render = render }
 | `wiregram.widget{height=4, refresh=60, update=fn, render=fn, click=fn}` | Load time only. See [Widgets](#widgets). |
 | `wiregram.modal{title=, width=60, height=12, render=fn}` | From `click` only. See [Modals](#modals). |
 | `wiregram.accounts()` | Needs `messages`. The online accounts that have private chats (not email): `{key=, tag="TG1", label=, backend=}`. |
-| `wiregram.unread(key, n)` | Needs `messages`; from `update` or `click` only. The account's private chats with unread messages, `{title=, count=, last=, messages={…}}`, each with up to `n` (0–50, default 0) of its newest unread messages, oldest first: `{sender=, text=, time=, clock=}`. `clock` is the local time today, else the date. Returns `nil, err` when the account is offline or the fetch fails. |
+| `wiregram.unread(key, n)` | Needs `messages`; from `update` or `click` only. The account's chats with unread messages, `{title=, dm=, count=, last=, messages={…}}`, where `dm` is true for a private chat, each with up to `n` (0–50, default 0) of its newest unread messages, oldest first: `{sender=, text=, time=, clock=}`. `clock` is the local time today, else the date. Returns `nil, err` when the account is offline or the fetch fails. |
 | `wiregram.kv.get(k)` / `.set(k, v)` / `.delete(k)` / `.keys()` | String values in `wiregram.db`: keys up to 256 bytes, values up to 64 KB. `set` and `delete` return `true`, or `nil, err`. |
 | `wiregram.http.get(url)` | Returns the body, or `nil, err`. HTTPS to declared hosts only (redirects included), 10 s, 1 MB, status 200. Not available at load time. |
 | `wiregram.json.decode(s)` | Returns a table, or `nil, err`. |

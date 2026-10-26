@@ -674,7 +674,7 @@ func (wa *WaBackend) chatEntry(c waChatEntry) backend.ChatEntry {
 		Title:   title,
 		Unread:  unread,
 		LastAt:  c.lastAt,
-		IsDM:    c.jid.Server == types.DefaultUserServer,
+		IsDM:    c.jid.Server == types.DefaultUserServer || c.jid.Server == types.HiddenUserServer,
 		IsGroup: c.isGroup,
 		IsSelf:  wa.isSelf(c.jid),
 		Raw:     c.jid,

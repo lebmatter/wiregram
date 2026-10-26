@@ -1,5 +1,5 @@
--- Unread: the unread private chats of every online account. A click opens
--- their newest messages.
+-- Unread: the unread messages of every online account, in private chats and
+-- elsewhere. A click opens their newest messages.
 
 wiregram.plugin {
   title = "Unread",
@@ -9,17 +9,22 @@ wiregram.plugin {
 
 local perChat = 3 -- messages shown per chat in the modal
 
--- counts holds, per account, {account=, dms=, unread=, err=}, from the last
--- update; it is kept in memory only, never in the kv store.
+-- counts holds, per account, {account=, dm=, other=, err=}: unread messages in
+-- private chats and in the rest, from the last update; it is kept in memory
+-- only, never in the kv store.
 local counts
 
 local function update()
   local out = {}
   for _, a in ipairs(wiregram.accounts()) do
     local chats, err = wiregram.unread(a.key, 0)
-    local row = { account = a, dms = 0, unread = 0, err = err }
+    local row = { account = a, dm = 0, other = 0, err = err }
     for _, c in ipairs(chats or {}) do
-      row.dms, row.unread = row.dms + 1, row.unread + c.count
+      if c.dm then
+        row.dm = row.dm + c.count
+      else
+        row.other = row.other + c.count
+      end
     end
     out[#out + 1] = row
   end
@@ -56,8 +61,6 @@ local function spread(left, right, n, rw)
   return wiregram.escape(left) .. string.rep(" ", math.max(2, n - width(left) - rw)) .. right
 end
 
-local function plural(n, one, many) return n .. " " .. (n == 1 and one or many) end
-
 local function render(w)
   if not counts then return { "Counting unread messages…" } end
   if #counts == 0 then return { "No accounts online" } end
@@ -67,10 +70,16 @@ local function render(w)
     local right, rw = "nothing unread", nil
     if row.err then
       right = "couldn't load"
-    elseif row.unread > 0 then
-      any = true
-      local dms, count = plural(row.dms, "DM", "DMs") .. " · ", " " .. row.unread .. " unread "
-      right, rw = dms .. "__" .. count .. "__", width(dms .. count)
+    elseif row.dm + row.other > 0 then
+      -- DMs sit on the accent fill: they are the ones meant for the user.
+      local parts = {}
+      if row.dm > 0 then
+        any = true
+        parts[#parts + 1] = "DMs __ " .. row.dm .. " __"
+      end
+      if row.other > 0 then parts[#parts + 1] = "others " .. row.other end
+      right = table.concat(parts, " · ")
+      rw = width((right:gsub("__", "")))
     end
     lines[#lines + 1] = spread(name, right, w, rw)
   end
@@ -111,7 +120,11 @@ local function click()
     local chats, err = wiregram.unread(a.key, perChat)
     detail[#detail + 1] = { account = a, chats = chats or {}, err = err }
   end
-  local sorted = function(x, y) return x.last > y.last end
+  -- Private chats first, then the newest.
+  local sorted = function(x, y)
+    if x.dm ~= y.dm then return x.dm end
+    return x.last > y.last
+  end
   for _, d in ipairs(detail) do table.sort(d.chats, sorted) end
   wiregram.modal { title = "Unread messages", width = 80, height = 30, render = function(w)
     local lines = {}
@@ -125,10 +138,13 @@ local function click()
       end
       for _, c in ipairs(d.chats) do
         local count = c.count .. " unread"
-        lines[#lines + 1] = "  " .. spread(c.title, "*" .. count .. "*", w - 2, width(count))
+        local title = (c.dm and "@" or "#") .. c.title
+        lines[#lines + 1] = "  " .. spread(title, "*" .. count .. "*", w - 2, width(count))
         for _, m in ipairs(c.messages) do
           local prefix = "    [" .. m.clock .. "] "
-          local body = wrap(m.text, math.max(10, w - width(prefix)))
+          local text = m.text
+          if not c.dm and m.sender ~= "" then text = m.sender .. ": " .. text end
+          local body = wrap(text, math.max(10, w - width(prefix)))
           for j, l in ipairs(body) do
             lines[#lines + 1] = (j == 1 and prefix or string.rep(" ", width(prefix))) ..
               wiregram.escape(l)

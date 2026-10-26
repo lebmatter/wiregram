@@ -137,8 +137,8 @@ These are project constraints, not suggestions:
   `messages` permission may call `wiregram.accounts()` and `wiregram.unread()`, served by
   `pluginHost` (`internal/tui/pluginhost.go`) through `plugin.Host`.
   Settings' Plugins… row switches them and edits their settings
-  (`internal/tui/plugins.go`). The built-ins are Unread (unread private chats per account; a
-  click shows their newest messages), Weather (Open-Meteo; a click shows today hour by
+  (`internal/tui/plugins.go`). The built-ins are Unread (unread messages per account, DMs
+  apart from the rest; a click shows their newest messages), Weather (Open-Meteo; a click shows today hour by
   hour), Calendar (a Google Calendar's secret iCal URL, a `secret` setting Settings
   masks; a click lists upcoming and recent events) and Hacker News (the Algolia HN API).
 - Each expanded account but email has an unread chip (`u`, `internal/tui/unread.go`): a column

@@ -43,12 +43,12 @@ type Setting struct {
 }
 
 // Host gives plugins that declared the "messages" permission the user's
-// accounts and their unread private chats.
+// accounts and their unread chats.
 type Host interface {
 	Accounts() []HostAccount
-	// UnreadDMs lists the account's private chats with unread messages, each
-	// with up to n of its newest unread messages.
-	UnreadDMs(ctx context.Context, key string, n int) ([]UnreadChat, error)
+	// Unread lists the account's chats with unread messages, each with up to
+	// n of its newest unread messages.
+	Unread(ctx context.Context, key string, n int) ([]UnreadChat, error)
 }
 
 // HostAccount is one online account, as wiregram.accounts() returns it.
@@ -61,6 +61,7 @@ type HostAccount struct {
 
 type UnreadChat struct {
 	Title    string
+	DM       bool // a private chat, not a group or channel
 	Count    int
 	Last     time.Time
 	Messages []UnreadMessage

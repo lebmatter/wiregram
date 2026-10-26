@@ -114,8 +114,8 @@ func (p *Plugin) luaAccounts(L *lua.LState) int {
 	return 1
 }
 
-// wiregram.unread(key, n) lists the account's private chats with unread
-// messages, {title=, count=, last=, messages={{sender=, text=, time=, clock=}, …}},
+// wiregram.unread(key, n) lists the account's chats with unread messages,
+// {title=, dm=, count=, last=, messages={{sender=, text=, time=, clock=}, …}},
 // with up to n messages each; or nil and an error. It reaches the network,
 // so only update and click may call it.
 func (p *Plugin) luaUnread(L *lua.LState) int {
@@ -124,7 +124,7 @@ func (p *Plugin) luaUnread(L *lua.LState) int {
 	if !p.background {
 		L.RaiseError("wiregram.unread can only be called from update or click")
 	}
-	chats, err := p.host.UnreadDMs(L.Context(), key, n)
+	chats, err := p.host.Unread(L.Context(), key, n)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -135,6 +135,7 @@ func (p *Plugin) luaUnread(L *lua.LState) int {
 	for _, c := range chats {
 		t := L.NewTable()
 		t.RawSetString("title", lua.LString(c.Title))
+		t.RawSetString("dm", lua.LBool(c.DM))
 		t.RawSetString("count", lua.LNumber(c.Count))
 		t.RawSetString("last", lua.LNumber(c.Last.Unix()))
 		msgs := L.NewTable()

@@ -20,8 +20,8 @@ that needs signing in again shows it here; open it to sign in.
 ### Widgets
 
 Inside the chooser's box, under Quit, enabled [plugins](/features/plugins) draw widget
-cards. The built-in **Unread** widget shows, per online account, how many private chats
-have unread messages; clicking it opens their newest messages. Clicking a widget may open
+cards. The built-in **Unread** widget shows, per online account, its unread messages in
+DMs and, apart from them, in groups and channels; clicking it opens their newest messages. Clicking a widget may open
 a modal with more detail, such as the Weather widget's hourly forecast.
 
 ## Account tree
