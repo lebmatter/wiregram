@@ -8,6 +8,7 @@ wiregram.plugin {
 }
 
 local perChat = 3 -- messages shown per chat in the modal
+local linesPerMessage = 4
 
 -- counts holds, per account, {account=, dm=, other=, err=}: unread messages in
 -- private chats and in the rest, from the last update; it is kept in memory
@@ -72,14 +73,13 @@ local function render(w)
       right = "couldn't load"
     elseif row.dm + row.other > 0 then
       -- DMs sit on the accent fill: they are the ones meant for the user.
-      local parts = {}
+      local dm = "*" .. row.dm .. "*"
       if row.dm > 0 then
         any = true
-        parts[#parts + 1] = "DMs __ " .. row.dm .. " __"
+        dm = "__ " .. row.dm .. " __"
       end
-      if row.other > 0 then parts[#parts + 1] = "others " .. row.other end
-      right = table.concat(parts, " · ")
-      rw = width((right:gsub("__", "")))
+      right = "*" .. row.other .. "* · DMs " .. dm
+      rw = width((right:gsub("__", ""):gsub("%*", "")))
     end
     lines[#lines + 1] = spread(name, right, w, rw)
   end
@@ -87,32 +87,80 @@ local function render(w)
 end
 
 -- wrap breaks text into lines of at most n characters, at spaces when it can.
-local function wrap(text, n)
+-- It stops at max lines, ending the last with "…": render has 50 ms for every
+-- message, so it reads only what max lines can hold and measures each word once.
+local function wrap(text, n, max)
   local out = {}
+  local function full() return #out >= max end
+  local rest
+  text, rest = take(text, 2 * n * max)
   for para in (text .. "\n"):gmatch("(.-)\n") do
-    local line = ""
+    local line, lw = "", 0
     for word in para:gmatch("%S+") do
+      local ww = width(word)
       if line == "" then
-        line = word
-      elseif width(line) + 1 + width(word) <= n then
-        line = line .. " " .. word
+        line, lw = word, ww
+      elseif lw + 1 + ww <= n then
+        line, lw = line .. " " .. word, lw + 1 + ww
       else
         out[#out + 1] = line
-        line = word
+        if full() then break end
+        line, lw = word, ww
       end
-      while width(line) > n do
+      while lw > n and not full() do
         local head, rest = take(line, n)
         out[#out + 1] = head
-        line = rest
+        line, lw = rest, lw - n
       end
+      if full() then break end
+    end
+    if full() then
+      out[max] = cut(out[max], n - 1) .. "…"
+      return out
     end
     out[#out + 1] = line
   end
+  if rest ~= "" then out[#out] = cut(out[#out], n - 1) .. "…" end
   return out
 end
 
 -- detail is what the modal shows: per account, its chats and their messages.
 local detail
+
+-- lines lays detail out w cells wide.
+local function lines(w)
+  local out = {}
+  for i, d in ipairs(detail) do
+    if i > 1 then out[#out + 1] = "" end
+    out[#out + 1] = "*" .. wiregram.escape(d.account.tag .. " " .. d.account.label) .. "*"
+    if d.err then
+      out[#out + 1] = "  couldn't load: " .. wiregram.escape(d.err)
+    elseif #d.chats == 0 then
+      out[#out + 1] = "  nothing unread"
+    end
+    for _, c in ipairs(d.chats) do
+      local count = c.count .. " unread"
+      local title = (c.dm and "@" or "#") .. c.title
+      out[#out + 1] = "  " .. spread(title, "*" .. count .. "*", w - 2, width(count))
+      for _, m in ipairs(c.messages) do
+        local prefix = "    [" .. m.clock .. "] "
+        local text = m.text
+        if not c.dm and m.sender ~= "" then text = m.sender .. ": " .. text end
+        local body = wrap(text, math.max(10, w - width(prefix)), linesPerMessage)
+        for j, l in ipairs(body) do
+          out[#out + 1] = (j == 1 and prefix or string.rep(" ", width(prefix))) ..
+            wiregram.escape(l)
+        end
+      end
+      if c.count > #c.messages and #c.messages > 0 then
+        out[#out + 1] = "    … " .. (c.count - #c.messages) .. " more"
+      end
+    end
+  end
+  return out
+end
+
+local modalWidth = 80
 
 local function click()
   detail = {}
@@ -126,37 +174,15 @@ local function click()
     return x.last > y.last
   end
   for _, d in ipairs(detail) do table.sort(d.chats, sorted) end
-  wiregram.modal { title = "Unread messages", width = 80, height = 30, render = function(w)
-    local lines = {}
-    for i, d in ipairs(detail) do
-      if i > 1 then lines[#lines + 1] = "" end
-      lines[#lines + 1] = "*" .. wiregram.escape(d.account.tag .. " " .. d.account.label) .. "*"
-      if d.err then
-        lines[#lines + 1] = "  couldn't load: " .. wiregram.escape(d.err)
-      elseif #d.chats == 0 then
-        lines[#lines + 1] = "  nothing unread"
-      end
-      for _, c in ipairs(d.chats) do
-        local count = c.count .. " unread"
-        local title = (c.dm and "@" or "#") .. c.title
-        lines[#lines + 1] = "  " .. spread(title, "*" .. count .. "*", w - 2, width(count))
-        for _, m in ipairs(c.messages) do
-          local prefix = "    [" .. m.clock .. "] "
-          local text = m.text
-          if not c.dm and m.sender ~= "" then text = m.sender .. ": " .. text end
-          local body = wrap(text, math.max(10, w - width(prefix)))
-          for j, l in ipairs(body) do
-            lines[#lines + 1] = (j == 1 and prefix or string.rep(" ", width(prefix))) ..
-              wiregram.escape(l)
-          end
-        end
-        if c.count > #c.messages and #c.messages > 0 then
-          lines[#lines + 1] = "    … " .. (c.count - #c.messages) .. " more"
-        end
-      end
-    end
-    return lines
-  end }
+  -- Laying out many messages can outlast render's 50 ms, and render runs every
+  -- frame, so the lines are made here at the modal's width and kept until the
+  -- width changes, as on a terminal narrower than the modal.
+  local shown = { w = modalWidth, lines = lines(modalWidth) }
+  wiregram.modal { title = "Unread messages", width = modalWidth, height = 30,
+    render = function(w)
+      if shown.w ~= w then shown = { w = w, lines = lines(w) } end
+      return shown.lines
+    end }
 end
 
 wiregram.widget { height = 4, refresh = 30, update = update, render = render, click = click }
