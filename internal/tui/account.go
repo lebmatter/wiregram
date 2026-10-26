@@ -24,6 +24,7 @@ type accountChoice struct {
 	index    int
 	add      bool
 	settings bool
+	plugin   string // the plugin whose settings to open, from its widget's modal
 	quit     bool
 }
 
@@ -122,10 +123,12 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			x, y, _, _ := m.quitRect()
 			return m.quitAnswered(m.quitting.click(msg.X, msg.Y, x, y))
 		}
-		if m.widgets.modal != nil {
+		if md := m.widgets.modal; md != nil {
 			x, y, w, h := m.widgetModalRect()
 			if msg.X < x || msg.X >= x+w || msg.Y < y || msg.Y >= y+h {
 				m.widgets.modal = nil
+			} else if k, ok := widgetModalKeyAt(msg.X - x - 2); ok && msg.Y == y+h-2 {
+				return m.widgetModalKey(md, k)
 			}
 			return m, nil
 		}
@@ -147,10 +150,10 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if md := m.widgets.modal; md != nil {
 			_, _, _, h := m.widgetModalRect()
-			page := max(1, h-3)
+			page := max(1, h-5)
 			switch msg.String() {
-			case "esc", "q", "enter", "ctrl+c":
-				m.widgets.modal = nil
+			case "esc", "q", "enter", "ctrl+c", "s":
+				return m.widgetModalKey(md, msg.String())
 			case "up", "k":
 				md.scroll(-1, m.width, m.bodyHeight()+1)
 			case "down", "j":
@@ -288,7 +291,7 @@ func (m accountListModel) View() tea.View {
 	} else if md := m.widgets.modal; md != nil {
 		x, y, _, _ := m.widgetModalRect()
 		body = m.st.fadeUnder(body, md.box(m.st, m.width, m.bodyHeight()+1), x, y)
-		keys, notice = []helpKey{{"↑↓", "scroll"}, {"esc", "close"}}, ""
+		keys, notice = append([]helpKey{{"↑↓", "scroll"}}, widgetModalKeys...), ""
 	}
 	content := body + "\n" + m.st.keyStrip(keys, notice, m.width)
 	v := tea.NewView(content)
@@ -403,10 +406,21 @@ func (m accountListModel) quitRect() (x, y, w, h int) {
 	return max(0, (m.width-w)/2), max(0, (m.bodyHeight()+1-h)/2), w, h
 }
 
+// widgetModalKey closes the widget's modal, or with s leaves for the plugin's
+// settings.
+func (m accountListModel) widgetModalKey(md *widgetModal, k string) (tea.Model, tea.Cmd) {
+	m.widgets.modal = nil
+	if k == "s" {
+		m.result = &accountChoice{settings: true, plugin: md.p.Name}
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
 // widgetModalRect is where a widget's modal sits: centred over the screen.
 func (m accountListModel) widgetModalRect() (x, y, w, h int) {
 	w, h = m.widgets.modal.size(m.width, m.bodyHeight()+1)
-	w, h = w+4, h+2
+	w, h = w+4, h+4
 	return max(0, (m.width-w)/2), max(0, (m.bodyHeight()+1-h)/2), w, h
 }
 
@@ -429,7 +443,7 @@ func tuiChooseAccount(ctx context.Context, mgr *account.AccountManager, active *
 		return nil, nil
 	}
 	if final.result.settings {
-		to, err := tuiSettings(ctx, mgr, active, true)
+		to, err := tuiSettings(ctx, mgr, active, true, final.result.plugin)
 		if _, back := err.(accountsRequested); back {
 			if !slices.Contains(mgr.List(), active) {
 				active = nil // removed in Settings

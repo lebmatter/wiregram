@@ -10,7 +10,8 @@ Open **Settings → Plugins…** to switch plugins on and off and edit their set
 Enabled plugins with a widget draw a card in the chooser's `── widgets` section. When the
 screen is too short for them, they are left out. A widget may answer a click, often by
 opening a modal over the chooser: ↑/↓, PgUp/PgDn and the wheel scroll it; Esc, Enter or a
-click outside closes it.
+click outside closes it. Its key line, like the quit modal's, offers `esc close` and
+`s settings`; `s` or a click on settings opens the plugin's row in Settings → Plugins.
 
 ### Built-in plugins
 
@@ -153,8 +154,8 @@ end
 `wiregram.modal{…}`, called from a widget's `click`, opens a modal centred over the
 account chooser when `click` returns. Everything behind it fades.
 
-- **Size.** `width` (10–200) and `height` (1–100) are the cells inside its border. A
-  modal larger than the screen is cut to fit.
+- **Size.** `width` (10–200) and `height` (1–100) are the cells inside its border, above
+  the key line wiregram adds. A modal larger than the screen is cut to fit.
 - **Title.** `title` labels the border. It defaults to the plugin's title.
 - **`render(width, height, frame)`** works like a widget's `render`, border colour
   included (the default is the accent). It gets the size the modal really has. It may

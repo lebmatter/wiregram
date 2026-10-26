@@ -130,6 +130,7 @@ Keyboard shortcuts:
                       Add account, Quit)
     r                 Reconnect the selected account
     Esc, Ctrl+C       Quit (asks first)
+    s                 In a widget's modal: open the plugin's settings
 
   Chat list
     Up/k, Down/j      Select chat, chip, section or account

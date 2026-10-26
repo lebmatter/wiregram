@@ -33,6 +33,17 @@ func (m settingsModel) pluginRows() []pluginRow {
 	return rows
 }
 
+// showPlugin opens the Plugins pane focused on the named plugin's row.
+func (m settingsModel) showPlugin(name string) settingsModel {
+	m.left, m.focus = len(m.accounts)+actionPlugins, paneItems
+	for i, r := range m.pluginRows() {
+		if r.p.Name == name && r.setting < 0 {
+			m.sel = i
+		}
+	}
+	return m
+}
+
 func (m settingsModel) pluginsKey(k string) (tea.Model, tea.Cmd) {
 	rows := m.pluginRows()
 	switch k {

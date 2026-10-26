@@ -156,10 +156,13 @@ func (m widgetsModel) clicked(msg widgetClicked) widgetsModel {
 	return m
 }
 
-// size is the cells inside the modal's border: what the plugin asked for,
-// cut to a screen this size.
+// widgetModalKeys are the keys under every widget modal, like the quit modal's.
+var widgetModalKeys = []helpKey{{"esc", "close"}, {"s", "settings"}}
+
+// size is the plugin's lines inside the modal's border: what it asked for,
+// cut to a screen this size, which also holds the border and the keys.
 func (md *widgetModal) size(screenW, screenH int) (w, h int) {
-	return max(1, min(md.m.Width, screenW-6)), max(1, min(md.m.Height, screenH-2))
+	return max(1, min(md.m.Width, screenW-6)), max(1, min(md.m.Height, screenH-4))
 }
 
 // scroll moves the modal's lines by delta, within what its last frame has.
@@ -184,8 +187,23 @@ func (md *widgetModal) box(st *styles, screenW, screenH int) string {
 		lines = append(slices.Clone(lines[:min(len(lines), h-1)]),
 			styleError.Render(textfmt.CleanError(md.err)))
 	}
-	return renderTitledBox(st.brand.Render(textfmt.Plain(md.m.Title)), "", lines, w+4, h+2,
+	lines = append(slices.Clone(lines), make([]string, h-len(lines))...)
+	lines = append(lines, st.modalKeys(widgetModalKeys, "", w)...)
+	return renderTitledBox(st.brand.Render(textfmt.Plain(md.m.Title)), "", lines, w+4, h+4,
 		st.pluginBorder(md.frame.Border, st.accentColor))
+}
+
+// widgetModalKeyAt is the key of widgetModalKeys at column x of the modal's key line,
+// counted from the start of the line.
+func widgetModalKeyAt(x int) (string, bool) {
+	for _, k := range widgetModalKeys {
+		w := textfmt.DisplayWidth(k.key + " " + k.desc)
+		if x >= 0 && x < w {
+			return k.key, true
+		}
+		x -= w + 2
+	}
+	return "", false
 }
 
 // widgetAt maps a click at x, y inside the widgets to its plugin.

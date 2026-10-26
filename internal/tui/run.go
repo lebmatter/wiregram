@@ -117,7 +117,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 			}
 			if _, ok := err.(settingsRequested); ok {
 				err = nil
-				to, serr := tuiSettings(ctx, m, active, false)
+				to, serr := tuiSettings(ctx, m, active, false, "")
 				if _, home := serr.(accountsRequested); !home {
 					if serr != nil || to == nil {
 						return serr

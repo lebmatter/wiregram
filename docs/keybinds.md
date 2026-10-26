@@ -20,6 +20,7 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Enter</kbd> | Open the account, or the selected row (Settings…, Add account, Quit) |
 | <kbd>r</kbd> | Reconnect the selected account |
 | <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> | Quit (asks first) |
+| <kbd>s</kbd> | In a widget's modal: open the plugin's settings |
 
 ## Chat list
 

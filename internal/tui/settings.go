@@ -819,10 +819,15 @@ func (m settingsModel) helpKeys() []helpKey {
 // tuiSettings runs the Settings screen. It returns the account to open, nil
 // to quit, ResetRequested after Reset, or accountsRequested for the Home row and
 // when Esc leaves a Settings opened from the account chooser.
+// plugin, when set, opens Settings on that plugin's row of the Plugins pane.
 func tuiSettings(ctx context.Context, mgr *account.AccountManager, active *account.Account,
-	fromAccounts bool) (*account.Account, error) {
+	fromAccounts bool, plugin string) (*account.Account, error) {
 	for {
 		m := newSettingsModel(ctx, mgr, active, fromAccounts)
+		if plugin != "" {
+			m = m.showPlugin(plugin)
+			plugin = ""
+		}
 		result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 		if err != nil {
 			return nil, fmt.Errorf("run settings: %w", err)

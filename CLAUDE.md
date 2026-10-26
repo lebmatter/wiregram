@@ -133,7 +133,8 @@ These are project constraints, not suggestions:
   `render` may name the card's border colour, and its lines may hold markup (`*bold in the accent*`,
   `__on the accent fill__`, backslash escapes; `wiregram.escape` for outside text). A widget's `click` may open a plugin
   modal (`wiregram.modal`, its own width and height, scrolling when render returns more
-  lines) centred over the chooser, faded behind it. A plugin that declares the
+  lines) centred over the chooser, faded behind it, over a key line (`widgetModalKeys`:
+  close, and settings, which opens the plugin's row in Settings' Plugins). A plugin that declares the
   `messages` permission may call `wiregram.accounts()` and `wiregram.unread()`, served by
   `pluginHost` (`internal/tui/pluginhost.go`) through `plugin.Host`.
   Settings' Plugins… row switches them and edits their settings
