@@ -1645,9 +1645,11 @@ func (mb *MmBackend) runWebSocket(ctx context.Context, reconnect bool) error {
 		return fmt.Errorf("websocket auth: %w", err)
 	}
 	if reconnect {
-		// Posts sent while disconnected never arrive as events, so have the
-		// chat list and unread counts reload.
+		// Posts, edits and deletes while disconnected never arrive as events,
+		// so have the chat list and unread counts reload and cached chats
+		// trust only the server.
 		mb.events.Publish(backend.Event{Kind: backend.EventUnread})
+		mb.events.Publish(backend.Event{Kind: backend.EventResync})
 	}
 	go func() {
 		ticker := time.NewTicker(wsPingEvery)

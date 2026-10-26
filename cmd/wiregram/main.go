@@ -179,7 +179,9 @@ Keyboard shortcuts:
     Themes…           Pick a theme (Zest, Copper) from sample cards with the
                       arrows; Enter applies it to every screen
     Chat…             Enter switches the nick style: nick: (text right after
-                      the name) or <nick> (names padded to one column)
+                      the name) or <nick> (names padded to one column), or
+                      Keep chats in memory: a reopened chat draws at once,
+                      then refreshes from the server (on by default)
     AI providers…     Enter opens a provider's name, URL, key variable and
                       model, each edited in place, or deletes it (not while
                       a bot uses it); Add provider… asks step by step

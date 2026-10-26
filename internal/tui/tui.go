@@ -38,6 +38,7 @@ type tuiModel struct {
 	b             backend.Backend
 	events        *backend.Subscription // every event of this account
 	histories     map[backend.ChatID][]string
+	chatBreaks    uint64 // the chat cache's Breaks when the open chat loaded
 	entries       []backend.ChatEntry
 	archived      bool
 	archiveUnread int
@@ -282,6 +283,9 @@ func (m tuiModel) closeChat() tuiModel {
 		return m
 	}
 	m.histories[m.chat.entry.ID] = *m.chat.histories
+	if msgs, ok := m.chat.cacheable(); ok && m.chat.bot == nil && loadChatCache(m.mgr.Store) {
+		m.active.Chats.Put(m.chat.entry.ID, msgs, m.chatBreaks)
+	}
 	m.chat.cleanup()
 	m.chat.dropImages()
 	m.chatOpen = false
@@ -325,6 +329,13 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 	m.histories[entry.ID] = h
 	m.chat = newChatViewModel(m.ctx, m.st, m.b, entry, &h, m.kitty)
 	m.chat.target = target
+	if loadChatCache(m.mgr.Store) {
+		// Taken before the page is asked for: a break after it may lose events.
+		m.chatBreaks = m.active.Chats.Breaks()
+		if msgs, intact, ok := m.active.Chats.Get(entry.ID); ok {
+			m.chat = m.chat.seed(msgs, intact)
+		}
+	}
 	m.backToMentions, m.backToInbox = false, nil
 	m.chatOpen = true
 	m = m.withAgentSent()

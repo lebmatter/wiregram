@@ -54,6 +54,7 @@ type Account struct {
 	Cancel      context.CancelFunc
 	Done        chan struct{}
 	Histories   map[backend.ChatID][]string // Owned exclusively by the UI.
+	Chats       *ChatCache
 }
 
 func (a *Account) Snapshot() AccountState {
@@ -211,7 +212,7 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager, error) {
 	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, changed: make(chan struct{}), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
 	add := func(key string, requireIdentity bool) error {
-		a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
+		a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string), Chats: newChatCache()}
 		a.state.Status = "offline"
 		if _, err := m.identity(key, &a.state.Identity); err != nil {
 			return err
@@ -256,6 +257,7 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 				BackendType: "whatsapp",
 				waBackend:   wb,
 				Histories:   make(map[backend.ChatID][]string),
+				Chats:       newChatCache(),
 			}
 			a.state.Status = "offline"
 			m.addAccount(a)
@@ -276,6 +278,7 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 				BackendType: "matrix",
 				mxBackend:   mb,
 				Histories:   make(map[backend.ChatID][]string),
+				Chats:       newChatCache(),
 			}
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.AccessToken == ""
@@ -296,6 +299,7 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 				BackendType: "mattermost",
 				mmBackend:   mb,
 				Histories:   make(map[backend.ChatID][]string),
+				Chats:       newChatCache(),
 			}
 			a.state.Status = "offline"
 			a.state.NeedsLogin = mb.Token == ""
@@ -317,6 +321,7 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 				BackendType: "email",
 				emBackend:   eb,
 				Histories:   make(map[backend.ChatID][]string),
+				Chats:       newChatCache(),
 			}
 			a.state.Status = "offline"
 			a.state.NeedsLogin = a.NeverAuthenticated()
@@ -355,7 +360,7 @@ func (m *AccountManager) AddTelegram() (*Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string)}
+	a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string), Chats: newChatCache()}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
 	m.addAccount(a)
 	return a, nil
@@ -372,6 +377,7 @@ func (m *AccountManager) AddMattermost(serverURL string) (*Account, error) {
 		BackendType: "mattermost",
 		mmBackend:   mb,
 		Histories:   make(map[backend.ChatID][]string),
+		Chats:       newChatCache(),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
 	m.addAccount(a)
@@ -390,6 +396,7 @@ func (m *AccountManager) AddMatrix(homeserver string) (*Account, error) {
 		BackendType: "matrix",
 		mxBackend:   mb,
 		Histories:   make(map[backend.ChatID][]string),
+		Chats:       newChatCache(),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
 	m.addAccount(a)
@@ -412,6 +419,7 @@ func (m *AccountManager) AddEmail(imapHost string) (*Account, error) {
 		BackendType: "email",
 		emBackend:   eb,
 		Histories:   make(map[backend.ChatID][]string),
+		Chats:       newChatCache(),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
 	m.addAccount(a)
@@ -433,6 +441,7 @@ func (m *AccountManager) AddWhatsApp() (*Account, error) {
 		BackendType: "whatsapp",
 		waBackend:   wb,
 		Histories:   make(map[backend.ChatID][]string),
+		Chats:       newChatCache(),
 	}
 	a.state.Status, a.state.NeedsLogin = "sign-in required", true
 	m.addAccount(a)

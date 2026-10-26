@@ -64,6 +64,15 @@ func loadNickStyle(db *store.DB) string {
 	return nickStyleColon
 }
 
+// chatCacheSetting keeps the messages of chats opened this session in memory,
+// so reopening one draws at once; "off" turns it off.
+const chatCacheSetting = "chat_cache"
+
+func loadChatCache(db *store.DB) bool {
+	v, err := db.Setting(chatCacheSetting)
+	return err != nil || v != "off"
+}
+
 // loadStyles is the chosen theme with the chosen nick style.
 func loadStyles(db *store.DB) *styles {
 	st := newStyles(loadTheme(db))

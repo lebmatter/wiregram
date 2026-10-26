@@ -9,16 +9,18 @@ import (
 type inboxSub struct {
 	backend backend.Backend
 	sub     *backend.Subscription
+	chats   *backend.Subscription // feeds the account's ChatCache
 }
 
-// WatchInbox keeps one subscription on every online account, so each account
-// consumes its events whatever the UI shows, and counts the incoming messages
-// the user has not seen. It returns when ctx ends.
+// WatchInbox keeps subscriptions on every online account, so each account
+// consumes its events whatever the UI shows: one counts the incoming messages
+// the user has not seen, the other keeps the account's ChatCache current. It
+// returns when ctx ends.
 func (m *AccountManager) WatchInbox(ctx context.Context) {
 	subs := make(map[*Account]inboxSub)
 	defer func() {
 		for _, s := range subs {
-			s.sub.Close()
+			s.close()
 		}
 	}()
 	for {
@@ -42,22 +44,30 @@ func (m *AccountManager) syncInbox(subs map[*Account]inboxSub) {
 			continue
 		}
 		if ok {
-			current.sub.Close()
+			current.close()
 			delete(subs, a)
 		}
 		if !online {
 			continue
 		}
 		sub := s.Backend.Events().Subscribe(backend.Filter{Kinds: backend.EventMessage})
-		subs[a] = inboxSub{s.Backend, sub}
+		chats := s.Backend.Events().Subscribe(backend.Filter{Kinds: backend.EventMessage |
+			backend.EventEdit | backend.EventDelete | backend.EventReaction | backend.EventResync})
+		subs[a] = inboxSub{s.Backend, sub, chats}
 		go a.countUnseen(sub)
+		go a.Chats.follow(chats)
 	}
 	for a, s := range subs {
 		if !live[a] {
-			s.sub.Close()
+			s.close()
 			delete(subs, a)
 		}
 	}
+}
+
+func (s inboxSub) close() {
+	s.sub.Close()
+	s.chats.Close()
 }
 
 // countUnseen ends when the subscription is closed. It skips notify: the UI

@@ -73,6 +73,10 @@ type chatViewModel struct {
 	typing   bool
 	early    []backend.Event  // arrived while the first history page was loading
 	target   *backend.Message // selected once the first history page is in
+	// seeded is set while cached messages stand in for the first page;
+	// intact says the cache missed no events, so its older pages stay.
+	seeded, intact bool
+	loaded         bool // the server's first page is in, so the cache may keep it
 
 	subMode chatSubMode
 	notice  string
@@ -486,8 +490,12 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 	case chatHistoryLoaded:
 		cm, cmd := m.handleHistoryLoaded(msg)
-		return cm.clearSelectedChanged(), tea.Batch(cmd, cm.fetchPreviews(msg.messages),
-			cm.fetchQuotes(msg.messages))
+		fetch := msg.messages
+		if !msg.older {
+			fetch = cm.messages // older cached messages may have been kept
+		}
+		return cm.clearSelectedChanged(), tea.Batch(cmd, cm.fetchPreviews(fetch),
+			cm.fetchQuotes(fetch))
 
 	case quotesLoaded:
 		if msg.chat != m.entry.ID {
@@ -526,6 +534,10 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		if m.messages == nil {
 			m.early = append(m.early, msg.ev)
 			return m, nil
+		}
+		if m.seeded {
+			// The page on its way may predate it; replay it after the merge.
+			m.early = append(m.early, msg.ev)
 		}
 		cm, cmd := m.handleEvent(msg.ev)
 		return cm.clearSelectedChanged(), cmd
@@ -799,11 +811,20 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 		}
 		return m, nil
 	}
-	m.messages = msg.messages
-	m.selected = len(msg.messages) - 1
-	m.unread, m.firstUnread = unreadIDs(msg.messages, m.entry.Unread)
-	for _, msg := range msg.messages {
+	keep := ""
+	if m.seeded && m.selected >= 0 && m.selected < len(m.messages)-1 {
+		keep = m.messages[m.selected].ID
+	}
+	m.messages = mergePage(m.messages, msg.messages, m.seeded && m.intact)
+	m.seeded, m.loaded = false, true
+	m.selected = len(m.messages) - 1
+	m.unread, m.firstUnread = unreadIDs(m.messages, m.entry.Unread)
+	m.seen = make(map[string]bool, len(m.messages))
+	for i, msg := range m.messages {
 		m.seen[msg.ID] = true
+		if msg.ID == keep {
+			m.selected = i
+		}
 	}
 	m.reads = &readReporter{marked: m.b.InboxPosition(m.entry)}
 	cmds := []tea.Cmd{m.startReadTimer()}
@@ -828,6 +849,49 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 		}
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// seed shows cached messages while the server's first page loads.
+func (m chatViewModel) seed(msgs []backend.Message, intact bool) chatViewModel {
+	if msgs == nil {
+		return m
+	}
+	m.messages, m.seeded, m.intact = msgs, true, intact
+	m.selected = len(msgs) - 1
+	for _, msg := range msgs {
+		m.seen[msg.ID] = true
+	}
+	return m
+}
+
+// mergePage lays the server's newest page over the cached messages. Older
+// cached ones stay only when keepOlder and the page starts among them;
+// cached ones within the page's span that it lacks were deleted.
+func mergePage(cached, page []backend.Message, keepOlder bool) []backend.Message {
+	if len(page) == 0 || !keepOlder {
+		return page
+	}
+	for k, msg := range cached {
+		if msg.ID == page[0].ID {
+			return append(slices.Clone(cached[:k]), page...)
+		}
+	}
+	return page
+}
+
+// cacheable is what the chat cache may keep once the chat closes: nothing
+// until the server's page is in, and no message without an ID.
+func (m chatViewModel) cacheable() ([]backend.Message, bool) {
+	if !m.loaded {
+		return nil, false
+	}
+	msgs := make([]backend.Message, 0, len(m.messages))
+	for _, msg := range m.messages {
+		if msg.ID != "" && msg.ID != "0" {
+			msgs = append(msgs, msg)
+		}
+	}
+	return msgs, true
 }
 
 func (m chatViewModel) handleEvent(ev backend.Event) (chatViewModel, tea.Cmd) {

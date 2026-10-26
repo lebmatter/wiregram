@@ -15,6 +15,7 @@ const (
 	EventReaction
 	EventTyping // wake-up only; read the state with IsTyping
 	EventUnread // unread counts changed; no payload. Without a Chat, chats may also have appeared
+	EventResync // events for Chat, or every chat without one, may have been missed
 )
 
 // Event is the one format every backend publishes.

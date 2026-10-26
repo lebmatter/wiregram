@@ -19,6 +19,17 @@ The footer and the actions modal only offer what the account's network supports.
 
 Email has folders of conversations instead of chats; see [Email](/features/email).
 
+## Reopening a chat
+
+A chat you opened before in this session draws at once from memory, then Wiregram asks
+the server for its newest messages and puts them in place: anything edited, deleted or
+reacted to meanwhile is updated. While the account is online, edits, deletes and
+reactions keep the remembered chats current even when you are elsewhere. If events may
+have been missed (a reconnect, or a gap the server could not fill), only the newest
+messages are kept and older ones load again as you scroll. Messages are held in memory
+only, never written to disk. Turn it off with **Keep chats in memory** in
+**Settings → Chat…**.
+
 ## Messages
 
 Each message is one block:

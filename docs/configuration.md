@@ -33,7 +33,10 @@ Accounts are listed on the left, followed by:
 - **+ Add account…**: pick a network and sign in.
 - **Themes…**: pick a [theme](/features/themes).
 - **Chat…**: the nick style, `nick:` (default) or `<nick>` in a fixed-width column; see
-  [Messages](/features/chats#messages). Saved as the `nick_style` setting.
+  [Messages](/features/chats#messages). Saved as the `nick_style` setting. Then
+  **Keep chats in memory** (on by default), which draws a reopened chat at once; see
+  [Reopening a chat](/features/chats#reopening-a-chat). Saved as the `chat_cache`
+  setting.
 - **Plugins…**: switch [plugins](/features/plugins) on and off and edit their settings.
 - **AI providers…**: add, edit and delete the providers
   [AI powered chat bots](/features/chat-bots#ai-providers) use.

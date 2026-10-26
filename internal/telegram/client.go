@@ -168,7 +168,17 @@ func newClient(cfg config.Config, storage telegram.SessionStorage, report func(e
 			}
 		}
 	})
-	c.Updates = updates.New(updates.Config{Handler: telegram.UpdateHandlerFunc(c.handleUpdates)})
+	// Gaps too long to fill leave events unseen; cached chats then trust only the server.
+	c.Updates = updates.New(updates.Config{
+		Handler: telegram.UpdateHandlerFunc(c.handleUpdates),
+		OnTooLong: func() {
+			c.events.Publish(backend.Event{Kind: backend.EventResync})
+		},
+		OnChannelTooLong: func(channelID int64) {
+			c.events.Publish(backend.Event{Kind: backend.EventResync,
+				Chat: peerKeyToID(peerKey{'c', channelID})})
+		},
+	})
 	c.Telegram = telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
 		SessionStorage: storage,
 		UpdateHandler:  c.Updates,

@@ -150,7 +150,7 @@ func (m settingsModel) rightRows() int {
 		return len(m.providerRows())
 	}
 	if m.onChat() {
-		return 1
+		return 2
 	}
 	return len(m.items())
 }
@@ -363,12 +363,31 @@ func (m settingsModel) themesKey(k string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// chatKey handles the Chat pane, whose one row switches the nick style.
+// chatKey handles the Chat pane: the nick style, then the chat cache.
 func (m settingsModel) chatKey(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "esc", "ctrl+c", "tab", "left", "h":
 		m.focus = paneAccounts
+	case "up", "k":
+		m.sel = max(0, m.sel-1)
+	case "down", "j":
+		m.sel = min(m.rightRows()-1, m.sel+1)
 	case "enter", "space", " ", "right", "l":
+		if m.sel == 1 {
+			on := !loadChatCache(m.mgr.Store)
+			value := map[bool]string{true: "on", false: "off"}[on]
+			if err := m.mgr.Store.SetSetting(chatCacheSetting, value); err != nil {
+				m.notice = textfmt.CleanError(err)
+				return m, nil
+			}
+			if !on {
+				for _, a := range m.mgr.List() {
+					a.Chats.Clear()
+				}
+			}
+			m.notice = "Keep chats in memory: " + value
+			return m, nil
+		}
 		next := nickStyleColumn
 		if loadNickStyle(m.mgr.Store) == nickStyleColumn {
 			next = nickStyleColon
@@ -635,9 +654,15 @@ func (m settingsModel) itemLines(width, height int) []string {
 			lines = append(append(lines, ""), m.themeLines(width)...)
 		}
 		if m.onChat() {
-			lines = append(lines, "", m.st.formRow("Nick style",
-				m.st.subtle.Render(loadNickStyle(m.mgr.Store)), 10, true, m.focus == paneItems,
-				width))
+			cache := "off"
+			if loadChatCache(m.mgr.Store) {
+				cache = "on"
+			}
+			lines = append(lines, "",
+				m.st.formRow("Nick style", m.st.subtle.Render(loadNickStyle(m.mgr.Store)), 20,
+					m.sel == 0, m.focus == paneItems, width),
+				m.st.formRow("Keep chats in memory", m.st.subtle.Render(cache), 20,
+					m.sel == 1, m.focus == paneItems, width))
 		}
 		if m.onPlugins() {
 			lines = append(append(lines, ""), m.pluginLines(width, height-itemsTop)...)

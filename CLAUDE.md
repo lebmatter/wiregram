@@ -383,11 +383,23 @@ lowest package that needs them rather than importing sideways.
   `backend.Bus` (`internal/backend/bus.go`), regardless of what the UI shows.
   Consumers subscribe with a `Filter` applied at publish time: the TUI screen
   (everything), the inbox watcher (`internal/account/inbox.go`, unseen counts
-  for every online account) and the agent runtime (DM messages only, text-only
+  for every online account, and a second subscription feeding each account's
+  `ChatCache`) and the agent runtime (DM messages only, text-only
   when the agent is). `SetActive` only scopes unread suppression and typing.
+- `ChatCache` (`internal/account/chatcache.go`, the Keep chats in memory setting,
+  `chat_cache`) holds the messages of chats opened this session, `Raw` and all, in
+  memory only. Reopening one seeds the chat with them (`chatViewModel.seed`), then
+  the server's newest page replaces their newest part (`mergePage`). No message is
+  ever final (Telegram, Matrix and Mattermost allow deletes at any age), so older
+  cached pages survive only while the chat is `intact`: a dropped event, a closed
+  subscription or `EventResync` (Mattermost reconnects, limited Matrix timelines,
+  Telegram gaps too long to fill) breaks it. Telegram deletions that name no chat
+  break the chats holding those IDs instead of deleting from them. Bots and the
+  unread cards never read it.
 - `Publish` never blocks and no lock is held across a channel operation;
   backends release their own mutex before publishing. Lock order is
-  `agentRuntime.reloadMu` → `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`; in the
+  `agentRuntime.reloadMu` → `agentRuntime.mu` → `Bus.mu` → `Subscription.mu`
+  (`ChatCache.mu` is a leaf); in the
   mail backend, `connMu` (the IMAP connection, held through syncs) → `mu`, so the screen
   reads the special folders under `mu` without waiting on a sync.
 - The chat lock lives in the chat model (`locked`): the root sets it on `tea.BlurMsg`

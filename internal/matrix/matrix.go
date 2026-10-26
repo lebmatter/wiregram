@@ -525,6 +525,11 @@ func (mx *MxBackend) processJoinedRoom(ctx context.Context, roomID string, joine
 	for _, ev := range joined.State.Events {
 		mx.processStateEvent(roomID, ev)
 	}
+	if joined.Timeline.Limited {
+		// The server left events of this room out of the sync.
+		mx.events.Publish(backend.Event{Kind: backend.EventResync,
+			Chat: backend.ChatID{Backend: "matrix", Id: roomID}})
+	}
 	for _, ev := range joined.Timeline.Events {
 		if ev.StateKey != nil {
 			mx.processStateEvent(roomID, ev)
