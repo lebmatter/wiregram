@@ -213,7 +213,10 @@ These are project constraints, not suggestions:
   composer or a right click opens the actions modal
   (`internal/tui/msgmenu.go`) for the selected message: when the backend has
   reactions, a `+` reaction search field (typing in the modal filters) over the
-  matching emoji row, then only the actions the message allows. The root draws
+  matching emoji row, then only the actions the message allows: Edit within the
+  network's window (`Editable`: Telegram 48 h but channel posts and Saved Messages,
+  WhatsApp `whatsmeow.EditWindow`, Mattermost's `PostEditTimeLimit`), Delete for
+  everyone within `Capabilities.RevokeWindow` (WhatsApp 60 h). The root draws
   it centred over the chat with everything behind it reduced to plain dim
   text (`fadeUnder`); the footer shows the modal's keys.
 - Private chats show the first name, else username, else `Deleted Account`.

@@ -112,7 +112,8 @@ Below come only the actions the message allows:
 - forward
 - open, play or save the attachment
 - pin
-- delete (asks first)
+- delete (asks first); WhatsApp deletes your messages for everyone only in their first
+  60 hours
 
 ## Composing
 

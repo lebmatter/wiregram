@@ -107,6 +107,7 @@ func (wa *WaBackend) Capabilities() backend.Capabilities {
 		Typing:        true,
 		DeleteChat:    false,
 		Archive:       false,
+		RevokeWindow:  60 * time.Hour,
 	}
 }
 

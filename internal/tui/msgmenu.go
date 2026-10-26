@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
@@ -81,13 +82,10 @@ func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel ba
 		pin = "Unpin"
 	}
 	add(caps.Pin, actPin, pin)
-	switch {
-	case caps.DeleteForMe:
-		add(true, actDeleteForMe, "Delete for me")
-		add(true, actDeleteForAll, "Delete for everyone")
-	default:
-		add(true, actDeleteForAll, "Delete for everyone")
-	}
+	revocable := caps.RevokeWindow == 0 || !sel.Outgoing ||
+		time.Since(sel.Timestamp) <= caps.RevokeWindow
+	add(caps.DeleteForMe, actDeleteForMe, "Delete for me")
+	add(revocable, actDeleteForAll, "Delete for everyone")
 	m := msgMenuModel{
 		st:      st,
 		b:       b,

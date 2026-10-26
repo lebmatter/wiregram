@@ -143,6 +143,9 @@ type Capabilities struct {
 	Typing        bool
 	DeleteChat    bool
 	Archive       bool
+	// RevokeWindow is how long after sending the user may delete a message
+	// for everyone; zero means no limit.
+	RevokeWindow time.Duration
 }
 
 type Backend interface {
