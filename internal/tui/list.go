@@ -645,6 +645,16 @@ func (m chatListModel) refreshUnread() chatListModel {
 	return m
 }
 
+// has reports whether the chat is in the list.
+func (m chatListModel) has(id backend.ChatID) bool {
+	for _, e := range m.entries {
+		if e.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // itemAt maps a cell of the list on screen to a selection index; headers of
 // accounts, placeholders and rules are not selectable.
 func (m chatListModel) itemAt(x, y int) (int, bool) {

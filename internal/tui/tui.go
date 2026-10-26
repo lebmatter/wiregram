@@ -532,7 +532,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			cmd = tea.Batch(cmd, reload)
 		}
 		m.list = m.list.refreshUnread()
-		if msg.ev.Kind == backend.EventUnread && msg.ev.Chat == (backend.ChatID{}) {
+		// A message in a chat the list lacks is a new chat: reload to show it.
+		newChat := msg.ev.Kind == backend.EventMessage && !m.archived && !m.list.mailbox &&
+			!m.list.has(msg.ev.Chat)
+		if newChat || msg.ev.Kind == backend.EventUnread && msg.ev.Chat == (backend.ChatID{}) {
 			cmd = tea.Batch(cmd, loadDialogs(m.ctx, m.b, m.archived))
 		}
 		return m, tea.Batch(cmd, listenEvents(m.events))
