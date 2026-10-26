@@ -321,6 +321,17 @@ func (wa *WaBackend) handleMessage(evt *events.Message) {
 
 	chat := backend.ChatID{Backend: "whatsapp", Id: chatJID.String()}
 
+	// A revoke deletes the message for everyone; it is not a message itself.
+	if pm := evt.Message.GetProtocolMessage(); pm != nil && !evt.IsEdit &&
+		pm.GetType() == waE2E.ProtocolMessage_REVOKE {
+		id := pm.GetKey().GetID()
+		wa.mu.Lock()
+		wa.forget(chatJID, id)
+		wa.mu.Unlock()
+		wa.events.Publish(backend.Event{Kind: backend.EventDelete, Chat: chat, Deleted: []string{id}})
+		return
+	}
+
 	wa.mu.Lock()
 	wa.touchChat(chatJID, evt.Info.Timestamp)
 	reaction := evt.Message.GetReactionMessage()
@@ -541,6 +552,13 @@ func (wa *WaBackend) edited(chatJID types.JID, id string, msg backend.Message) {
 			return
 		}
 	}
+}
+
+// forget drops the cached message id and its reactions. The caller holds wa.mu.
+func (wa *WaBackend) forget(chatJID types.JID, id string) {
+	wa.msgCache[chatJID] = slices.DeleteFunc(wa.msgCache[chatJID],
+		func(m backend.Message) bool { return m.ID == id })
+	delete(wa.reactions, id)
 }
 
 // senderOf is who sent the cached message id in chatJID, or the empty JID
@@ -967,6 +985,9 @@ func (wa *WaBackend) DeleteMessages(ctx context.Context, ch backend.ChatEntry, i
 		if _, err := wa.Client.RevokeMessage(ctx, jid, id); err != nil {
 			return fmt.Errorf("revoke message: %w", err)
 		}
+		wa.mu.Lock()
+		wa.forget(jid, id)
+		wa.mu.Unlock()
 	}
 	return nil
 }
