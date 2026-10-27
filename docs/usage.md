@@ -26,7 +26,7 @@ The sidebar is an account tree. Every account is a row with an arrow, a status g
 a tag such as `TG` with the account's number, and its label. The active account is
 expanded to a line of chips: unread, @ mentions, you (the chat with yourself: Saved
 Messages on Telegram, your own DM on Mattermost and WhatsApp), archived (Telegram) and
-/ search; then its chats in folding sections (teams on Mattermost, else groups or rooms
+search; then its chats in folding sections (teams on Mattermost, else groups or rooms
 and channels, then direct), unread chats first; then its [bots](/features/chat-bots).
 An email account is expanded to compose and labels chips, then its
 [folders](/features/email#folders). <kbd>Space</kbd> folds a section.
@@ -68,10 +68,11 @@ Questions and pickers open as modals over the screen, with everything behind the
 - **Confirmations.** Quitting, deleting a chat, message, bot or provider, removing an
   account and Reset ask first. <kbd>y</kbd> or <kbd>Enter</kbd> on the action goes
   ahead, <kbd>Esc</kbd> cancels. Deletes and Reset start on Cancel.
-- **Search users, Forward to and Mention** share one picker: type to filter,
+- **Search, Forward to and Mention** share one picker: type to filter,
   <kbd>Enter</kbd> to pick. Each row starts with `@` for a person, `#` for a channel or
-  `⁂` for a group, the typed text is lit in the accent, and a Mattermost channel shows
-  its team at the right edge.
+  `⁂` for a group, with `group` or `channel` dim beside the name; the typed text is lit
+  in the accent, and a Mattermost channel shows its team at the right edge. Search
+  opened from a chat (<kbd>Ctrl+F</kbd>) also lists that chat's matching messages.
 - **Message actions** open with <kbd>Enter</kbd> on an empty composer or a right click.
   See [Chats](/features/chats#message-actions).
 - **Account connected.** A new account opens with a card listing the keys to get around

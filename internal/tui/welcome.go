@@ -34,7 +34,7 @@ func newWelcomeModal(st *styles, b backend.Backend, twoPane bool) welcomeModal {
 	}
 	keys = append(keys, helpKey{"a", "accounts"},
 		helpKey{"", ""},
-		helpKey{"/", "search users"},
+		helpKey{"^F", "search"},
 		helpKey{"ctrl+f", "search in chat"})
 	return welcomeModal{st: st, label: textfmt.Plain(b.AccountLabel()), keys: keys}
 }

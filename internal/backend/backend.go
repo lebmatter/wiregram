@@ -295,7 +295,16 @@ type MentionFetcher interface {
 	Mentions(ctx context.Context, limit int) ([]Mention, error)
 }
 
-// Mention is one message that mentions the user, with the chat it is in.
+// GlobalSearcher is implemented by backends that can search the messages of
+// every chat at once.
+type GlobalSearcher interface {
+	// SearchAll returns at most limit messages matching query, newest first,
+	// each with the chat it is in.
+	SearchAll(ctx context.Context, query string, limit int) ([]Mention, error)
+}
+
+// Mention is one message with the chat it is in: a message that mentions the
+// user, or a SearchAll hit.
 type Mention struct {
 	Chat    ChatEntry
 	Message Message

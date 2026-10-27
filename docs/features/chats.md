@@ -149,11 +149,21 @@ type to filter and press <kbd>Enter</kbd>.
 
 ## Search
 
-- <kbd>/</kbd> in the chat list opens **Search users**: type a name, <kbd>Enter</kbd>
-  opens the chat. On Mattermost it finds channels too, and picking a public one you
-  haven't joined joins it.
-- <kbd>Ctrl+F</kbd> in a chat searches its messages: <kbd>↑</kbd>/<kbd>↓</kbd> move
-  between hits, <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> cancels.
+<kbd>Ctrl+F</kbd> (or the **search** chip) opens one search modal. Type a name and it
+lists your chats and the people, groups and channels the server finds, each group or
+channel marked as such in dim text beside its name; <kbd>Enter</kbd> opens the chat. On
+Mattermost picking a public channel you haven't joined joins it.
+
+Opened from a chat, the modal sits over it and adds a **messages in #chat** section under
+the chats: the open chat's messages that match. <kbd>↑</kbd>/<kbd>↓</kbd> run through both
+sections, and <kbd>Enter</kbd> or a click on a message jumps to it.
+
+Once you type, the first row is **search all chats for "…"**, selected from the start, so
+typing and pressing <kbd>Enter</kbd> searches the messages of every chat on the account
+(Telegram, Mattermost and Matrix; not WhatsApp or email). The results open in the chat's
+place as cards like [Unread](/features/unread-mentions), one per chat with its matching
+messages. <kbd>Enter</kbd> opens the chat on the newest match, and <kbd>Esc</kbd> from it
+comes back to the results. This view is reached only from the search modal.
 
 ## Link previews
 

@@ -70,9 +70,11 @@ type tuiModel struct {
 	// click closes it.
 	profile *profileModal
 	// backToMentions sends Esc from the open chat back to Mentions, the
-	// view it was opened from, rather than Unread; backToInbox to the bot's
-	// inbox, for a chat opened there.
+	// view it was opened from, rather than Unread; backToSearch to the
+	// search of every chat for it; backToInbox to the bot's inbox, for a
+	// chat opened there.
 	backToMentions bool
+	backToSearch   string
 	backToInbox    *inboxBot
 	focus          tuiFocus
 	result         *tuiResult
@@ -297,19 +299,19 @@ func (m tuiModel) openChat(entry backend.ChatEntry) (tuiModel, tea.Cmd) {
 	return m.openChatAt(entry, nil)
 }
 
-// openCard opens the chat of a card in the Unread or Mentions view; a
-// mention opens with its newest message selected.
+// openCard opens the chat of a card in the Unread, Mentions or search view;
+// a mention or a match opens with its newest message selected.
 func (m tuiModel) openCard(c unreadCard) (tuiModel, tea.Cmd) {
 	if bot := m.unread.bot; bot != nil {
 		return m.openBotChat(*bot, m.unread.b, c.entry)
 	}
-	mentions := m.unread.mentions
+	mentions, query := m.unread.mentions, m.unread.query
 	var target *backend.Message
-	if mentions && len(c.msgs) > 0 {
+	if (mentions || query != "") && len(c.msgs) > 0 {
 		target = &c.msgs[len(c.msgs)-1]
 	}
 	m, cmd := m.openChatAt(c.entry, target)
-	m.backToMentions = mentions
+	m.backToMentions, m.backToSearch = mentions, query
 	return m, cmd
 }
 
@@ -336,7 +338,7 @@ func (m tuiModel) openChatAt(entry backend.ChatEntry, target *backend.Message) (
 			m.chat = m.chat.seed(msgs, intact)
 		}
 	}
-	m.backToMentions, m.backToInbox = false, nil
+	m.backToMentions, m.backToSearch, m.backToInbox = false, "", nil
 	m.chatOpen = true
 	m = m.withAgentSent()
 	m.focus = focusChat
@@ -390,7 +392,7 @@ func (m tuiModel) openBotChat(bot inboxBot, b backend.Backend, entry backend.Cha
 	m.chat = newChatViewModel(m.ctx, m.st, b, entry, &h, m.kitty)
 	m.chat.bot = &bot
 	m.chat.input.Placeholder = "Message " + textfmt.Plain(entry.Title) + " as @" + bot.handle + "…"
-	m.backToMentions, m.backToInbox = false, &bot
+	m.backToMentions, m.backToSearch, m.backToInbox = false, "", &bot
 	m.botEvents = b.Events().Subscribe(backend.Filter{})
 	m.chatOpen = true
 	m = m.withAgentSent()
@@ -682,9 +684,12 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			}
 		}
 		var cmd tea.Cmd
-		if m.backToMentions {
+		switch {
+		case m.backToSearch != "":
+			m.unread, cmd = newGlobalSearch(m.ctx, m.st, m.b, m.backToSearch)
+		case m.backToMentions:
 			m.unread, cmd = newMentions(m.ctx, m.st, m.b)
-		} else {
+		default:
 			m.unread, cmd = newUnread(m.ctx, m.st, m.b, entries)
 		}
 		m.unreadOpen = true
@@ -705,6 +710,38 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		var cmd tea.Cmd
 		m.search, cmd = newMentionSearch(m.ctx, m.st, m.b, mn, m.chat.entry)
 		m.searchOpen = true
+		return m, cmd
+
+	case chatSearchReq:
+		if !m.chatOpen {
+			break
+		}
+		var cmd tea.Cmd
+		if m.b.Capabilities().Search {
+			m.search, cmd = newChatSearch(m.ctx, m.st, m.b, m.entries, m.chat.entry)
+		} else {
+			m.search, cmd = newUserSearch(m.ctx, m.st, m.b, m.entries)
+		}
+		m.searchOpen = true
+		return m, cmd
+
+	case userSearchGlobal:
+		m.searchOpen = false
+		m = m.closeChat()
+		var cmd tea.Cmd
+		m.unread, cmd = newGlobalSearch(m.ctx, m.st, m.b, msg.query)
+		m.unreadOpen = true
+		m.focus = focusChat
+		return m.sized(), cmd
+
+	case userSearchMessage:
+		m.searchOpen = false
+		if !m.chatOpen {
+			break
+		}
+		m.focus = focusChat
+		var cmd tea.Cmd
+		m.chat, cmd = m.chat.goTo(msg.id)
 		return m, cmd
 
 	case userMentionPicked:
@@ -1008,7 +1045,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		m.chat = m.chat.scrollThread(lines)
 	case m.chatOpen:
 		switch m.chat.subMode {
-		case chatSubNone, chatSubThread, chatSubMenu, chatSubSearch, chatSubUpload:
+		case chatSubNone, chatSubThread, chatSubMenu, chatSubUpload:
 			// Other submodes are prompts that any key would answer.
 			m.chat, cmd = m.chat.Update(k)
 		}
@@ -1564,9 +1601,9 @@ func (m tuiModel) chatModalRect() (x, y, w, h int) {
 }
 
 // searchArea is the part of the screen the search modal centres in: the chat
-// for a forward or a mention, else the whole body.
+// for a forward, a mention or a search from the chat, else the whole body.
 func (m tuiModel) searchArea() (left, width int) {
-	if m.chatOpen && (m.search.forward != nil || m.search.mention != nil) {
+	if m.chatOpen && (m.search.forward != nil || m.search.mention != nil || m.search.in != nil) {
 		if m.twoPane() {
 			left = sidebarWidth
 		}

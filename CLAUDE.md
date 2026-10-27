@@ -105,7 +105,7 @@ These are project constraints, not suggestions:
   when expanded, number, label, unseen count while collapsed, a violet `✦` when it
   has a bot), the active one expanded to a line of chips, each a stop for ↑/↓: unread,
   @ mentions, you (`backend.SelfChatter`: the chat with oneself on Telegram, Mattermost
-  and WhatsApp), archived (Telegram only) and / search. Then its chats in sections under
+  and WhatsApp), archived (Telegram only) and search. Then its chats in sections under
   ruled headers that Space, Enter or a click folds for the session (`folded`): the team
   (`ChatEntry.Section`, whose `[Team] ` title prefix the sidebar drops) on Mattermost,
   else groups (rooms on Matrix) and channels (`ChatEntry.IsChannel`, without
@@ -206,12 +206,21 @@ These are project constraints, not suggestions:
   (`#name` or `@name`, the team tag, `message #name` over a `❯` prompt; both inputs are
   textareas that wrap and grow to `composerMaxRows`, `newComposerArea`), and the footer
   leads with a `CHAT` or `THREAD` badge.
-- Search users (`/`), the forward picker and the mention picker are one modal
-  (`userSearchModel`, `internal/tui/search.go`) drawn over the screen with
-  `fadeUnder`: search users centred on the body, forward and mention on the chat.
-  A boxed `@` query, a `recent · N` (or `N matches`) heading rule, rows of a kind glyph
-  (`@`, `#`, `⁂`; `backend.CandidateKind`), name, dim detail and a `[team]` tag
-  (`UserCandidate.Tag`) with the query lit, then a key line with the glyph legend.
+- Search (Ctrl+F or the search chip; there is no `/`), the forward picker and the
+  mention picker are one modal (`userSearchModel`, `internal/tui/search.go`) drawn over
+  the screen with `fadeUnder`: search from the sidebar or unread centred on the body;
+  search from a chat (`newChatSearch`), forward and mention on the chat.
+  A boxed query (`@` before it in the mention picker), a `recent · N` (or `N matches`) heading rule, rows of a kind glyph
+  (`@`, `#`, `⁂`; `backend.CandidateKind`), name, a dim `group`/`channel`, dim detail
+  and a `[team]` tag (`UserCandidate.Tag`) with the query lit, then a key line. Search
+  from a chat adds a `messages in #chat` rule and that chat's `SearchMessages` hits
+  under the people; ↑/↓ run through both and Enter on a message jumps to it (`goTo`).
+  With a query typed on a `backend.GlobalSearcher` (Telegram's global search, every
+  Mattermost team's post search, Matrix `/search`), the first row is `search all chats
+  for "…"`, selected as the query changes (`onGlobal`), so Enter opens the search
+  results: the Unread view's cards with `unreadModel.query` set (`newGlobalSearch`,
+  `internal/tui/globalsearch.go`), one per chat, reached only from the modal; Esc from
+  a chat opened there returns to them (`backToSearch`).
   `@` at the start of a word in a group chat's composer opens the mention picker
   when the backend implements `backend.Mentioner`; a pick inserts the
   candidate's `Mention` text and each backend turns that text into a native

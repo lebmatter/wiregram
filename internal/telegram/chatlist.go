@@ -52,6 +52,32 @@ func (c *Client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 		return nil, 0, fmt.Errorf("Telegram returned an unexpected chat list")
 	}
 	c.Remember(users, groups)
+	peers := peerChats(users, groups)
+	entries := make([]chat, 0, 20)
+	archiveUnread := 0
+	for _, value := range dialogs {
+		switch d := value.(type) {
+		case *tg.Dialog:
+			c.rememberRead(keyOf(d.Peer), d.ReadInboxMaxID, d.ReadOutboxMaxID)
+			c.rememberUnread(keyOf(d.Peer), d.UnreadCount)
+			if entry, ok := peers[keyOf(d.Peer)]; ok {
+				entry.unread = d.UnreadCount
+				entries = append(entries, entry)
+			}
+		case *tg.DialogFolder:
+			if d.Folder.ID == 1 {
+				archiveUnread = d.UnreadMutedMessagesCount + d.UnreadUnmutedMessagesCount
+			}
+		}
+		if len(entries) == 20 {
+			break
+		}
+	}
+	return entries, archiveUnread, nil
+}
+
+// peerChats is the chats a response names, by peer.
+func peerChats(users []tg.UserClass, groups []tg.ChatClass) map[peerKey]chat {
 	peers := make(map[peerKey]chat)
 	for _, value := range users {
 		if u, ok := value.(*tg.User); ok {
@@ -77,25 +103,5 @@ func (c *Client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 				title: title, broadcast: g.Broadcast}
 		}
 	}
-	entries := make([]chat, 0, 20)
-	archiveUnread := 0
-	for _, value := range dialogs {
-		switch d := value.(type) {
-		case *tg.Dialog:
-			c.rememberRead(keyOf(d.Peer), d.ReadInboxMaxID, d.ReadOutboxMaxID)
-			c.rememberUnread(keyOf(d.Peer), d.UnreadCount)
-			if entry, ok := peers[keyOf(d.Peer)]; ok {
-				entry.unread = d.UnreadCount
-				entries = append(entries, entry)
-			}
-		case *tg.DialogFolder:
-			if d.Folder.ID == 1 {
-				archiveUnread = d.UnreadMutedMessagesCount + d.UnreadUnmutedMessagesCount
-			}
-		}
-		if len(entries) == 20 {
-			break
-		}
-	}
-	return entries, archiveUnread, nil
+	return peers
 }

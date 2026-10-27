@@ -45,7 +45,7 @@ func kindOf(e backend.ChatEntry) (chatKind, string) {
 type unreadCard struct {
 	entry backend.ChatEntry
 	msgs  []backend.Message
-	count int // the pill: unread messages, or mentions in the Mentions view
+	count int // the pill: unread messages, or mentions or matches
 	err   error
 	// waiting marks a bot inbox chat with a reply waiting for approval.
 	waiting bool
@@ -67,6 +67,7 @@ type unreadModel struct {
 	ctx      context.Context
 	b        backend.Backend
 	mentions bool
+	query    string    // what a search of every chat looks for
 	bot      *inboxBot // the bot whose inbox this is, over b, its connection
 	waiting  map[backend.ChatID]bool
 	entries  []backend.ChatEntry
@@ -100,6 +101,12 @@ func (m unreadModel) load() (unreadModel, tea.Cmd) {
 		waiting := m.waiting
 		return m, func() tea.Msg {
 			cards, err := inboxCards(ctx, b, waiting)
+			return unreadLoaded{gen, cards, err}
+		}
+	}
+	if query := m.query; query != "" {
+		return m, func() tea.Msg {
+			cards, err := searchCards(ctx, b, query)
 			return unreadLoaded{gen, cards, err}
 		}
 	}
@@ -248,7 +255,7 @@ func (m unreadModel) threadReply(c unreadCard) (backend.Message, bool) {
 // canMark reports whether m marks the card's chat read: unread chats of the
 // user's own account.
 func (m unreadModel) canMark(c unreadCard) bool {
-	return m.bot == nil && !m.mentions && c.count > 0
+	return m.bot == nil && !m.mentions && m.query == "" && c.count > 0
 }
 
 func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
@@ -269,7 +276,7 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 			return m, func() tea.Msg { return unreadClosed{} }
 		case "r":
 			return m.load()
-		case "/":
+		case "ctrl+f":
 			return m, func() tea.Msg { return chatListSearch{} }
 		case "up", "k":
 			// A tall card scrolls to its top before the one above is selected,
@@ -333,6 +340,9 @@ func (m unreadModel) name() string {
 	if m.bot != nil {
 		return agentIcon + " @" + m.bot.handle + " inbox"
 	}
+	if m.query != "" {
+		return "search “" + m.query + "”"
+	}
 	if m.mentions {
 		return "Mentions"
 	}
@@ -350,6 +360,8 @@ func (m unreadModel) view(focused bool) string {
 		body = append(body, m.st.subtle.Render("Loading…"))
 	case len(m.cards) == 0 && m.bot != nil:
 		body = append(body, m.st.subtle.Render("No one has messaged @"+m.bot.handle+" yet"))
+	case len(m.cards) == 0 && m.query != "":
+		body = append(body, m.st.subtle.Render("No messages match"))
 	case len(m.cards) == 0 && m.mentions:
 		body = append(body, m.st.subtle.Render("No mentions"))
 	case len(m.cards) == 0:
@@ -649,5 +661,5 @@ func (m unreadModel) helpKeys() []helpKey {
 			keys = append(keys, helpKey{"m", "mark read"})
 		}
 	}
-	return append(keys, helpKey{"/", "search"}, helpKey{"r", "reload"}, helpKey{"esc", "back"})
+	return append(keys, helpKey{"^F", "search"}, helpKey{"r", "reload"}, helpKey{"esc", "back"})
 }

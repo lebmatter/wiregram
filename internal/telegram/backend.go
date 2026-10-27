@@ -444,6 +444,43 @@ func (tb *TelegramBackend) SearchMessages(ctx context.Context, ch backend.ChatEn
 	return tgMessagesToMessages(tb.C, msgs), nil
 }
 
+// SearchAll is Telegram's global search over every chat of the account.
+func (tb *TelegramBackend) SearchAll(ctx context.Context, query string, limit int) ([]backend.Mention, error) {
+	result, err := tb.C.Api.MessagesSearchGlobal(ctx, &tg.MessagesSearchGlobalRequest{
+		Q:          query,
+		Filter:     &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search all chats: %w", err)
+	}
+	var raw []tg.MessageClass
+	var users []tg.UserClass
+	var groups []tg.ChatClass
+	switch r := result.(type) {
+	case *tg.MessagesMessages:
+		raw, users, groups = r.Messages, r.Users, r.Chats
+	case *tg.MessagesMessagesSlice:
+		raw, users, groups = r.Messages, r.Users, r.Chats
+	case *tg.MessagesChannelMessages:
+		raw, users, groups = r.Messages, r.Users, r.Chats
+	}
+	tb.C.Remember(users, groups)
+	peers := peerChats(users, groups)
+	var found []backend.Mention
+	for _, value := range raw {
+		m, ok := value.(*tg.Message)
+		if !ok {
+			continue
+		}
+		if ch, ok := peers[keyOf(m.PeerID)]; ok {
+			found = append(found, backend.Mention{Chat: chatToChatEntry(ch), Message: tgToMessage(tb.C, m)})
+		}
+	}
+	return found, nil
+}
+
 // mentionChats bounds how many recent groups Mentions asks, one request
 // each, so a long chat list does not run into flood waits.
 const mentionChats = 20

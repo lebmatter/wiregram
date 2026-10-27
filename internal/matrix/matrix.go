@@ -1606,6 +1606,47 @@ func (mx *MxBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 	return messages, nil
 }
 
+// SearchAll searches the messages of every joined room on the homeserver.
+func (mx *MxBackend) SearchAll(ctx context.Context, query string, limit int) ([]backend.Mention, error) {
+	body := map[string]any{
+		"search_categories": map[string]any{
+			"room_events": map[string]any{
+				"search_term": query,
+				"filter":      map[string]any{"limit": limit},
+				"order_by":    "recent",
+			},
+		},
+	}
+	var resp struct {
+		SearchCategories struct {
+			RoomEvents struct {
+				Results []struct {
+					Result struct {
+						mxTimelineEvent
+						RoomID string `json:"room_id"`
+					} `json:"result"`
+				} `json:"results"`
+			} `json:"room_events"`
+		} `json:"search_categories"`
+	}
+	if err := mx.apiJSON(ctx, "POST", "/search", body, &resp); err != nil {
+		return nil, fmt.Errorf("search all rooms: %w", err)
+	}
+	var found []backend.Mention
+	for _, r := range resp.SearchCategories.RoomEvents.Results {
+		ev := r.Result.mxTimelineEvent
+		entry, ok := mx.roomEntry(r.Result.RoomID)
+		if !ok || mxRedacted(ev) {
+			continue
+		}
+		found = append(found, backend.Mention{Chat: entry, Message: mx.eventToMessage(r.Result.RoomID, ev)})
+		if len(found) == limit {
+			break
+		}
+	}
+	return found, nil
+}
+
 // Mentions lists the server's highlight notifications, which follow the
 // user's push rules: their ID, display name and @room. The server keeps
 // only recent ones.

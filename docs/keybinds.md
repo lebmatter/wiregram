@@ -30,7 +30,7 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Enter</kbd> | Open chat (on email, a folder) or chip, switch to the selected account, fold a section, or open a bot, its inbox, or create one (**new bot…**) in the bots section |
 | <kbd>Space</kbd> | Fold or unfold the selected chat's section |
 | <kbd>c</kbd> | Compose a mail (email) |
-| <kbd>/</kbd> | Search users; on Mattermost also channels, joining a public one when picked |
+| <kbd>Ctrl+F</kbd> | Search chats, people, groups and channels; on Mattermost picking a public channel joins it |
 | <kbd>u</kbd> | Unread: cards for every chat with unread messages |
 | <kbd>m</kbd> | Mentions: cards for the groups and channels mentioning you (not email) |
 | <kbd>a</kbd> | Accounts (add, sign in, retry, Settings…) |
@@ -39,7 +39,7 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Ctrl+Alt+D</kbd> | Delete private chat (both sides) |
 | <kbd>Esc</kbd> | Close the open chat (wide terminals), else back to Accounts |
 
-## Unread / Mentions
+## Unread / Mentions / Search results
 
 | Key | Action |
 |-----|--------|
@@ -47,18 +47,18 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Enter</kbd> | Open the chat; a mention opens selected, in its thread on Mattermost |
 | <kbd>t</kbd> | Open the newest reply's thread (Mattermost) |
 | <kbd>m</kbd> | Mark the chat read (Unread) |
-| <kbd>/</kbd> | Search users |
+| <kbd>Ctrl+F</kbd> | Search |
 | <kbd>r</kbd> | Reload |
 | <kbd>Esc</kbd> | Back |
 
-## Search users / Forward to / Mention
+## Search / Forward to / Mention
 
 | Key | Action |
 |-----|--------|
 | Type | Filter |
 | <kbd>↑</kbd>/<kbd>Ctrl+P</kbd>, <kbd>↓</kbd>/<kbd>Ctrl+N</kbd> | Select |
 | <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | Page |
-| <kbd>Enter</kbd> | Open the chat, forward the message to it, or insert the mention |
+| <kbd>Enter</kbd> | After typing, search all chats' messages (the first row; Telegram, Mattermost and Matrix); else open the chat, go to the message (search from a chat), forward the message to it, or insert the mention |
 | <kbd>Esc</kbd> | Clear the query, then close; Mention closes at once and types the `@` and query as written |
 | Click outside | Close |
 
@@ -83,7 +83,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Select message (<kbd>↑</kbd> at the top loads older ones) |
 | <kbd>Enter</kbd> | Send text; with an empty input, open the selected message's actions |
 | <kbd>Ctrl+U</kbd> | Upload a file, in a modal over the chat (or click the <kbd>+</kbd> at the end of the input) |
-| <kbd>Ctrl+F</kbd> | Search messages, in a modal over the chat (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Enter</kbd> or a click goes to one, <kbd>Esc</kbd> closes) |
+| <kbd>Ctrl+F</kbd> | Search, in a modal over the chat: chats and people, then this chat's messages (<kbd>Enter</kbd> or a click goes to one) |
 | <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
 | <kbd>Alt+T</kbd> | Open the selected message's thread beside the chat |
 | <kbd>Alt+H</kbd> | Toggle private mode (hide history) |

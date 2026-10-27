@@ -44,7 +44,7 @@ Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to a line of
-chips (unread, @ mentions, you, archived, / search), then its chats in
+chips (unread, @ mentions, you, archived, search), then its chats in
 sections that Space folds (teams on Mattermost, else groups or rooms and
 channels, then direct), unread chats first, then its bots; Enter on another
 account switches to it; home (the account list) and settings… stay pinned
@@ -148,8 +148,9 @@ Keyboard shortcuts:
                       settings or create one (new bot…), under bots
     Space             Fold or unfold the selected chat's section
     c                 Compose a mail (email)
-    /                 Search users (a modal over the screen); on Mattermost
-                      also channels, joining a public one when picked
+    Ctrl+F            Search chats, people, groups and channels (a modal
+                      over the screen); on Mattermost picking a public
+                      channel joins it
     u                 Unread: cards for every chat with unread messages
     m                 Mentions: cards for the groups and channels with the
                       latest messages mentioning you (not email)
@@ -159,22 +160,24 @@ Keyboard shortcuts:
     Ctrl+Alt+D        Delete private chat (both sides)
     Esc               Close the open chat (wide terminals), else back to Accounts
 
-  Unread / Mentions
+  Unread / Mentions / Search results
     Up/k, Down/j      Select card
-    Enter             Open the chat; a mention opens selected, in its thread
-                      on Mattermost
+    Enter             Open the chat; a mention or a match opens selected, in
+                      its thread on Mattermost
     t                 Open the newest reply's thread (Mattermost)
     m                 Mark the chat read (Unread)
-    /                 Search users
+    Ctrl+F            Search
     r                 Reload
     Esc               Back
 
-  Search users / Forward to / Mention (modals)
+  Search / Forward to / Mention (modals)
     Type              Filter
     Up/Ctrl+P, Down/Ctrl+N  Select
     PgUp/PgDn         Page
-    Enter             Open the chat, forward the message to it, or insert
-                      the mention
+    Enter             After typing, search all chats' messages (the first
+                      row, Telegram, Mattermost and Matrix); else open the
+                      chat, go to the message (search from a chat), forward
+                      the message to the chat, or insert the mention
     Esc               Clear the query, then close; Mention closes at once
                       and types the @ and query as written
     Click outside     Close
@@ -208,8 +211,8 @@ Keyboard shortcuts:
                       message's actions
     Ctrl+U            Upload a file, in a modal over the chat (or click
                       the + at the end of the input)
-    Ctrl+F            Search messages, in a modal over the chat (Up/Down,
-                      Enter or a click goes to one, Esc closes)
+    Ctrl+F            Search, in a modal over the chat: chats and people,
+                      then this chat's messages (Enter or a click goes to one)
     @                 Mention a member (group chats, at the start of a word):
                       channel members first on Mattermost; Telegram members
                       with a username; Matrix room members; WhatsApp group

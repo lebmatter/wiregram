@@ -1123,16 +1123,33 @@ func (mb *MmBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 // Mentions searches every team for posts naming the user or the whole
 // channel, as Mattermost's own Recent Mentions does.
 func (mb *MmBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention, error) {
+	return mb.searchTeams(ctx, map[string]any{
+		"terms":        "@" + mb.Username + " @channel @all @here",
+		"is_or_search": true,
+		"per_page":     limit,
+	}, limit, false)
+}
+
+// SearchAll searches the posts of every team, DMs and group DMs included.
+func (mb *MmBackend) SearchAll(ctx context.Context, query string, limit int) ([]backend.Mention, error) {
+	return mb.searchTeams(ctx, map[string]any{
+		"terms":        query,
+		"is_or_search": false,
+		"per_page":     limit,
+	}, limit, true)
+}
+
+// searchTeams runs a post search in every team and returns the newest limit
+// posts others wrote in channels, each with its channel; with all, the user's
+// own posts and those in DMs and group DMs too.
+func (mb *MmBackend) searchTeams(ctx context.Context, body map[string]any, limit int,
+	all bool) ([]backend.Mention, error) {
 	var teams []mmTeam
 	if err := mb.apiJSON(ctx, "GET", "/users/me/teams", nil, &teams); err != nil {
 		return nil, fmt.Errorf("load teams: %w", err)
 	}
-	body := map[string]any{
-		"terms":        "@" + mb.Username + " @channel @all @here",
-		"is_or_search": true,
-		"per_page":     limit,
-	}
 	var posts []mmPost
+	seen := make(map[string]bool)
 	for _, team := range teams {
 		var result struct {
 			Order []string          `json:"order"`
@@ -1140,10 +1157,12 @@ func (mb *MmBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention
 		}
 		path := fmt.Sprintf("/teams/%s/posts/search", team.ID)
 		if err := mb.apiJSON(ctx, "POST", path, body, &result); err != nil {
-			return nil, fmt.Errorf("search mentions: %w", err)
+			return nil, fmt.Errorf("search posts: %w", err)
 		}
 		for _, id := range result.Order {
-			if p, ok := result.Posts[id]; ok && p.DeleteAt == 0 && p.UserID != mb.UserID {
+			p, ok := result.Posts[id]
+			if ok && !seen[id] && p.DeleteAt == 0 && (all || p.UserID != mb.UserID) {
+				seen[id] = true
 				posts = append(posts, p)
 			}
 		}
@@ -1167,21 +1186,33 @@ func (mb *MmBackend) Mentions(ctx context.Context, limit int) ([]backend.Mention
 			}
 			channels[p.ChannelID] = ch
 		}
-		if ch == nil || ch.Type == "D" || ch.Type == "G" {
+		if ch == nil || (!all && (ch.Type == "D" || ch.Type == "G")) {
 			continue
 		}
 		found = append(found, backend.Mention{
-			Chat: backend.ChatEntry{
-				ID:      backend.ChatID{Backend: "mattermost", Id: ch.ID},
-				Title:   mb.channelTitle(ctx, *ch, teamNames[ch.TeamID]),
-				IsGroup: true,
-				Section: teamNames[ch.TeamID],
-				Raw:     *ch,
-			},
+			Chat:    mb.channelEntry(ctx, *ch, teamNames[ch.TeamID]),
 			Message: mb.postToMessage(ctx, p),
 		})
 	}
 	return found, nil
+}
+
+// channelEntry is ch as a chat in team teamName.
+func (mb *MmBackend) channelEntry(ctx context.Context, ch mmChannel, teamName string) backend.ChatEntry {
+	isDM := ch.Type == "D" || ch.Type == "G"
+	section := ""
+	if !isDM {
+		section = teamName
+	}
+	return backend.ChatEntry{
+		ID:      backend.ChatID{Backend: "mattermost", Id: ch.ID},
+		Title:   mb.channelTitle(ctx, ch, teamName),
+		IsDM:    isDM,
+		IsGroup: !isDM,
+		IsSelf:  ch.Type == "D" && ch.Name == mb.UserID+"__"+mb.UserID,
+		Section: section,
+		Raw:     ch,
+	}
 }
 
 func (mb *MmBackend) teamForChannel(ctx context.Context, ch backend.ChatEntry) string {

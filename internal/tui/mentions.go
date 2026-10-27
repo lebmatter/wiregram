@@ -26,10 +26,16 @@ func mentionCards(ctx context.Context, b backend.Backend) ([]unreadCard, error) 
 		return nil, nil
 	}
 	found, err := f.Mentions(ctx, mentionsFetch)
+	return hitCards(found, false), err
+}
+
+// hitCards groups messages, newest first, into a card per chat holding its
+// latest few oldest first, counting them all; DMs only when dms.
+func hitCards(found []backend.Mention, dms bool) []unreadCard {
 	var cards []unreadCard
 	at := make(map[backend.ChatID]int)
 	for _, mn := range found {
-		if mn.Chat.IsDM {
+		if mn.Chat.IsDM && !dms {
 			continue
 		}
 		i, ok := at[mn.Chat.ID]
@@ -46,5 +52,5 @@ func mentionCards(ctx context.Context, b backend.Backend) ([]unreadCard, error) 
 			cards[i].msgs = append([]backend.Message{mn.Message}, cards[i].msgs...)
 		}
 	}
-	return cards, err
+	return cards
 }

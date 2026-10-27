@@ -137,7 +137,7 @@ func (m chatListModel) top() []listAction {
 		}
 		acts = append(acts, listAction{entry: archive, msg: chatListArchiveToggle{}})
 	}
-	return append(acts, listAction{entry: backend.ChatEntry{Title: "/ search"},
+	return append(acts, listAction{entry: backend.ChatEntry{Title: "search"},
 		msg: chatListSearch{}})
 }
 
@@ -470,13 +470,14 @@ func (m chatListModel) chipRows(width int) []listRow {
 			return line
 		}
 	}
-	// A blank row between wrapped chip rows keeps their fills apart.
-	var spaced []listRow
-	for i, r := range rows {
-		if i > 0 {
-			spaced = append(spaced, static(""))
-		}
-		spaced = append(spaced, r)
+	// A blank row around each chip row keeps their fills apart and the gaps
+	// above, between and below them alike.
+	if len(rows) == 0 {
+		return nil
+	}
+	spaced := []listRow{static("")}
+	for _, r := range rows {
+		spaced = append(spaced, r, static(""))
 	}
 	return spaced
 }
@@ -729,7 +730,7 @@ func (m chatListModel) Update(msg tea.Msg) (chatListModel, tea.Cmd) {
 			return m, func() tea.Msg { return chatListAccounts{} }
 		case "r":
 			return m, func() tea.Msg { return chatListRefresh{} }
-		case "/":
+		case "ctrl+f":
 			if !m.mailbox {
 				return m, func() tea.Msg { return chatListSearch{} }
 			}
@@ -861,7 +862,7 @@ func (m chatListModel) helpKeys() []helpKey {
 			{"a", "manage accounts"}, {"r", "refresh"}}
 	}
 	keys := []helpKey{{"↑↓", "select"}, {"enter", "open"}, {"space", "fold"},
-		{"/", "search"}, {"u", "unread"}}
+		{"^F", "search"}, {"u", "unread"}}
 	if m.mentions {
 		keys = append(keys, helpKey{"m", "mentions"})
 	}

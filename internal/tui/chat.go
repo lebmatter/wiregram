@@ -30,7 +30,6 @@ type chatSubMode int
 const (
 	chatSubNone chatSubMode = iota
 	chatSubMenu
-	chatSubSearch
 	chatSubEdit
 	chatSubUpload
 	chatSubThread
@@ -82,11 +81,6 @@ type chatViewModel struct {
 	notice  string
 
 	menu msgMenuModel
-
-	searchInput    textinput.Model
-	searchQuery    string
-	searchResults  []backend.Message
-	searchSelected int
 
 	editing   *backend.Message
 	editInput textinput.Model
@@ -190,6 +184,9 @@ type chatForwardReq struct{ req forwardRequest }
 // chatMentionReq asks the root to open the mention picker over the chat.
 type chatMentionReq struct{}
 
+// chatSearchReq asks the root to open the search modal over the chat.
+type chatSearchReq struct{}
+
 type mediaReady struct {
 	cmd     *exec.Cmd
 	cleanup func()
@@ -269,12 +266,6 @@ type chatSaveResult struct {
 	filename string
 	err      error
 }
-type chatSearchResult struct {
-	chatTag
-	messages []backend.Message
-	err      error
-}
-type chatSearchDebounce struct{}
 
 func newChatViewModel(ctx context.Context, st *styles, b backend.Backend, entry backend.ChatEntry, histories *[]string, kitty *kittyImages) chatViewModel {
 	ctx, cancel := context.WithCancel(ctx)
@@ -684,19 +675,6 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 			m.notice = fmt.Sprintf("saved %s", msg.filename)
 		}
 
-	case chatSearchResult:
-		if msg.err != nil {
-			m.notice = msg.err.Error()
-		} else {
-			m.searchResults = msg.messages
-			m.searchSelected = 0
-		}
-
-	case chatSearchDebounce:
-		if m.subMode == chatSubSearch && m.searchQuery != "" {
-			return m, m.doSearch()
-		}
-
 	case mediaReady:
 		return m, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
 			if msg.cleanup != nil {
@@ -996,8 +974,6 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	switch m.subMode {
 	case chatSubMenu:
 		return m.handleMenuKey(msg)
-	case chatSubSearch:
-		return m.handleSearchKey(msg)
 	case chatSubEdit:
 		return m.handleEditKey(msg)
 	case chatSubUpload:
@@ -1055,16 +1031,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		m.input.SetValue("")
 		return m, m.sendMessage(chatOutgoing{text: text, replyTo: replyTo})
 	case "ctrl+f":
-		if !m.caps.Search {
-			return m, nil
-		}
-		m.subMode = chatSubSearch
-		m.searchInput = textinput.New()
-		m.searchInput.Focus()
-		m.searchQuery = ""
-		m.searchResults = nil
-		m.searchSelected = 0
-		return m, m.searchInput.Focus()
+		return m, func() tea.Msg { return chatSearchReq{} }
 	case "ctrl+u":
 		if !m.caps.Upload {
 			return m, nil
@@ -1143,6 +1110,18 @@ func (m chatViewModel) insertMention(text string) chatViewModel {
 	return m
 }
 
+// goTo selects the loaded message with id, as a search result picks it.
+func (m chatViewModel) goTo(id string) (chatViewModel, tea.Cmd) {
+	for i, msg := range m.messages {
+		if msg.ID == id {
+			m.selected = i
+			return m.followThread()
+		}
+	}
+	m.notice = "that message is not loaded; scroll up to load older messages"
+	return m, nil
+}
+
 // openMenu opens the actions modal on the selected message.
 func (m chatViewModel) openMenu() (chatViewModel, tea.Cmd) {
 	sel, ok := m.selectedMsg()
@@ -1162,10 +1141,10 @@ func (m chatViewModel) openMenuOn(sel backend.Message) (chatViewModel, tea.Cmd) 
 }
 
 // modalOpen reports whether a modal is up over the chat: the message
-// actions, the search or the upload.
+// actions or the upload.
 func (m chatViewModel) modalOpen() bool {
 	switch m.subMode {
-	case chatSubMenu, chatSubSearch, chatSubUpload:
+	case chatSubMenu, chatSubUpload:
 		return true
 	}
 	return false
@@ -1181,8 +1160,6 @@ func (m chatViewModel) modalSize() (int, int) {
 
 func (m chatViewModel) modalView() string {
 	switch m.subMode {
-	case chatSubSearch:
-		return m.searchView()
 	case chatSubUpload:
 		return m.uploadView()
 	}
@@ -1195,72 +1172,25 @@ func (m chatViewModel) modalClick(x, y int, inside bool) (chatViewModel, tea.Cmd
 	switch {
 	case m.subMode == chatSubMenu:
 		return m.menuClick(x, y, inside)
-	case !inside && m.subMode == chatSubSearch:
-		return m.handleSearchKey(keyPress(tea.KeyEscape))
 	case !inside:
 		m.subMode = chatSubNone
 		return m, nil
-	case m.subMode == chatSubSearch:
-		return m.searchClick(y)
 	}
 	return m.uploadClick(y)
 }
 
-// chatModalSize is the size of the search and upload modals over a chat
+// chatModalSize is the size of the upload modal over a chat
 // width×height cells.
 func chatModalSize(width, height int) (int, int) {
 	return min(76, max(20, width-2)), min(22, max(10, height))
 }
 
-// chatModalTop is the rows above a search or path modal's list: the top
+// chatModalTop is the rows above the path modal's list: the top
 // border, the field and the rule.
 const chatModalTop = 5
 
-// chatModalRows is how many list rows a search or path modal h rows tall has.
+// chatModalRows is how many list rows the path modal h rows tall has.
 func chatModalRows(h int) int { return max(1, h-chatModalTop-3) }
-
-func (m chatViewModel) searchFirst(rows int) int {
-	return max(0, m.searchSelected-rows+1)
-}
-
-// searchView is the search modal: the query, then the matching messages.
-func (m chatViewModel) searchView() string {
-	w, h := chatModalSize(m.width, m.height)
-	inner, rows := w-4, chatModalRows(h)
-	input := m.searchInput
-	input.SetWidth(max(1, inner-6))
-	body := m.st.modalField("/", input.View(), inner)
-	heading := "messages"
-	if m.searchQuery != "" {
-		heading = fmt.Sprintf("%d matches", len(m.searchResults))
-	}
-	body = append(body, m.st.modalRule(heading, inner))
-	first := m.searchFirst(rows)
-	for i := first; i < min(len(m.searchResults), first+rows); i++ {
-		text := backend.GenericMessageLine(m.searchResults[i], m.entry, nil)
-		body = append(body, m.st.modalRow("", textfmt.ClipLine(text, inner-modalMark-1),
-			i == m.searchSelected, inner))
-	}
-	if len(m.searchResults) == 0 && m.searchQuery != "" {
-		body = append(body, m.st.dim.Render("  no matching messages"))
-	}
-	body = fillLines(body, chatModalTop-1+rows)
-	body = append(body, m.st.modalKeys(chatSearchHelp, "", inner)...)
-	return m.st.modalBox("search "+chatName(m.entry), body, w, h)
-}
-
-// searchClick jumps to the result at row y of the search modal.
-func (m chatViewModel) searchClick(y int) (chatViewModel, tea.Cmd) {
-	_, h := chatModalSize(m.width, m.height)
-	rows := chatModalRows(h)
-	first := m.searchFirst(rows)
-	i := first + y - chatModalTop
-	if y < chatModalTop || i >= min(len(m.searchResults), first+rows) {
-		return m, nil
-	}
-	m.searchSelected = i
-	return m.handleSearchKey(keyPress(tea.KeyEnter))
-}
 
 func (m chatViewModel) handleMenuKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	var cmd tea.Cmd
@@ -1424,57 +1354,6 @@ func deleteChatQuestion(entry backend.ChatEntry, revoke bool) string {
 	return fmt.Sprintf("Delete chat with %s %s?", textfmt.Plain(entry.Title), scope)
 }
 
-func (m chatViewModel) handleSearchKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
-	switch msg.String() {
-	case "esc", "ctrl+c":
-		m.subMode = chatSubNone
-		m.searchResults = nil
-		return m.followThread()
-	case "up":
-		if m.searchSelected > 0 {
-			m.searchSelected--
-		}
-	case "down":
-		if m.searchSelected+1 < len(m.searchResults) {
-			m.searchSelected++
-		}
-	case "enter":
-		if m.searchSelected < len(m.searchResults) {
-			sel := m.searchResults[m.searchSelected]
-			for i, msg := range m.messages {
-				if msg.ID == sel.ID {
-					m.selected = i
-					break
-				}
-			}
-		}
-		m.subMode = chatSubNone
-		m.searchResults = nil
-		return m, nil
-	default:
-		return m.searchEdited(msg)
-	}
-	return m, nil
-}
-
-// searchEdited passes msg to the search box and re-runs the query if it changed.
-func (m chatViewModel) searchEdited(msg tea.Msg) (chatViewModel, tea.Cmd) {
-	var cmd tea.Cmd
-	m.searchInput, cmd = m.searchInput.Update(msg)
-	newQuery := strings.TrimSpace(m.searchInput.Value())
-	if newQuery != m.searchQuery {
-		m.searchQuery = newQuery
-		if newQuery != "" {
-			return m, tea.Batch(cmd, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
-				return chatSearchDebounce{}
-			}))
-		}
-		m.searchResults = nil
-		m.searchSelected = 0
-	}
-	return m, cmd
-}
-
 // updateInput hands a non-key message, such as a paste, to the input on screen.
 func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 	var cmd tea.Cmd
@@ -1484,8 +1363,6 @@ func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 	case chatSubMenu:
 		m.menu, cmd, _, _ = m.menu.edited(msg)
-	case chatSubSearch:
-		return m.searchEdited(msg)
 	case chatSubEdit:
 		m.editInput, cmd = m.editInput.Update(msg)
 	case chatSubThread:
@@ -1652,17 +1529,6 @@ func saveToDownloads(ctx context.Context, b backend.Backend, sel backend.Message
 	}
 }
 
-func (m chatViewModel) doSearch() tea.Cmd {
-	ctx := m.ctx
-	b := m.b
-	entry := m.entry
-	query := m.searchQuery
-	return func() tea.Msg {
-		msgs, err := b.SearchMessages(ctx, entry, query)
-		return chatSearchResult{chatTag{entry.ID}, msgs, err}
-	}
-}
-
 func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd {
 	ctx := m.ctx
 	b := m.b
@@ -1682,7 +1548,7 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 // in the desktop's default application and a right click opens its actions.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	switch m.subMode {
-	case chatSubMenu, chatSubSearch, chatSubUpload, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
+	case chatSubMenu, chatSubUpload, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return m, nil
 	}
 	if hit, thread := m.uploadButtonAt(msg.x, msg.y); hit && !msg.right {
@@ -2211,8 +2077,6 @@ func (m chatViewModel) helpKeys() []helpKey {
 		return m.uploadHelp()
 	case chatSubThread:
 		return chatThreadHelp
-	case chatSubSearch:
-		return chatSearchHelp
 	case chatSubMenu:
 		if !m.menu.reactions {
 			return []helpKey{msgMenuHelp[0], msgMenuHelp[3], msgMenuHelp[4]}
@@ -2234,9 +2098,7 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if m.caps.Upload {
 		keys = append(keys, helpKey{"^U", "upload"})
 	}
-	if m.caps.Search {
-		keys = append(keys, helpKey{"^F", "search"})
-	}
+	keys = append(keys, helpKey{"^F", "search"})
 	if m.caps.DeleteChat && m.entry.IsDM {
 		keys = append(keys, helpKey{"M-d", "delete chat"})
 	}
@@ -2260,12 +2122,6 @@ func (m chatViewModel) cleanup() {
 
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled)
-}
-
-var chatSearchHelp = []helpKey{
-	{"↑↓", "select"},
-	{"enter", "go to"},
-	{"esc", "close"},
 }
 
 var chatEditHelp = []helpKey{

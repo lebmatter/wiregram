@@ -33,7 +33,7 @@ active account is expanded to:
 
 - a line of chips: **unread** (with the total), **@ mentions** (see
   [Unread & Mentions](/features/unread-mentions)), **you** (your chat with yourself),
-  **archived** (Telegram only) and **/ search**, which opens the user search
+  **archived** (Telegram only) and **search**, which opens the [search](/features/chats#search)
 - its chats in sections with a ruled header: the team on Mattermost, else **groups**
   (**rooms** on Matrix) and **channels**, then **direct** for private chats. Each row
   starts with `#` for a group or channel, `@` for a person or a violet ✦ when a bot
