@@ -156,7 +156,7 @@ func (m unreadModel) cardInner() int {
 // how far it scrolls; only the selected card is ever taller than one line
 // per message.
 func (m unreadModel) overflow(i int) int {
-	if i != m.selected {
+	if i != m.selected || i >= len(m.cards) {
 		return 0
 	}
 	lines := len(m.cardLines(i, m.cardInner()))
