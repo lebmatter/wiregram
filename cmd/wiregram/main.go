@@ -114,6 +114,12 @@ Commands (for scripts and AI coding tools; output is one JSON object per line):
       Print the reply the bot answering the chat would give to each message
       ID, or to the newest incoming message, without sending it. Works
       while the bot is paused.
+  wiregram game [-name NAME] [INVITE]
+      Play a game without a chat. With no INVITE, pick a game and host
+      it: the invite link is shown and copied, for the other player to
+      join with wiregram game INVITE (or a click in a wiregram chat).
+      NAME is shown to the other player ($USER by default). Hosting needs
+      cloudflared.
   wiregram reset [-y]
       Sign out of every account and delete all local data, as Settings >
       Reset does. Asks first unless -y is given.

@@ -35,6 +35,22 @@ An invite is good for 10 minutes and for one player. Bots never answer invites. 
 something goes wrong (cloudflared missing, a tunnel that won't open, an invite that has
 expired or been taken) an alert says so over the screen; any key or click closes it.
 
+## Without a chat
+
+`wiregram game` plays the same games from the command line, with no account needed:
+
+```sh
+wiregram game                      # pick a game and host it
+wiregram game wiregame://…/…       # join the game an invite links to
+wiregram game -name ada …          # the name the other player sees ($USER by default)
+```
+
+Hosting shows the invite link (`wiregame://…trycloudflare.com/…`) and copies it to the
+clipboard; send it to the other player however you like. They join with
+`wiregram game LINK`, or with a click on it in a wiregram chat. The game fills the
+terminal; <kbd>Esc</kbd> or <kbd>Ctrl+C</kbd> leaves (asking first while it is being
+played) and quits.
+
 ## What it needs
 
 Only the challenger needs [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)

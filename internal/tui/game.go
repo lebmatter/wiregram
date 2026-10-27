@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"time"
@@ -49,7 +50,9 @@ type gameModel struct {
 	sent       []string
 	sentStatus string
 	ended      string // why the game stopped early, shown in the pane
-	confirm    *confirmModal
+	// invite is the link shown while waiting, when no chat carries it.
+	invite  string
+	confirm *confirmModal
 }
 
 // The game's messages carry its id.
@@ -267,6 +270,11 @@ func (g *gameModel) view(width, height int, focused bool) string {
 	case gameWaiting:
 		body = g.st.subtle.Render("waiting for someone to join…") + "\n" +
 			g.st.dim.Render("the invite expires in 10 minutes")
+		if g.invite != "" {
+			body += "\n\n" + g.st.brand.Render(g.invite) + "\n\n" +
+				g.st.dim.Render("copied: the other player runs wiregram game with it,") + "\n" +
+				g.st.dim.Render("or clicks it in a wiregram chat")
+		}
 	case gameJoining:
 		body = g.st.subtle.Render("joining…")
 	default:
@@ -432,19 +440,31 @@ func (m tuiModel) startChallenge(script game.Script) (tuiModel, tea.Cmd) {
 		m = m.gameAlert("Finish the current game first.")
 		return m, nil
 	}
+	m.gameSeq++
+	g, cmd, err := hostGame(m.ctx, m.st, m.gameSeq, script)
+	if err != nil {
+		return m.gameAlert(textfmt.CleanError(err)), nil
+	}
+	g.chat = m.chat.entry
+	m.game, m.focus = g, focusGame
+	return m, cmd
+}
+
+// hostGame starts hosting script: a local server, and a tunnel to it that
+// arrives as gameTunnelOpened.
+func hostGame(ctx context.Context, st *styles, id int, script game.Script) (*gameModel, tea.Cmd,
+	error) {
 	token, err := game.NewToken()
 	if err != nil {
-		return m.gameAlert(textfmt.CleanError(err)), nil
+		return nil, nil, err
 	}
-	server, err := game.Listen(m.ctx, token)
+	server, err := game.Listen(ctx, token)
 	if err != nil {
-		return m.gameAlert(textfmt.CleanError(err)), nil
+		return nil, nil, err
 	}
-	m.gameSeq++
-	g := &gameModel{st: m.st, id: m.gameSeq, chat: m.chat.entry, host: true, token: token,
-		info: script.Info, script: script, server: server}
-	m.game, m.focus = g, focusGame
-	ctx, id, addr := m.ctx, g.id, server.Addr
+	g := &gameModel{st: st, id: id, host: true, token: token, info: script.Info,
+		script: script, server: server}
+	addr := server.Addr
 	open := func() tea.Msg {
 		t, err := game.StartTunnel(ctx, addr)
 		return gameTunnelOpened{id, t, err}
@@ -457,7 +477,48 @@ func (m tuiModel) startChallenge(script game.Script) (tuiModel, tea.Cmd) {
 			return nil
 		}
 	}
-	return m, tea.Batch(open, join)
+	return g, tea.Batch(open, join), nil
+}
+
+// dialGame joins the game behind an invite as name; the connection arrives
+// as gameDialed.
+func dialGame(ctx context.Context, st *styles, id int, host, token, name string) (*gameModel,
+	tea.Cmd) {
+	g := &gameModel{st: st, id: id, state: gameJoining, token: token}
+	return g, func() tea.Msg {
+		conn, err := game.Dial(ctx, host, token, name)
+		return gameDialed{id, conn, err}
+	}
+}
+
+// begin starts the host's match with the guest who joined, me in seat 1.
+func (g *gameModel) begin(j game.Joined, me string) (tea.Cmd, error) {
+	g.conn = j.Conn
+	g.names = []string{me, j.Name}
+	session, err := game.NewSession(g.script, g.names)
+	if err != nil {
+		return nil, err
+	}
+	g.session, g.state = session, gamePlaying
+	info := g.info
+	if err := g.conn.Send(game.Envelope{T: game.TStart, Game: &info, Names: g.names}); err != nil {
+		return nil, err
+	}
+	if err := g.refresh(); err != nil {
+		return nil, err
+	}
+	return tea.Batch(g.listen(), g.tick()), nil
+}
+
+// step runs one of the host's ticks.
+func (g *gameModel) step() (tea.Cmd, error) {
+	if err := g.session.Tick(); err != nil {
+		return nil, err
+	}
+	if err := g.refresh(); err != nil {
+		return nil, err
+	}
+	return g.tick(), nil
 }
 
 // joinGame joins the game behind an invite clicked in the open chat.
@@ -477,14 +538,10 @@ func (m tuiModel) joinGame(req gameJoinReq) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	m.gameSeq++
-	g := &gameModel{st: m.st, id: m.gameSeq, chat: m.chat.entry, state: gameJoining,
-		token: req.token}
+	g, cmd := dialGame(m.ctx, m.st, m.gameSeq, req.host, req.token, gamePlayerName(m.b))
+	g.chat = m.chat.entry
 	m.game, m.focus = g, focusGame
-	ctx, id, name := m.ctx, g.id, gamePlayerName(m.b)
-	return m, func() tea.Msg {
-		conn, err := game.Dial(ctx, req.host, req.token, name)
-		return gameDialed{id, conn, err}
-	}
+	return m, cmd
 }
 
 // closeGame ends the game and takes its pane away.
@@ -582,24 +639,11 @@ func (m tuiModel) updateGame(msg tea.Msg) (tuiModel, tea.Cmd, bool) {
 			msg.joined.Conn.Close()
 			return m, nil, true
 		}
-		g.conn = msg.joined.Conn
-		g.names = []string{gamePlayerName(m.b), msg.joined.Name}
-		session, err := game.NewSession(g.script, g.names)
+		cmd, err := g.begin(msg.joined, gamePlayerName(m.b))
 		if err != nil {
 			m = m.stopGame(err)
-			return m, nil, true
 		}
-		g.session, g.state = session, gamePlaying
-		info := g.info
-		if err := g.conn.Send(game.Envelope{T: game.TStart, Game: &info, Names: g.names}); err != nil {
-			m = m.stopGame(err)
-			return m, nil, true
-		}
-		if err := g.refresh(); err != nil {
-			m = m.stopGame(err)
-			return m, nil, true
-		}
-		return m, tea.Batch(g.listen(), g.tick()), true
+		return m, cmd, true
 
 	case gameDialed:
 		if g == nil || g.id != msg.id {
@@ -618,32 +662,37 @@ func (m tuiModel) updateGame(msg tea.Msg) (tuiModel, tea.Cmd, bool) {
 		if g == nil || g.id != msg.id {
 			return m, nil, true
 		}
-		return m.gameEnvelope(msg)
+		joining := g.state == gameJoining
+		cmd, err := g.receive(msg)
+		switch {
+		case err != nil && joining:
+			m = m.gameFailed(err)
+		case err != nil:
+			m = m.stopGame(err)
+		}
+		return m, cmd, true
 
 	case gameTick:
 		if g == nil || g.id != msg.id || g.state != gamePlaying {
 			return m, nil, true
 		}
-		if err := g.session.Tick(); err != nil {
+		cmd, err := g.step()
+		if err != nil {
 			m = m.stopGame(err)
-			return m, nil, true
 		}
-		if err := g.refresh(); err != nil {
-			m = m.stopGame(err)
-			return m, nil, true
-		}
-		return m, g.tick(), true
+		return m, cmd, true
 	}
 	return m, nil, false
 }
 
-func (m tuiModel) gameEnvelope(msg gameEnvelope) (tuiModel, tea.Cmd, bool) {
-	g := m.game
+// receive handles a message from the other player, and listens for the next
+// while the game goes on.
+func (g *gameModel) receive(msg gameEnvelope) (tea.Cmd, error) {
 	if !msg.ok {
 		if g.state != gameOver {
 			g.stop(g.opponent() + " left the game")
 		}
-		return m, nil, true
+		return nil, nil
 	}
 	env := msg.env
 	switch env.T {
@@ -669,12 +718,10 @@ func (m tuiModel) gameEnvelope(msg gameEnvelope) (tuiModel, tea.Cmd, bool) {
 			break
 		}
 		if err := g.session.Key(2, k.Key); err != nil {
-			m = m.stopGame(err)
-			return m, nil, true
+			return nil, err
 		}
 		if err := g.refresh(); err != nil {
-			m = m.stopGame(err)
-			return m, nil, true
+			return nil, err
 		}
 	case game.TLeave:
 		if g.state != gameOver {
@@ -682,46 +729,47 @@ func (m tuiModel) gameEnvelope(msg gameEnvelope) (tuiModel, tea.Cmd, bool) {
 		} else {
 			g.close()
 		}
-		return m, nil, true
+		return nil, nil
 	case game.TError:
-		if g.state == gameJoining {
-			return m.gameFailed(gameError(textfmt.Plain(env.Error))), nil, true
-		}
-		m = m.stopGame(gameError(textfmt.Plain(env.Error)))
-		return m, nil, true
+		return nil, gameError(textfmt.Plain(env.Error))
 	}
-	return m, g.listen(), true
+	return g.listen(), nil
 }
 
 // gameKey handles a key while the game pane has the focus.
 func (m tuiModel) gameKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
-	g := m.game
+	leave, err := m.game.press(msg.String())
+	switch {
+	case leave:
+		m = m.closeGame()
+	case err != nil:
+		m = m.stopGame(err)
+	}
+	return m, nil
+}
+
+// press handles a key for the game: leave when the user closes it, after
+// asking while it is being played.
+func (g *gameModel) press(k string) (leave bool, err error) {
 	if c := g.confirm; c != nil {
-		yes, done := c.key(msg.String())
+		yes, done := c.key(k)
 		if done {
 			g.confirm = nil
 		}
-		if yes {
-			m = m.closeGame()
-		}
-		return m, nil
+		return yes, nil
 	}
-	switch msg.String() {
+	switch k {
 	case "esc":
 		if g.live() {
-			g.confirm = newConfirmModal(m.st, "Leave game", "Leave the game? "+g.opponent()+
+			g.confirm = newConfirmModal(g.st, "Leave game", "Leave the game? "+g.opponent()+
 				" wins.", "Leave", true)
-			return m, nil
+			return false, nil
 		}
-		return m.closeGame(), nil
+		return true, nil
 	case "ctrl+c":
-		return m, nil
+		return false, nil
 	}
-	if err := g.key(msg.String()); err != nil {
-		m = m.stopGame(err)
-		return m, nil
-	}
-	return m, nil
+	return false, g.key(k)
 }
 
 type gameError string

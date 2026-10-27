@@ -21,7 +21,7 @@ actions modal. A left button in the chat acts when let go: dragging instead sele
 pane's text in reverse and copies it with `tea.SetClipboard` and the desktop's tool (`systemCopy`: wl-copy, xclip, xsel,
 pbcopy) since VTE terminals ignore OSC 52 (`textDrag`,
 `internal/tui/selection.go`). The login and connecting
-screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|dry-run|reset`
+screens leave the mouse to the terminal. Besides the TUI, `wiregram game` plays a game without a chat, and `wiregram accounts|chats|stream|send|dry-run|reset`
 (`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend
 and handle (`Account.Handle`); WhatsApp is refused there since a second connection would
 replace the app's. `skills/wiregram/SKILL.md` teaches agents to use them. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
@@ -368,6 +368,10 @@ These are project constraints, not suggestions:
   it outlives chat switches; its pane sits beside its chat (`gameRect`, `focusGame`,
   Tab cycles, a `GAME` footer badge) or in the chat's place when narrow. Invites expire
   after `game.Expiry` and admit one guest; bots skip them (`isGameInvite`).
+  `wiregram game [INVITE]` (`cmdGame`, `tui.RunGame`, `internal/tui/gameapp.go`) plays
+  one without a chat: it hosts a picked game and shows the invite (`gameModel.invite`,
+  copied), or joins the one given; both screens share `gameModel`'s `begin`, `step`,
+  `receive` and `press`.
 - Every yes/no question (quit, delete chat/message/bot/provider, remove account, Reset;
   not moving mail to Trash) is a `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
   there, never a footer notice. Deletes and Reset start on Cancel.

@@ -22,6 +22,7 @@ import (
 	"wiregram/internal/config"
 	"wiregram/internal/store"
 	"wiregram/internal/textfmt"
+	"wiregram/internal/tui"
 )
 
 // commands are the subcommands that run without the TUI.
@@ -32,6 +33,7 @@ var commands = map[string]func(ctx context.Context, args []string) error{
 	"stream":   cmdStream,
 	"send":     cmdSend,
 	"dry-run":  cmdDryRun,
+	"game":     cmdGame,
 }
 
 // connectTimeout bounds how long a command waits for an account to come online.
@@ -710,4 +712,36 @@ func cmdDryRun(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+// cmdGame plays a game outside any chat: it hosts one picked on screen, or
+// joins the one an invite links to.
+func cmdGame(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("game", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	name := flags.String("name", os.Getenv("USER"), "")
+	if err := flags.Parse(args); err != nil || flags.NArg() > 1 {
+		return fmt.Errorf("usage: wiregram game [-name NAME] [INVITE]")
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return fmt.Errorf("wiregram game needs an interactive terminal")
+	}
+	player := strings.TrimSpace(textfmt.Plain(*name))
+	if player == "" {
+		player = "player"
+	}
+	if r := []rune(player); len(r) > 32 {
+		player = string(r[:32])
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+	// The database is opened only for the theme.
+	db, err := store.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return tui.RunGame(ctx, db, flags.Arg(0), player)
 }
