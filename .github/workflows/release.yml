@@ -27,7 +27,7 @@ jobs:
             ext=""
             [ "${target%/*}" = windows ] && ext=.exe
             GOOS=${target%/*} GOARCH=${target#*/} go build -buildvcs=false -trimpath \
-              -ldflags "-s -w" \
+              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
               -o "dist/wiregram-${target%/*}-${target#*/}${ext}" ./cmd/wiregram
           done
 

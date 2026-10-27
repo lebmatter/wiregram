@@ -126,6 +126,15 @@ wiregram reset [-y]
 Signs out of every account and deletes all local data, as **Settings → Reset…** does.
 It asks first unless `-y` is given. This cannot be undone.
 
+## version
+
+```sh
+wiregram --version
+```
+
+Prints the version, such as `wiregram v0.8.0`. A build from source names the commit
+it was built from.
+
 ## A reply loop
 
 ```sh

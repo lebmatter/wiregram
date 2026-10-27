@@ -1,6 +1,9 @@
 .PHONY: build deploy-web docs deploy-docs
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 build:
-	CGO_ENABLED=0 go build -buildvcs=false -o wiregram ./cmd/wiregram
+	CGO_ENABLED=0 go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" \
+		-o wiregram ./cmd/wiregram
 
 # Uploads web/ to the Cloudflare Worker named in wrangler.toml.
 deploy-web:

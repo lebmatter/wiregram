@@ -17,6 +17,9 @@ import (
 	"wiregram/internal/tui"
 )
 
+// version is the release tag, set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 const usageText = `Usage: wiregram [COMMAND]
 
 A minimal multi-backend chat client for the terminal. Supports Telegram,
@@ -121,6 +124,8 @@ Commands (for scripts and AI coding tools; output is one JSON object per line):
   wiregram reset [-y]
       Sign out of every account and delete all local data, as Settings >
       Reset does. Asks first unless -y is given.
+  wiregram --version
+      Print the version.
 
   BACKEND is telegram, mattermost, matrix or email (tg, mm, mx, em).
   WhatsApp is not available: it allows one connection, and a command would
@@ -356,12 +361,17 @@ func run() (result error) {
 	}
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	showVersion := flags.Bool("version", false, "")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(os.Stdout, usageText)
 			return nil
 		}
 		return fmt.Errorf("parse arguments: %w", err)
+	}
+	if *showVersion {
+		fmt.Println("wiregram", version)
+		return nil
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unknown command %q; wiregram -h lists the commands", flags.Arg(0))

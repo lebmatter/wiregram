@@ -29,7 +29,7 @@ replace the app's. `skills/wiregram/SKILL.md` teaches agents to use them. The UI
 ## Build
 
 ```sh
-make                                   # CGO_ENABLED=0 go build -buildvcs=false -o wiregram ./cmd/wiregram
+make                                   # CGO_ENABLED=0 go build, -X main.version=$(git describe)
 ```
 
 To embed app credentials (users then skip the API-ID prompt):

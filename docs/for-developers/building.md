@@ -12,7 +12,7 @@ Requires Go 1.26 or newer.
 ```sh
 git clone https://github.com/lebmatter/wiregram
 cd wiregram
-make            # CGO_ENABLED=0 go build -buildvcs=false -o wiregram ./cmd/wiregram
+make            # CGO_ENABLED=0 go build, with the git describe version in --version
 ```
 
 ## Embedded credentials
