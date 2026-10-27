@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -26,7 +27,13 @@ type Info struct {
 	MinW   int    `json:"w"`
 	MinH   int    `json:"h"`
 	TickMS int    `json:"-"`
+	// Icon is a small drawing of the game for the picker: up to IconLines
+	// lines of up to IconWidth cells.
+	Icon []string `json:"-"`
 }
+
+// The largest icon the picker draws.
+const IconLines, IconWidth = 3, 15
 
 // TickRate is how often Tick runs; zero for turn-based games.
 func (i Info) TickRate() time.Duration { return time.Duration(i.TickMS) * time.Millisecond }
@@ -75,6 +82,12 @@ func readInfo(src string) (Info, error) {
 	info := Info{
 		ID: str("id"), Name: str("name"), Desc: str("desc"), Help: str("help"),
 		MinW: num("min_w"), MinH: num("min_h"), TickMS: num("tick_ms"),
+	}
+	if icon := strings.Trim(str("icon"), "\n"); icon != "" {
+		info.Icon = strings.Split(icon, "\n")
+		if len(info.Icon) > IconLines {
+			info.Icon = info.Icon[:IconLines]
+		}
 	}
 	switch {
 	case info.ID == "" || info.Name == "":

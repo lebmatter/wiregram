@@ -1000,12 +1000,11 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		if right {
 			return m, nil
 		}
-		m.gamePicker = nil
-		if mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h {
-			if pick, ok := p.click(mouse.Y - y); ok {
-				return m.startChallenge(*pick)
-			}
-			m.gamePicker = p
+		if mouse.X < x || mouse.X >= x+w || mouse.Y < y || mouse.Y >= y+h {
+			m.gamePicker = nil
+		} else if pick := p.click(mouse.X-x, mouse.Y-y); pick != nil {
+			m.gamePicker = nil
+			return m.startChallenge(*pick)
 		}
 		return m, nil
 	}

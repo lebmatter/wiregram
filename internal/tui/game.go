@@ -465,7 +465,7 @@ func (m tuiModel) updateGame(msg tea.Msg) (tuiModel, tea.Cmd, bool) {
 			}
 			return m.gameAlert(textfmt.CleanError(err)), nil, true
 		}
-		m.gamePicker = newGamePicker(m.st, scripts)
+		m.gamePicker = newGamePicker(m.st, scripts, chatName(m.chat.entry))
 		return m, nil, true
 
 	case gameJoinReq:
@@ -663,70 +663,161 @@ const (
 	errGameExpired = gameError("the game challenge expired")
 )
 
-// gamePickerModel picks the game to challenge the chat to.
+// gamePickerModel picks the game to challenge the chat to: a grid of cards,
+// each with the game's drawing, livelier than the other modals on purpose.
 type gamePickerModel struct {
 	st      *styles
 	scripts []game.Script
+	chat    string // the chat as titles show it
 	sel     int
 }
 
-func newGamePicker(st *styles, scripts []game.Script) *gamePickerModel {
-	return &gamePickerModel{st: st, scripts: scripts}
+func newGamePicker(st *styles, scripts []game.Script, chat string) *gamePickerModel {
+	return &gamePickerModel{st: st, scripts: scripts, chat: chat}
 }
 
-// key moves the selection; done when the picker closes, with the pick if any.
+// gameInks colour the cards' drawings, one each, in the terminal's own bright
+// colours like the nick colours.
+var gameInks = [...]string{"\x1b[93m", "\x1b[96m", "\x1b[95m", "\x1b[92m", "\x1b[91m",
+	"\x1b[94m"}
+
+const (
+	gameCardWidth  = game.IconWidth + 6 // the borders and a margin each side
+	gameCardHeight = game.IconLines + 4 // the borders, the name and its kind
+	gameCardGap    = 2
+	// gameCardsTop is the box's first row of cards: under the top border, a
+	// blank, the heading and another blank.
+	gameCardsTop = 4
+)
+
+func (p *gamePickerModel) cols() int { return min(2, len(p.scripts)) }
+
+// key moves the selection through the grid; done when the picker closes,
+// with the pick if any.
 func (p *gamePickerModel) key(k string) (pick *game.Script, done bool) {
+	n, cols := len(p.scripts), p.cols()
 	switch k {
 	case "esc", "ctrl+c":
 		return nil, true
-	case "up", "k":
+	case "left", "h":
 		p.sel = max(0, p.sel-1)
+	case "right", "l", "tab":
+		p.sel = min(n-1, p.sel+1)
+	case "up", "k":
+		if p.sel >= cols {
+			p.sel -= cols
+		}
 	case "down", "j":
-		p.sel = min(len(p.scripts)-1, p.sel+1)
-	case "enter":
+		p.sel = min(n-1, p.sel+cols)
+	case "enter", "space":
 		return &p.scripts[p.sel], true
 	}
 	return nil, false
 }
 
 func (p *gamePickerModel) size() (int, int) {
-	w := 30
-	for _, s := range p.scripts {
-		w = max(w, textfmt.DisplayWidth(s.Info.Name+"  "+s.Info.Desc)+4+modalMark)
+	cols := p.cols()
+	rows := (len(p.scripts) + cols - 1) / cols
+	// A margin each side of the cards, inside the box's edges and padding.
+	w := cols*gameCardWidth + (cols-1)*gameCardGap + 2 + 4
+	// The cards, then a blank, the chosen game's line, the key rule and keys
+	// and the bottom border.
+	return max(w, 40), gameCardsTop + rows*gameCardHeight + 5
+}
+
+// center pads s with spaces on both sides to width cells.
+func center(s string, width int) string {
+	gap := max(0, width-textfmt.DisplayWidth(s))
+	return strings.Repeat(" ", gap/2) + s + strings.Repeat(" ", gap-gap/2)
+}
+
+// card is one game's card: its drawing in its own colour, its name and
+// whether it is turn-based. The chosen card has a heavy accent border.
+func (p *gamePickerModel) card(i int, chosen bool) []string {
+	s := p.scripts[i]
+	inner := gameCardWidth - 4
+	edge, top, bottom := "│", "╭"+strings.Repeat("─", gameCardWidth-2)+"╮",
+		"╰"+strings.Repeat("─", gameCardWidth-2)+"╯"
+	border := p.st.dim
+	if chosen {
+		edge, top, bottom = "┃", "┏"+strings.Repeat("━", gameCardWidth-2)+"┓",
+			"┗"+strings.Repeat("━", gameCardWidth-2)+"┛"
+		border = p.st.brand
 	}
-	// The borders, the heading, the rows, a blank, the key rule and keys.
-	return min(w, 60), len(p.scripts) + 6
+	ink := gameInks[i%len(gameInks)]
+	var body []string
+	for i := range game.IconLines {
+		line := ""
+		if i < len(s.Info.Icon) {
+			line = textfmt.ClipLine(textfmt.Plain(s.Info.Icon[i]), inner)
+		}
+		body = append(body, ink+center(line, inner)+"\x1b[39m")
+	}
+	name := center(s.Info.Name, inner)
+	if chosen {
+		name = p.st.brand.Render(name)
+	} else {
+		name = p.st.subtle.Render(name)
+	}
+	kind := "turn-based"
+	if s.Info.TickMS > 0 {
+		kind = "real-time"
+	}
+	body = append(body, name, p.st.dim.Render(center(kind, inner)))
+	lines := []string{border.Render(top)}
+	for _, l := range body {
+		lines = append(lines, border.Render(edge)+" "+l+" "+border.Render(edge))
+	}
+	return append(lines, border.Render(bottom))
 }
 
 func (p *gamePickerModel) View() string {
 	w, h := p.size()
-	body := []string{p.st.modalRule("challenge to a game", w-4)}
-	for i, s := range p.scripts {
-		label := s.Info.Name
-		if i == p.sel {
-			label = p.st.brand.Render(label)
+	inner := w - 4
+	body := []string{"", " " + p.st.subtle.Render("challenge ") + p.st.brand.Render(p.chat) +
+		p.st.subtle.Render(" to a game of…"), ""}
+	cols := p.cols()
+	for first := 0; first < len(p.scripts); first += cols {
+		var cards [][]string
+		for i := first; i < min(first+cols, len(p.scripts)); i++ {
+			cards = append(cards, p.card(i, i == p.sel))
 		}
-		body = append(body, p.st.modalRow("", label+"  "+p.st.dim.Render(s.Info.Desc), i == p.sel,
-			w-4))
+		for r := range gameCardHeight {
+			parts := make([]string, len(cards))
+			for i, c := range cards {
+				parts[i] = c[r]
+			}
+			body = append(body, " "+strings.Join(parts, strings.Repeat(" ", gameCardGap)))
+		}
 	}
-	body = append(body, "")
-	body = append(body, p.st.modalKeys([]helpKey{{"enter", "challenge"}, {"esc", "cancel"}}, "",
-		w-4)...)
-	return p.st.modalBox("game", body, w, h)
+	chosen := p.scripts[p.sel].Info
+	body = append(body, "", " "+p.st.accent.Render("▸ ")+p.st.subtle.Render(chosen.Desc))
+	body = append(body, p.st.modalKeys([]helpKey{{"←↑↓→", "pick"}, {"enter", "challenge"},
+		{"esc", "cancel"}}, "", inner)...)
+	return renderTitledBox(p.st.brand.Render("🎮 game time"), "", body, w, h, p.st.accentColor)
 }
 
-// click picks the row at row y of the box, counted from its top edge.
-func (p *gamePickerModel) click(y int) (pick *game.Script, ok bool) {
-	row := y - 2 // under the top border and the heading
-	if row < 0 || row >= len(p.scripts) {
-		return nil, false
+// click answers a click at x, y of the box, counted from its top-left
+// corner: a card is chosen by the first click and challenged by the next.
+func (p *gamePickerModel) click(x, y int) (pick *game.Script) {
+	row, col := (y-gameCardsTop)/gameCardHeight, (x-3)/(gameCardWidth+gameCardGap)
+	if y < gameCardsTop || x < 3 || (x-3)%(gameCardWidth+gameCardGap) >= gameCardWidth ||
+		col >= p.cols() {
+		return nil
 	}
-	p.sel = row
-	return &p.scripts[row], true
+	i := row*p.cols() + col
+	if i >= len(p.scripts) {
+		return nil
+	}
+	if i == p.sel {
+		return &p.scripts[i]
+	}
+	p.sel = i
+	return nil
 }
 
 func (p *gamePickerModel) helpKeys() []helpKey {
-	return []helpKey{{"↑↓", "select"}, {"enter", "challenge"}, {"esc", "cancel"}}
+	return []helpKey{{"←↑↓→", "pick"}, {"enter", "challenge"}, {"esc", "cancel"}}
 }
 
 // gamePickerRect is where the picker sits: centred over the chat.

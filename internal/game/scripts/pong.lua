@@ -5,7 +5,8 @@ game = {
   info = { id = "pong", name = "Pong", version = 1,
            desc = "First to 5 points", players = 2,
            help = "up/down or w/s move · hold to keep moving",
-           min_w = 60, min_h = 21, tick_ms = 33 },
+           min_w = 60, min_h = 21, tick_ms = 33,
+           icon = "█    ·      \n█     ·    █\n       ●   █" },
 }
 
 local W, H = 60, 18 -- play area between the walls

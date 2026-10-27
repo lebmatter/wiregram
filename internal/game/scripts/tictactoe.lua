@@ -4,7 +4,8 @@ game = {
   info = { id = "tictactoe", name = "Tic-tac-toe", version = 1,
            desc = "Three in a row", players = 2,
            help = "arrows move · enter places your mark",
-           min_w = 21, min_h = 11, tick_ms = 0 },
+           min_w = 21, min_h = 11, tick_ms = 0,
+           icon = " X │ O │   \n───┼───┼───\n   │ X │ O " },
 }
 
 local board, names, turn, cursor, winner, full

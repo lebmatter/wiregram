@@ -6,7 +6,8 @@ game = {
   info = { id = "battleship", name = "Battleship", version = 1,
            desc = "Hide a fleet, sink theirs", players = 2,
            help = "arrows move · r rotates · enter places or fires · a places the rest",
-           min_w = 48, min_h = 14, tick_ms = 0 },
+           min_w = 48, min_h = 14, tick_ms = 0,
+           icon = "     |\\     \n  ___|_\\___ \n~~\\_______/~~" },
 }
 
 local N = 10

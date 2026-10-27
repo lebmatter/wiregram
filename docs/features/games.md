@@ -76,6 +76,8 @@ game = {
     players = 2,             -- always 2
     min_w = 21, min_h = 11,  -- the board's size in cells (at most 120×60)
     tick_ms = 0,             -- 0 for turn-based, else 16 or more
+    icon = " X │ O │   \n───┼───┼───\n   │ X │ O ", -- optional: the picker's
+                             -- drawing, up to 3 lines of 15 cells
   },
 }
 

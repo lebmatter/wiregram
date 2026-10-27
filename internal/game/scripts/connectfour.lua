@@ -4,7 +4,8 @@ game = {
   info = { id = "connectfour", name = "Connect Four", version = 1,
            desc = "Four in a row, dropped from the top", players = 2,
            help = "←/→ or 1-7 pick a column · enter drops",
-           min_w = 29, min_h = 9, tick_ms = 0 },
+           min_w = 29, min_h = 9, tick_ms = 0,
+           icon = "│ │○│ │ │\n│●│●│○│ │\n└─┴─┴─┴─┘" },
 }
 
 local COLS, ROWS = 7, 6

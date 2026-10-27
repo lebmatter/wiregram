@@ -351,7 +351,10 @@ These are project constraints, not suggestions:
   steps as label and value rows, then the current question (`wizardModel.formView`).
 - Games (`internal/game`, `internal/tui/game.go`, `docs/features/games.md`): `game+` at the
   end of a DM's or group's composer, or Alt+G, opens a picker over the chat
-  (`gamePickerModel`). The challenger hosts: `game.Listen` serves one guest on
+  (`gamePickerModel`), playful on purpose and unlike the other modals: a `🎮 game time`
+  box with a grid of cards, each the script's `info.icon` drawing in its own colour, its
+  name and turn-based or real-time, the chosen one with a heavy accent border; a click
+  chooses a card and a second click on it challenges. The challenger hosts: `game.Listen` serves one guest on
   `127.0.0.1`, `game.StartTunnel` runs cloudflared (an optional external program, like
   mpv) for a quick tunnel, read from its metrics `/quicktunnel` or its log and waited on
   with `/ready`, then the invite goes to the chat as plain text
