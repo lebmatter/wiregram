@@ -56,7 +56,7 @@ type MxBackend struct {
 	events backend.Bus
 
 	client     *http.Client
-	syncCancel context.CancelFunc
+	media      *http.Client // uploads and downloads, which take as long as they take
 	txnCounter int64
 }
 
@@ -147,6 +147,7 @@ func NewMXBackend(homeserver string) *MxBackend {
 		userCache:  make(map[string]string),
 		dmRooms:    make(map[string]bool),
 		client:     &http.Client{Timeout: 120 * time.Second},
+		media:      backend.NewMediaClient(),
 	}
 }
 
@@ -257,8 +258,15 @@ func (mx *MxBackend) resolveHomeserver(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&wk); err != nil {
 		return nil
 	}
-	if wk.Homeserver.BaseURL != "" {
-		mx.Homeserver = strings.TrimRight(wk.Homeserver.BaseURL, "/")
+	base := strings.TrimRight(wk.Homeserver.BaseURL, "/")
+	switch {
+	case base == "":
+	case strings.HasPrefix(base, "https://"),
+		strings.HasPrefix(base, "http://") && strings.HasPrefix(mx.Homeserver, "http://"):
+		mx.Homeserver = base
+	default:
+		// The password would cross the network in the clear.
+		return fmt.Errorf("ignored the server's homeserver address %s, which is not https", base)
 	}
 	return nil
 }
@@ -353,14 +361,12 @@ func (mx *MxBackend) Run(ctx context.Context) error {
 func (mx *MxBackend) Syncing() bool { return !mx.synced.Load() }
 
 func (mx *MxBackend) StartSync(ctx context.Context) {
-	syncCtx, cancel := context.WithCancel(ctx)
-	mx.syncCancel = cancel
 	go func() {
 		delay := time.Second
-		for syncCtx.Err() == nil {
+		for ctx.Err() == nil {
 			start := time.Now()
-			err := mx.runSync(syncCtx)
-			if syncCtx.Err() != nil {
+			err := mx.runSync(ctx)
+			if ctx.Err() != nil {
 				return
 			}
 			if errors.Is(err, errLoggedOut) {
@@ -374,7 +380,7 @@ func (mx *MxBackend) StartSync(ctx context.Context) {
 				delay = time.Second // it synced for a while before failing
 			}
 			select {
-			case <-syncCtx.Done():
+			case <-ctx.Done():
 				return
 			case <-time.After(delay):
 			}
@@ -444,9 +450,11 @@ func (mx *MxBackend) runSync(ctx context.Context) error {
 		mx.mu.Lock()
 		mx.syncToken = token
 		mx.mu.Unlock()
-		mx.saveSyncToken(token)
 		if !mx.synced.Swap(true) {
 			mx.events.Publish(backend.Event{Kind: backend.EventUnread})
+		}
+		if err := mx.saveSyncToken(token); err != nil {
+			return err
 		}
 	}
 	return ctx.Err()
@@ -800,8 +808,13 @@ func (mx *MxBackend) processTypingEvent(roomID string, ev mxTimelineEvent, subsc
 // loadSyncToken restores the saved sync position, also publishing it for
 // UnreadMessages.
 func (mx *MxBackend) loadSyncToken() string {
-	if mx.Store == nil {
-		return ""
+	mx.mu.Lock()
+	current := mx.syncToken
+	mx.mu.Unlock()
+	if current != "" || mx.Store == nil {
+		// A sync restarting after an error resumes where it got to, even when
+		// saving that position failed.
+		return current
 	}
 	data, err := mx.Store.Get(mx.StoreKey, store.SyncToken)
 	if err != nil {
@@ -814,11 +827,11 @@ func (mx *MxBackend) loadSyncToken() string {
 	return token
 }
 
-func (mx *MxBackend) saveSyncToken(token string) {
+func (mx *MxBackend) saveSyncToken(token string) error {
 	if mx.Store == nil {
-		return
+		return nil
 	}
-	mx.Store.Put(mx.StoreKey, store.SyncToken, []byte(token))
+	return mx.Store.Put(mx.StoreKey, store.SyncToken, []byte(token))
 }
 
 // Room display helpers.
@@ -1446,7 +1459,7 @@ func (mx *MxBackend) uploadFile(ctx context.Context, filePath string) (mxcURI, f
 	req.Header.Set("Authorization", "Bearer "+mx.AccessToken)
 	req.ContentLength = size
 
-	resp, err := mx.client.Do(req)
+	resp, err := mx.media.Do(req)
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("upload file: %w", err)
 	}
@@ -1842,7 +1855,7 @@ func (mx *MxBackend) openMXC(ctx context.Context, mxcURL string) (io.ReadCloser,
 			return nil, fmt.Errorf("create download request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+mx.AccessToken)
-		resp, err := mx.client.Do(req)
+		resp, err := mx.media.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("download: %w", err)
 		}

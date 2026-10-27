@@ -17,6 +17,7 @@ import (
 
 const (
 	maxValue = 64 << 10 // one kv value
+	maxStore = 1 << 20  // a plugin's whole kv store, keys included
 	maxKey   = 256
 	maxBody  = 1 << 20 // one http.get response
 )
@@ -285,7 +286,14 @@ func (p *Plugin) luaKVSet(L *lua.LState) int {
 	case len(v) > maxValue:
 		err = fmt.Errorf("kv values are at most %d KB", maxValue>>10)
 	default:
-		err = p.db.PluginPut(p.Name, k, v)
+		var used int
+		if used, err = p.db.PluginBytes(p.Name, k); err == nil {
+			if used+len(k)+len(v) > maxStore {
+				err = fmt.Errorf("the kv store is full at %d KB", maxStore>>10)
+			} else {
+				err = p.db.PluginPut(p.Name, k, v)
+			}
+		}
 	}
 	return pushResult(L, err)
 }

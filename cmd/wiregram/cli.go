@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/term"
-
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
 	"wiregram/internal/backend"
@@ -343,7 +341,7 @@ func cmdSend(ctx context.Context, args []string) error {
 	}
 	text := strings.Join(flags.Args()[3:], " ")
 	if flags.NArg() == 3 {
-		if term.IsTerminal(int(os.Stdin.Fd())) {
+		if isTerminal(os.Stdin) {
 			return fmt.Errorf("give the message after RECIPIENT, or pipe it on stdin")
 		}
 		data, err := io.ReadAll(os.Stdin)
@@ -578,7 +576,7 @@ func cmdReset(ctx context.Context, args []string) error {
 		return fmt.Errorf("usage: wiregram reset [-y]")
 	}
 	if !*yes {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if !isTerminal(os.Stdin) {
 			return fmt.Errorf("reset needs -y when not run in a terminal")
 		}
 		fmt.Fprint(os.Stderr, "Reset wiregram? This signs out of every account and deletes all local data [y/N] ")
@@ -723,7 +721,7 @@ func cmdGame(ctx context.Context, args []string) error {
 	if err := flags.Parse(args); err != nil || flags.NArg() > 1 {
 		return fmt.Errorf("usage: wiregram game [-name NAME] [INVITE]")
 	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		return fmt.Errorf("wiregram game needs an interactive terminal")
 	}
 	player := strings.TrimSpace(textfmt.Plain(*name))

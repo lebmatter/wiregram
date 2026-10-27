@@ -49,6 +49,12 @@ func (b *MailBackend) dial(ctx context.Context, handler *imapclient.UnilateralDa
 		c.Close()
 		return nil, err
 	}
+	// Unregister from ctx once the connection closes by itself, so a long
+	// lived ctx does not keep every dropped connection.
+	go func() {
+		<-c.Closed()
+		stop()
+	}()
 	return c, nil
 }
 
@@ -72,6 +78,17 @@ func (b *MailBackend) login(ctx context.Context, c *imapclient.Client) error {
 // withConn runs fn on the shared command connection, reconnecting once when
 // the old connection turns out to be dead. Server refusals are not retried.
 func (b *MailBackend) withConn(ctx context.Context, fn func(*imapclient.Client) error) error {
+	return b.useConn(ctx, true, fn)
+}
+
+// withConnOnce is withConn without the retry, for a command that may have
+// taken effect before the connection died, such as filing a sent mail.
+func (b *MailBackend) withConnOnce(ctx context.Context, fn func(*imapclient.Client) error) error {
+	return b.useConn(ctx, false, fn)
+}
+
+func (b *MailBackend) useConn(ctx context.Context, retry bool,
+	fn func(*imapclient.Client) error) error {
 	b.connMu.Lock()
 	defer b.connMu.Unlock()
 	for attempt := 0; ; attempt++ {
@@ -86,13 +103,26 @@ func (b *MailBackend) withConn(ctx context.Context, fn func(*imapclient.Client) 
 			}
 		}
 		err := fn(b.conn)
-		var imapErr *imap.Error
-		if err == nil || errors.As(err, &imapErr) || ctx.Err() != nil || attempt > 0 {
+		if err == nil || ctx.Err() != nil || !connDead(b.conn, err) {
 			return err
 		}
 		b.conn.Close()
 		b.conn = nil
+		if !retry || attempt > 0 {
+			return err
+		}
 	}
+}
+
+// connDead reports whether err came from c failing, rather than from the
+// server refusing a command or from wiregram's own cache.
+func connDead(c *imapclient.Client, err error) bool {
+	select {
+	case <-c.Closed():
+		return true
+	default:
+	}
+	return backend.NetworkError(err) || errors.Is(err, net.ErrClosed)
 }
 
 // selectBox selects mailbox on c unless it is selected already and returns
@@ -333,7 +363,7 @@ func (b *MailBackend) envelopeRow(m *imapclient.FetchMessageBuffer, mailbox stri
 		Cc:        joinAddrs(env.Cc),
 	}
 	if r.MessageID == "" {
-		r.MessageID = syntheticID(mailbox, uv, r.UID)
+		r.MessageID = syntheticID(env)
 	}
 	if len(env.InReplyTo) > 0 {
 		r.InReplyTo = strings.Trim(env.InReplyTo[0], "<>")
@@ -641,7 +671,7 @@ func (b *MailBackend) labelMail(c *imapclient.Client, label string, uv uint32, u
 			}
 			id := strings.Trim(m.Envelope.MessageID, "<>")
 			if id == "" {
-				id = syntheticID(label, uv, uint32(m.UID))
+				id = syntheticID(m.Envelope)
 			}
 			members = append(members, labelMember{uid: uint32(m.UID), messageID: id})
 			if !b.db.hasMessageID(id) {

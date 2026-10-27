@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"mime"
 	"net/url"
 	"os"
 	"os/exec"
@@ -136,12 +135,13 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	wa.Client.AddEventHandler(wa.handleEvent)
 
 	if wa.Client.Store.ID != nil {
+		// Set before Connect, since event handlers read them from then on.
+		wa.Jid = *wa.Client.Store.ID
+		wa.PushName = wa.Client.Store.PushName
 		wa.startSync()
 		if err := wa.Client.Connect(); err != nil {
 			return fmt.Errorf("reconnect to WhatsApp: %w", err)
 		}
-		wa.Jid = *wa.Client.Store.ID
-		wa.PushName = wa.Client.Store.PushName
 		return nil
 	}
 
@@ -196,9 +196,9 @@ func (wa *WaBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	for item := range qrChan {
 		switch item.Event {
 		case "success":
+			// wa.Jid was set by the PairSuccess handler, before this event.
 			wa.paired.Store(true)
 			wa.startSync()
-			wa.Jid = *wa.Client.Store.ID
 			wa.PushName = wa.Client.Store.PushName
 			return nil
 		case "timeout":
@@ -284,6 +284,10 @@ func (wa *WaBackend) handleEvent(rawEvt any) {
 		if !wa.paired.Load() {
 			wa.finishSync()
 		}
+	case *events.PairSuccess:
+		// Handlers run in order on whatsmeow's event goroutine, so every later
+		// event, and the QR channel's success after this one, sees the JID.
+		wa.Jid = evt.ID
 	case *events.Connected:
 		_ = wa.Client.SendPresence(context.Background(), types.PresenceAvailable)
 	case *events.LoggedOut:
@@ -812,26 +816,26 @@ func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, fileP
 	if err != nil {
 		return backend.Message{}, err
 	}
-	data, err := os.ReadFile(filePath)
+	f, err := os.Open(filePath)
 	if err != nil {
 		return backend.Message{}, fmt.Errorf("read file: %w", err)
 	}
-	mimeType := mime.TypeByExtension(filepath.Ext(filePath))
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
+	defer f.Close()
+	// Only what WhatsApp shows natively goes as media: a GIF would need
+	// converting to MP4 and WebP or SVG are not photos, so they go as files.
+	kind, mimeType := backend.ClassifyUpload(filePath)
 	var mediaType whatsmeow.MediaType
-	switch {
-	case strings.HasPrefix(mimeType, "image/"):
+	switch kind {
+	case backend.UploadPhoto:
 		mediaType = whatsmeow.MediaImage
-	case strings.HasPrefix(mimeType, "video/"):
+	case backend.UploadVideo:
 		mediaType = whatsmeow.MediaVideo
-	case strings.HasPrefix(mimeType, "audio/"):
+	case backend.UploadAudio:
 		mediaType = whatsmeow.MediaAudio
 	default:
 		mediaType = whatsmeow.MediaDocument
 	}
-	uploaded, err := wa.Client.Upload(ctx, data, mediaType)
+	uploaded, err := wa.Client.UploadReader(ctx, f, nil, mediaType)
 	if err != nil {
 		return backend.Message{}, fmt.Errorf("upload file: %w", err)
 	}
@@ -899,7 +903,7 @@ func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, fileP
 	if err != nil {
 		return backend.Message{}, fmt.Errorf("send media: %w", err)
 	}
-	label := mediaLabelForMIME(mimeType, fileName, int64(uploaded.FileLength))
+	label := mediaLabel(mediaType, fileName, int64(uploaded.FileLength))
 	out := backend.Message{
 		ID:         resp.ID,
 		Sender:     "you",
@@ -913,14 +917,14 @@ func (wa *WaBackend) SendUpload(ctx context.Context, ch backend.ChatEntry, fileP
 	return out, nil
 }
 
-func mediaLabelForMIME(mimeType, fileName string, size int64) string {
+func mediaLabel(mediaType whatsmeow.MediaType, fileName string, size int64) string {
 	kind := "file"
-	switch {
-	case strings.HasPrefix(mimeType, "image/"):
+	switch mediaType {
+	case whatsmeow.MediaImage:
 		kind = "photo"
-	case strings.HasPrefix(mimeType, "video/"):
+	case whatsmeow.MediaVideo:
 		kind = "video"
-	case strings.HasPrefix(mimeType, "audio/"):
+	case whatsmeow.MediaAudio:
 		kind = "audio"
 	}
 	sizeStr := textfmt.FormatSize(size)
@@ -1447,9 +1451,15 @@ func (wa *WaBackend) SelfChat(ctx context.Context) (backend.ChatEntry, error) {
 
 // Emoji.
 
-func (wa *WaBackend) RecentEmoji() []string { return wa.recentEmoji }
+func (wa *WaBackend) RecentEmoji() []string {
+	wa.mu.Lock()
+	defer wa.mu.Unlock()
+	return slices.Clone(wa.recentEmoji)
+}
 
 func (wa *WaBackend) RememberEmoji(value string) {
+	wa.mu.Lock()
+	defer wa.mu.Unlock()
 	for i, v := range wa.recentEmoji {
 		if v == value {
 			wa.recentEmoji = append(wa.recentEmoji[:i], wa.recentEmoji[i+1:]...)
@@ -1465,7 +1475,7 @@ func (wa *WaBackend) RememberEmoji(value string) {
 func (wa *WaBackend) EmojiChoices(query string) []backend.EmojiOption {
 	catalog := backend.EmojiCatalog()
 	if query == "" {
-		return backend.RecentFirst(catalog, wa.recentEmoji)
+		return backend.RecentFirst(catalog, wa.RecentEmoji())
 	}
 	q := strings.ToLower(query)
 	var matches []backend.EmojiOption

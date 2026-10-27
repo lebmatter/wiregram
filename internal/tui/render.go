@@ -3,29 +3,22 @@ package tui
 import (
 	"fmt"
 	"image/color"
-	"os"
 	"sort"
 	"strings"
+	"unicode"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"golang.org/x/term"
 
 	"wiregram/internal/account"
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
 )
 
-func termSize() (width, height int) {
-	w, h, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || w < 4 || h < 4 {
-		return 80, 24
-	}
-	return w, h
-}
+func termSize() (width, height int) { return backend.TermSize() }
 
 // twoPaneWidth is the narrowest terminal that shows the chat list beside the chat.
 const twoPaneWidth = 100
@@ -594,7 +587,7 @@ func styleSpans(text string, spans []backend.Span) string {
 			}
 			out.WriteString(ts.on)
 			if ts.style == backend.StyleLink {
-				out.WriteString(oscLink + textfmt.Plain(url) + "\a")
+				out.WriteString(oscLink + linkTarget(url) + "\a")
 			}
 		}
 		for _, r := range text[from:to] {
@@ -650,7 +643,7 @@ func styleLinks(text string) string {
 			out.WriteString(linkOn + rest[:end] + linkOff)
 			i += end
 		case strings.HasPrefix(rest, "https://") || strings.HasPrefix(rest, "http://"):
-			end := strings.IndexAny(rest, " \t\n\x1b")
+			end := strings.IndexFunc(rest, func(r rune) bool { return r == '\x1b' || unicode.IsSpace(r) })
 			if end < 0 {
 				end = len(rest)
 			}
@@ -663,6 +656,21 @@ func styleLinks(text string) string {
 		}
 	}
 	return out.String()
+}
+
+// linkTarget is url when the terminal may open it: http or https with no space
+// or control character, which wrapping could split. Anything else, file://
+// among them, gets an empty target and stays plain underlined text.
+func linkTarget(url string) string {
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		return ""
+	}
+	if strings.ContainsFunc(url, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) {
+		return ""
+	}
+	return url
 }
 
 // carryStyles ends the text styles still open at the end of a wrapped line

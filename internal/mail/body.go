@@ -43,8 +43,9 @@ func layout(bs imap.BodyStructure) (*textPart, []part) {
 		case !attached && mt == "text/html" && rich == nil:
 			rich = &textPart{Section: section, HTML: true, Encoding: single.Encoding,
 				Charset: single.Params["charset"]}
-		case !attached && single.ID != "":
-			// Images embedded in an HTML body by Content-ID are not attachments.
+		case !attached && single.ID != "" && single.Filename() == "":
+			// Images embedded in an HTML body by Content-ID are not attachments,
+			// but a named inline part, such as Apple Mail's PDFs, is one.
 		case single.Filename() != "" || attached || !strings.HasPrefix(mt, "text/"):
 			name := single.Filename()
 			if name == "" {
@@ -116,6 +117,7 @@ func bodyText(raw []byte, t *textPart) string {
 }
 
 var (
+	reComment = regexp.MustCompile(`(?s)<!--.*?-->`)
 	reDropped = regexp.MustCompile(`(?is)<(script|style|head)[^>]*>.*?</(script|style|head)>`)
 	reBreak   = regexp.MustCompile(`(?i)<(br|/p|/div|/tr|/h[1-6]|/ul|/ol|/blockquote)[^>]*>`)
 	reItem    = regexp.MustCompile(`(?i)<li[^>]*>`)
@@ -127,6 +129,8 @@ var (
 // stripHTML reduces an HTML body to its text. Nothing it references, such
 // as images, is ever fetched.
 func stripHTML(s string) string {
+	// Comments go first: Outlook's conditional ones hold markup of their own.
+	s = reComment.ReplaceAllString(s, "")
 	s = reDropped.ReplaceAllString(s, "")
 	s = strings.NewReplacer("\r", "", "\n", " ").Replace(s)
 	s = reBreak.ReplaceAllString(s, "\n")

@@ -268,10 +268,12 @@ func (rt *agentRuntime) Reload() {
 	defer rt.reloadMu.Unlock()
 	list, err := rt.Db.ListAgents()
 	if err != nil {
+		rt.halt(err)
 		return
 	}
 	regs, err := rt.Db.Registrations()
 	if err != nil {
+		rt.halt(err)
 		return
 	}
 	agents := make(map[int64]*runningAgent)
@@ -282,6 +284,7 @@ func (rt *agentRuntime) Reload() {
 		if _, ok := claims[rec.AccountKey]; !ok {
 			c, err := rt.Db.ChatClaims(rec.AccountKey)
 			if err != nil {
+				rt.halt(err)
 				return
 			}
 			claims[rec.AccountKey] = c
@@ -307,6 +310,21 @@ func (rt *agentRuntime) Reload() {
 			delete(rt.pending, key)
 		}
 	}
+	rt.mu.Unlock()
+	rt.syncSubscriptions()
+	rt.syncBots()
+	rt.notify()
+}
+
+// halt stops every agent when Reload cannot read the database, so a bot
+// deleted or paused meanwhile never keeps answering from the old list, and
+// shows each one why.
+func (rt *agentRuntime) halt(err error) {
+	rt.mu.Lock()
+	for id := range rt.agents {
+		rt.problems[id] = textfmt.CleanError(err)
+	}
+	rt.agents = make(map[int64]*runningAgent)
 	rt.mu.Unlock()
 	rt.syncSubscriptions()
 	rt.syncBots()
@@ -631,7 +649,9 @@ func (rt *agentRuntime) respond(acct *Account, key ConvKey, w *convWorker, owner
 		return
 	}
 	if ag.record.Auto {
-		b.SetTyping(rt.ctx, entry)
+		ctx, cancel := context.WithTimeout(rt.ctx, agentTimeout)
+		b.SetTyping(ctx, entry)
+		cancel()
 	}
 	messages, err := rt.buildMessages(ag, history, key.Self)
 	if err != nil {
@@ -793,8 +813,10 @@ func (rt *agentRuntime) fail(agentID int64, err error) {
 // findChat looks the DM up in the chat list. Agents only answer existing
 // conversations, so there is never a chat to create.
 func (rt *agentRuntime) findChat(b backend.Backend, id backend.ChatID) (backend.ChatEntry, error) {
+	ctx, cancel := context.WithTimeout(rt.ctx, agentTimeout)
+	defer cancel()
 	for _, archived := range []bool{false, true} {
-		entries, _, err := b.Dialogs(rt.ctx, archived)
+		entries, _, err := b.Dialogs(ctx, archived)
 		if err != nil {
 			return backend.ChatEntry{}, fmt.Errorf("load chats: %w", err)
 		}
@@ -809,7 +831,7 @@ func (rt *agentRuntime) findChat(b backend.Backend, id backend.ChatID) (backend.
 	}
 	// The user's own chat may be missing from the list until it is used.
 	if sc, ok := b.(backend.SelfChatter); ok {
-		if e, err := sc.SelfChat(rt.ctx); err == nil && e.ID == id {
+		if e, err := sc.SelfChat(ctx); err == nil && e.ID == id {
 			return e, nil
 		}
 	}
@@ -826,7 +848,9 @@ func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key Con
 		rt.selfSending[key.Chat]++
 		rt.mu.Unlock()
 	}
-	sent, err := b.Send(rt.ctx, entry, rec.Prefixed(text), replyTo)
+	ctx, cancel := context.WithTimeout(rt.ctx, agentTimeout)
+	sent, err := b.Send(ctx, entry, rec.Prefixed(text), replyTo)
+	cancel()
 	if key.Self {
 		rt.mu.Lock()
 		if err == nil {
@@ -1123,7 +1147,13 @@ func (rt *agentRuntime) Approve(key ConvKey) error {
 	if err := rt.send(b, entry, key, rec, sug.Text, sug.ReplyTo); err != nil {
 		return err
 	}
-	rt.Discard(key)
+	// A newer suggestion drafted while this one was sending stays.
+	rt.mu.Lock()
+	if rt.pending[key].At.Equal(sug.At) {
+		delete(rt.pending, key)
+	}
+	rt.mu.Unlock()
+	rt.notify()
 	return nil
 }
 

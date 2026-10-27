@@ -31,22 +31,7 @@ func mediaAttachment(message *tg.Message) (attachment, error) {
 		if !ok {
 			return attachment{}, fmt.Errorf("this photo is no longer available")
 		}
-		size, area := "", 0
-		for _, value := range photo.Sizes {
-			var kind string
-			var w, h int
-			switch s := value.(type) {
-			case *tg.PhotoSize:
-				kind, w, h = s.Type, s.W, s.H
-			case *tg.PhotoSizeProgressive:
-				kind, w, h = s.Type, s.W, s.H
-			case *tg.PhotoCachedSize:
-				kind, w, h = s.Type, s.W, s.H
-			}
-			if w*h > area {
-				size, area = kind, w*h
-			}
-		}
+		size := largestSize(photo)
 		if size == "" {
 			return attachment{}, fmt.Errorf("this photo has no downloadable size")
 		}
@@ -75,6 +60,27 @@ func mediaAttachment(message *tg.Message) (attachment, error) {
 	}
 }
 
+// largestSize is the type of the photo's largest size, "" when it has none.
+func largestSize(photo *tg.Photo) string {
+	size, area := "", 0
+	for _, value := range photo.Sizes {
+		var kind string
+		var w, h int
+		switch s := value.(type) {
+		case *tg.PhotoSize:
+			kind, w, h = s.Type, s.W, s.H
+		case *tg.PhotoSizeProgressive:
+			kind, w, h = s.Type, s.W, s.H
+		case *tg.PhotoCachedSize:
+			kind, w, h = s.Type, s.W, s.H
+		}
+		if w*h > area {
+			size, area = kind, w*h
+		}
+	}
+	return size
+}
+
 type downloadable struct {
 	location tg.InputFileLocationClass
 	dc       int
@@ -88,22 +94,7 @@ func mediaDownloadable(message *tg.Message) (downloadable, error) {
 		if !ok {
 			return downloadable{}, fmt.Errorf("this photo is no longer available")
 		}
-		size, area := "", 0
-		for _, value := range photo.Sizes {
-			var kind string
-			var w, h int
-			switch s := value.(type) {
-			case *tg.PhotoSize:
-				kind, w, h = s.Type, s.W, s.H
-			case *tg.PhotoSizeProgressive:
-				kind, w, h = s.Type, s.W, s.H
-			case *tg.PhotoCachedSize:
-				kind, w, h = s.Type, s.W, s.H
-			}
-			if w*h > area {
-				size, area = kind, w*h
-			}
-		}
+		size := largestSize(photo)
 		if size == "" {
 			return downloadable{}, fmt.Errorf("this photo has no downloadable size")
 		}
@@ -159,19 +150,51 @@ func (c *Client) acknowledgeMedia(ctx context.Context, message *tg.Message) {
 	}
 }
 
+// mediaRetries is how many times one download request is retried after the
+// connection drops, before the download fails.
+const mediaRetries = 5
+
+// withFreshReference runs download, and once more with the message reloaded
+// when Telegram says its file reference has expired, as they do after a while.
+func (c *Client) withFreshReference(ctx context.Context, m *tg.Message,
+	download func(*tg.Message) error) error {
+	err := download(m)
+	if !tgerr.Is(err, "FILE_REFERENCE_EXPIRED") {
+		return err
+	}
+	var peer tg.InputPeerClass = &tg.InputPeerEmpty{}
+	if p, ok := m.PeerID.(*tg.PeerChannel); ok {
+		c.mu.Lock()
+		hash, known := c.channelHashes[p.ChannelID]
+		c.mu.Unlock()
+		if !known {
+			return fmt.Errorf("this media link expired; reopen the chat and try again")
+		}
+		peer = &tg.InputPeerChannel{ChannelID: p.ChannelID, AccessHash: hash}
+	}
+	fresh, err := c.messagesByID(ctx, chat{peer: peer}, []int{m.ID})
+	if err != nil {
+		return err
+	}
+	if len(fresh) == 0 {
+		return fmt.Errorf("this message has been deleted")
+	}
+	return download(fresh[0])
+}
+
 func (c *Client) downloadMedia(ctx context.Context, a attachment, file *os.File) error {
 	pool, err := c.mediaPool(ctx, a.dc)
 	if err != nil {
 		return err
 	}
 	rpc := telegram.InvokeFunc(func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
-		for {
+		for attempt := 0; ; attempt++ {
 			err := pool.Invoke(ctx, input, output)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			delay, flood := tgerr.AsFloodWait(err)
-			if !flood && !backend.NetworkError(err) {
+			if !flood && (!backend.NetworkError(err) || attempt >= mediaRetries) {
 				return err
 			}
 			if flood {

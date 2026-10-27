@@ -10,8 +10,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"golang.org/x/term"
-
 	"wiregram/internal/account"
 	"wiregram/internal/config"
 	"wiregram/internal/store"
@@ -368,7 +366,7 @@ func run() (result error) {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unknown command %q; wiregram -h lists the commands", flags.Arg(0))
 	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		return fmt.Errorf("wiregram needs an interactive terminal")
 	}
 	for {
@@ -405,4 +403,10 @@ func session(ctx context.Context, dir string) error {
 		return err
 	}
 	return tui.RunAccounts(ctx, accounts)
+}
+
+// isTerminal reports whether f is a terminal rather than a pipe or file.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

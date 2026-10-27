@@ -816,14 +816,22 @@ func (d *AgentDB) SetManager(accountKey string, b backend.BotAccount) error {
 
 // DeleteAccount drops the account's agent and the record of what it sent.
 func (d *AgentDB) DeleteAccount(key string) error {
-	if _, err := d.db.Exec(`DELETE FROM agents WHERE account_key = ?`, key); err != nil {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin delete account agents: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM agents WHERE account_key = ?`, key); err != nil {
 		return fmt.Errorf("delete account agent: %w", err)
 	}
-	if _, err := d.db.Exec(`DELETE FROM agent_sent WHERE account_key = ?`, key); err != nil {
+	if _, err := tx.Exec(`DELETE FROM agent_sent WHERE account_key = ?`, key); err != nil {
 		return fmt.Errorf("delete agent sent messages: %w", err)
 	}
-	if _, err := d.db.Exec(`DELETE FROM bot_managers WHERE account_key = ?`, key); err != nil {
+	if _, err := tx.Exec(`DELETE FROM bot_managers WHERE account_key = ?`, key); err != nil {
 		return fmt.Errorf("delete the manager bot: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete account agents: %w", err)
 	}
 	return nil
 }

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
+
 	"wiregram/internal/backend"
 	"wiregram/internal/store"
 )
@@ -28,7 +30,7 @@ var RetentionChoices = []int{30, 90, 365, 0}
 // sync sees it; the sync adopts the row so its message ID never changes.
 const sentPlaceholder = ":sent"
 
-const currentDBVersion = 3
+const currentDBVersion = 4
 
 const schemaV1 = `
 CREATE TABLE mail_messages (
@@ -92,9 +94,24 @@ UPDATE mail_messages SET message_id = uidvalidity || '.' || uid || '.' || mailbo
 	WHERE message_id = '';
 `
 
-// syntheticID names a mail without a Message-ID by where it was found.
-func syntheticID(mailbox string, uidvalidity, uid uint32) string {
-	return fmt.Sprintf("%d.%d.%s@wiregram", uidvalidity, uid, mailbox)
+// schemaV4 renames those mails as syntheticID now does, by date and sender
+// rather than by folder. Their folder memberships under the old names go;
+// the next sync finds them again under the new ones.
+const schemaV4 = `
+UPDATE mail_messages SET message_id = date || '.' || from_addr || '@wiregram'
+	WHERE message_id = uidvalidity || '.' || uid || '.' || mailbox || '@wiregram';
+DELETE FROM mail_label_members
+	WHERE message_id = uidvalidity || '.' || uid || '.' || label || '@wiregram';
+`
+
+// syntheticID names a mail without a Message-ID by its date and sender, the
+// same in every folder, so a moved mail is not taken for a new one.
+func syntheticID(env *imap.Envelope) string {
+	from := ""
+	if len(env.From) > 0 {
+		from = strings.ToLower(env.From[0].Addr())
+	}
+	return fmt.Sprintf("%d.%s@wiregram", env.Date.Unix(), from)
 }
 
 // part is one attachment of a cached mail; Section is its IMAP body part path.
@@ -173,7 +190,7 @@ func migrate(db *sql.DB) error {
 	} else if err != nil {
 		return fmt.Errorf("read mail migration version: %w", err)
 	}
-	steps := []string{schemaV1, schemaV2, schemaV3}
+	steps := []string{schemaV1, schemaV2, schemaV3, schemaV4}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := db.Begin()
 		if err != nil {
@@ -553,9 +570,15 @@ func (d *mailDB) addressRows(limit int) ([]string, error) {
 // setUnseen makes exactly the given UIDs of a folder unread, so mail read
 // in another client stops counting here.
 func (d *mailDB) setUnseen(folder string, uidvalidity uint32, unseen map[uint32]bool) (bool, error) {
+	// A mail cached once may sit in several folders, each with its own flags
+	// on servers other than Gmail; the folder it was cached from decides, so
+	// two folders never flip it back and forth. Others decide once it leaves.
 	rows, err := d.db.Query(`SELECT m.uid, r.id, r.seen FROM mail_label_members m
 		JOIN mail_messages r ON r.account = m.account AND r.message_id = m.message_id
-		WHERE m.account = ? AND m.label = ? AND m.uidvalidity = ? AND r.outgoing = 0`,
+		WHERE m.account = ? AND m.label = ? AND m.uidvalidity = ? AND r.outgoing = 0
+		AND (r.mailbox = m.label OR NOT EXISTS (SELECT 1 FROM mail_label_members o
+			WHERE o.account = r.account AND o.label = r.mailbox
+			AND o.message_id = r.message_id))`,
 		d.account, folder, uidvalidity)
 	if err != nil {
 		return false, fmt.Errorf("read read state: %w", err)

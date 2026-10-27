@@ -250,5 +250,8 @@ func (b *MailBackend) submit(ctx context.Context, rcpts []string, data []byte) e
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("send mail: %w", err)
 	}
-	return c.Quit()
+	// The server has accepted the mail; failing to say goodbye must not make
+	// it look unsent and be sent again.
+	_ = c.Quit()
+	return nil
 }

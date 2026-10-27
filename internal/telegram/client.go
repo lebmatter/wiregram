@@ -47,6 +47,7 @@ type Client struct {
 	mu             sync.Mutex
 	users          map[int64]*tg.User
 	chats          map[peerKey]string
+	channelHashes  map[int64]int64 // access hash per channel, to reload its messages
 	reads          map[peerKey]readState
 	unreads        map[peerKey]int
 	contactUsers   []*tg.User
@@ -150,8 +151,8 @@ func NewClient(cfg config.Config, db *store.DB, account string, report func(erro
 func newClient(cfg config.Config, storage telegram.SessionStorage, report func(error)) *Client {
 	c := &Client{
 		users: make(map[int64]*tg.User), chats: make(map[peerKey]string),
-		unreads: make(map[peerKey]int),
-		cfg:     cfg,
+		channelHashes: make(map[int64]int64), unreads: make(map[peerKey]int),
+		cfg: cfg,
 	}
 	middleware := telegram.MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
 		return func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
@@ -210,6 +211,9 @@ func (c *Client) Remember(users []tg.UserClass, chats []tg.ChatClass) {
 				title = "Channel: " + title
 			}
 			c.chats[peerKey{'c', g.ID}] = title
+			if !g.Min {
+				c.channelHashes[g.ID] = g.AccessHash
+			}
 		}
 	}
 }

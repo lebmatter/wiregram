@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -269,10 +270,11 @@ func (tb *TelegramBackend) Capabilities() backend.Capabilities {
 	}
 }
 
+// Run waits for ctx: the account manager owns the MTProto connection and
+// runs it itself, so a second one is never opened here.
 func (tb *TelegramBackend) Run(ctx context.Context) error {
-	return tb.C.Run(ctx, func(runCtx context.Context) error {
-		return nil
-	})
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (tb *TelegramBackend) Authenticate(ctx context.Context, prompt config.PromptFunc, report func(error)) error {
@@ -569,8 +571,7 @@ func (tb *TelegramBackend) MediaExec(ctx context.Context, msg backend.Message, p
 	if !ok {
 		return nil, nil, fmt.Errorf("this message has no playable attachment")
 	}
-	a, err := mediaAttachment(m)
-	if err != nil {
+	if _, err := mediaAttachment(m); err != nil {
 		return nil, nil, err
 	}
 	dir, err := os.MkdirTemp("", "wiregram-media-")
@@ -584,13 +585,27 @@ func (tb *TelegramBackend) MediaExec(ctx context.Context, msg backend.Message, p
 		cleanup()
 		return nil, nil, fmt.Errorf("create temporary media file: %w", err)
 	}
-	dlErr := tb.C.downloadMedia(ctx, a, file)
+	var audio bool
+	dlErr := tb.C.withFreshReference(ctx, m, func(m *tg.Message) error {
+		a, err := mediaAttachment(m)
+		if err != nil {
+			return err
+		}
+		audio = a.audio
+		if err := file.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		return tb.C.downloadMedia(ctx, a, file)
+	})
 	closeErr := file.Close()
 	if err := errors.Join(dlErr, closeErr); err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("download media: %w", err)
 	}
-	return backend.MpvCmd(ctx, player, a.audio, path), cleanup, nil
+	return backend.MpvCmd(ctx, player, audio, path), cleanup, nil
 }
 
 func (tb *TelegramBackend) MediaSaveable(msg backend.Message) (string, bool) {
@@ -610,11 +625,13 @@ func (tb *TelegramBackend) SaveMedia(ctx context.Context, msg backend.Message, d
 	if !ok {
 		return fmt.Errorf("this message has no downloadable attachment")
 	}
-	dl, err := mediaDownloadable(m)
-	if err != nil {
-		return err
-	}
-	return tb.C.saveMedia(ctx, dl, filepath.Join(destDir, dl.filename))
+	return tb.C.withFreshReference(ctx, m, func(m *tg.Message) error {
+		dl, err := mediaDownloadable(m)
+		if err != nil {
+			return err
+		}
+		return tb.C.saveMedia(ctx, dl, filepath.Join(destDir, dl.filename))
+	})
 }
 
 func (tb *TelegramBackend) AcknowledgeMedia(ctx context.Context, msg backend.Message) {

@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
-
-	"golang.org/x/term"
 )
 
 func mpvArgs(audio bool, path string) []string {
@@ -23,10 +22,7 @@ func mpvArgs(audio bool, path string) []string {
 	if audio {
 		args = append(args, "--vid=no", "--vo=null")
 	} else {
-		cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil || cols < 1 || rows < 4 {
-			cols, rows = 80, 24
-		}
+		cols, rows := TermSize()
 		args = append(args, "--profile=sw-fast", "--vo=kitty",
 			"--vo-kitty-alt-screen=no", "--vo-kitty-use-shm=no",
 			"--vo-kitty-config-clear=no", "--vo-kitty-top=3", "--vo-kitty-left=1",
@@ -37,6 +33,19 @@ func mpvArgs(audio bool, path string) []string {
 	}
 	args = append(args, "--", path)
 	return args
+}
+
+// NewMediaClient is an HTTP client for media transfers. A whole-request
+// timeout would cut off a large file part way, so only the wait for the
+// server to answer is limited; the caller's context ends a transfer.
+func NewMediaClient() *http.Client {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{}
+	}
+	t = t.Clone()
+	t.ResponseHeaderTimeout = time.Minute
+	return &http.Client{Transport: t}
 }
 
 // MpvCmd builds the mpv command that shows path through the Kitty video output.

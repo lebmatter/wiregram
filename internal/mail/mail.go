@@ -393,7 +393,8 @@ func (b *MailBackend) deliver(ctx context.Context, d draft) (row, error) {
 		r.Parts = append(r.Parts, part{Name: a.Name, Type: a.Type, Size: int64(len(a.Data))})
 	}
 	if _, err := b.db.insert(&r); err != nil {
-		return row{}, err
+		// Sent all the same: only the local copy is missing until the next sync.
+		b.report(err)
 	}
 	b.events.Publish(backend.Event{Kind: backend.EventUnread})
 	b.wake()
@@ -405,7 +406,7 @@ func (b *MailBackend) fileSent(ctx context.Context, data []byte, date time.Time)
 	if sent == "" {
 		return nil
 	}
-	return b.withConn(ctx, func(c *imapclient.Client) error {
+	return b.withConnOnce(ctx, func(c *imapclient.Client) error {
 		cmd := c.Append(sent, int64(len(data)), &imap.AppendOptions{
 			Flags: []imap.Flag{imap.FlagSeen}, Time: date})
 		if _, err := cmd.Write(data); err != nil {

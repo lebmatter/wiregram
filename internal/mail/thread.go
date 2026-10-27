@@ -24,7 +24,7 @@ const subjectGap = 30 * 24 * time.Hour
 // threadRows groups mails into conversations: a mail joins the one holding
 // the mail it answers. One whose original is not cached, or whose subject
 // says it is a reply, joins the conversation with the same subject instead,
-// unless its last mail is older than subjectGap.
+// unless its last mail is older than subjectGap or shares no one with it.
 // Each conversation is oldest first; the conversations newest first.
 func threadRows(rows []row) [][]row {
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Date.Before(rows[j].Date) })
@@ -56,7 +56,7 @@ func threadRows(rows []row) [][]row {
 		case answered && p != i:
 			union(i, p)
 		case ok && norm != "" && (prefixed || r.InReplyTo != "") &&
-			r.Date.Sub(rows[prev].Date) <= subjectGap:
+			r.Date.Sub(rows[prev].Date) <= subjectGap && related(r, rows[prev]):
 			union(i, prev)
 		}
 		if norm != "" {
@@ -80,4 +80,29 @@ func threadRows(rows []row) [][]row {
 		return out[i][len(out[i])-1].Date.After(out[j][len(out[j])-1].Date)
 	})
 	return out
+}
+
+// related reports whether either mail names the other's correspondent, so
+// two "Re: Invoice" threads with different people stay apart. The user is in
+// every mail, so their own address would prove nothing.
+func related(a, b row) bool {
+	return hasAddr(b, a.Peer) || hasAddr(a, b.Peer)
+}
+
+// hasAddr reports whether addr is r's sender or one of its recipients.
+func hasAddr(r row, addr string) bool {
+	if r.FromAddr == addr {
+		return true
+	}
+	for _, list := range []string{r.To, r.Cc} {
+		for _, a := range strings.Split(list, ", ") {
+			if _, inner, ok := strings.Cut(a, "<"); ok {
+				a = strings.TrimSuffix(inner, ">")
+			}
+			if strings.EqualFold(strings.TrimSpace(a), addr) {
+				return true
+			}
+		}
+	}
+	return false
 }

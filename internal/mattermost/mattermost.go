@@ -47,8 +47,7 @@ type MmBackend struct {
 	events backend.Bus
 
 	client *http.Client
-	wsConn *websocket.Conn
-	wsStop context.CancelFunc
+	media  *http.Client // uploads and downloads, which take as long as they take
 }
 
 type mmUser struct {
@@ -151,6 +150,7 @@ func NewMMBackend(serverURL string) *MmBackend {
 		lastRead:  make(map[string]string),
 		userCache: make(map[string]mmUser),
 		client:    &http.Client{Timeout: 30 * time.Second},
+		media:     backend.NewMediaClient(),
 	}
 }
 
@@ -377,7 +377,8 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 	for _, team := range teams {
 		go func(teamID string) {
 			var members []mmChannelMember
-			err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/teams/%s/channels/members", teamID), nil, &members)
+			err := mb.apiJSON(ctx, "GET", fmt.Sprintf("/users/me/teams/%s/channels/members",
+				url.PathEscape(teamID)), nil, &members)
 			memberCh <- memberResult{members, err}
 		}(team.ID)
 	}
@@ -815,7 +816,7 @@ func (mb *MmBackend) Thread(ctx context.Context, ch backend.ChatEntry, rootID st
 }
 
 func (mb *MmBackend) loadPosts(ctx context.Context, channelID, before string, perPage int) ([]backend.Message, error) {
-	path := fmt.Sprintf("/channels/%s/posts?per_page=%d", channelID, perPage)
+	path := fmt.Sprintf("/channels/%s/posts?per_page=%d", url.PathEscape(channelID), perPage)
 	if before != "" {
 		path += "&before=" + before
 	}
@@ -920,35 +921,39 @@ func (mb *MmBackend) uploadFile(ctx context.Context, channelID, filePath string)
 	}
 	defer f.Close()
 
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	if err := w.WriteField("channel_id", channelID); err != nil {
-		return nil, fmt.Errorf("write channel_id: %w", err)
-	}
 	filename := filepath.Base(filePath)
 	ct := mime.TypeByExtension(filepath.Ext(filename))
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files"; filename=%q`, filename))
-	h.Set("Content-Type", ct)
-	part, err := w.CreatePart(h)
-	if err != nil {
-		return nil, fmt.Errorf("create form part: %w", err)
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return nil, fmt.Errorf("copy file data: %w", err)
-	}
-	w.Close()
+	// The form streams through a pipe, so a large file is never held in memory.
+	pr, pw := io.Pipe()
+	w := multipart.NewWriter(pw)
+	go func() {
+		err := w.WriteField("channel_id", channelID)
+		if err == nil {
+			h := make(textproto.MIMEHeader)
+			h.Set("Content-Disposition",
+				fmt.Sprintf(`form-data; name="files"; filename=%q`, filename))
+			h.Set("Content-Type", ct)
+			var part io.Writer
+			if part, err = w.CreatePart(h); err == nil {
+				if _, err = io.Copy(part, f); err == nil {
+					err = w.Close()
+				}
+			}
+		}
+		pw.CloseWithError(err)
+	}()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", mb.ServerURL+"/api/v4/files", &buf)
+	req, err := http.NewRequestWithContext(ctx, "POST", mb.ServerURL+"/api/v4/files", pr)
 	if err != nil {
+		pr.CloseWithError(err)
 		return nil, fmt.Errorf("create upload request: %w", err)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+mb.Token)
-	resp, err := mb.client.Do(req)
+	resp, err := mb.media.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("upload file: %w", err)
 	}
@@ -1001,12 +1006,12 @@ func (mb *MmBackend) Editable(msg backend.Message) error {
 
 func (mb *MmBackend) Edit(ctx context.Context, ch backend.ChatEntry, msg backend.Message, text string) error {
 	body := map[string]string{"id": msg.ID, "message": text}
-	return mb.apiJSON(ctx, "PUT", "/posts/"+msg.ID+"/patch", body, nil)
+	return mb.apiJSON(ctx, "PUT", "/posts/"+url.PathEscape(msg.ID)+"/patch", body, nil)
 }
 
 func (mb *MmBackend) DeleteMessages(ctx context.Context, ch backend.ChatEntry, ids []string, forEveryone bool) error {
 	for _, id := range ids {
-		resp, err := mb.api(ctx, "DELETE", "/posts/"+id, nil)
+		resp, err := mb.api(ctx, "DELETE", "/posts/"+url.PathEscape(id), nil)
 		if err != nil {
 			return fmt.Errorf("delete message: %w", err)
 		}
@@ -1023,13 +1028,10 @@ func (mb *MmBackend) DeleteChat(ctx context.Context, ch backend.ChatEntry, forEv
 }
 
 func (mb *MmBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID string) error {
-	resp, err := mb.api(ctx, "POST", "/channels/members/"+mb.UserID+"/view", map[string]any{
-		"channel_id": ch.ID.Id,
-	})
-	if err != nil {
+	if err := mb.apiJSON(ctx, "POST", "/channels/members/"+url.PathEscape(mb.UserID)+"/view",
+		map[string]any{"channel_id": ch.ID.Id}, nil); err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
-	resp.Body.Close()
 	mb.mu.Lock()
 	mb.lastRead[ch.ID.Id] = upToID
 	mb.unreads[ch.ID.Id] = 0
@@ -1038,7 +1040,7 @@ func (mb *MmBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID 
 }
 
 func (mb *MmBackend) SetTyping(ctx context.Context, ch backend.ChatEntry) {
-	resp, err := mb.api(ctx, "POST", "/users/"+mb.UserID+"/typing", map[string]string{
+	resp, err := mb.api(ctx, "POST", "/users/"+url.PathEscape(mb.UserID)+"/typing", map[string]string{
 		"channel_id": ch.ID.Id,
 	})
 	if err == nil {
@@ -1049,7 +1051,7 @@ func (mb *MmBackend) SetTyping(ctx context.Context, ch backend.ChatEntry) {
 func (mb *MmBackend) React(ctx context.Context, ch backend.ChatEntry, msg backend.Message, emoji string) ([]backend.MessageReaction, error) {
 	emoji = reactionName(emoji)
 	var existing []mmReaction
-	if err := mb.apiJSON(ctx, "GET", "/posts/"+msg.ID+"/reactions", nil, &existing); err != nil {
+	if err := mb.apiJSON(ctx, "GET", "/posts/"+url.PathEscape(msg.ID)+"/reactions", nil, &existing); err != nil {
 		return nil, fmt.Errorf("load reactions: %w", err)
 	}
 	alreadyReacted := false
@@ -1060,11 +1062,11 @@ func (mb *MmBackend) React(ctx context.Context, ch backend.ChatEntry, msg backen
 		}
 	}
 	if alreadyReacted {
-		resp, err := mb.api(ctx, "DELETE", fmt.Sprintf("/users/%s/posts/%s/reactions/%s", mb.UserID, msg.ID, emoji), nil)
-		if err != nil {
+		if err := mb.apiJSON(ctx, "DELETE", fmt.Sprintf("/users/%s/posts/%s/reactions/%s",
+			url.PathEscape(mb.UserID), url.PathEscape(msg.ID), url.PathEscape(emoji)),
+			nil, nil); err != nil {
 			return nil, fmt.Errorf("remove reaction: %w", err)
 		}
-		resp.Body.Close()
 	} else {
 		if err := mb.apiJSON(ctx, "POST", "/reactions", mmReaction{
 			UserID: mb.UserID, PostID: msg.ID, EmojiName: emoji,
@@ -1073,7 +1075,7 @@ func (mb *MmBackend) React(ctx context.Context, ch backend.ChatEntry, msg backen
 		}
 	}
 	var updated []mmReaction
-	if err := mb.apiJSON(ctx, "GET", "/posts/"+msg.ID+"/reactions", nil, &updated); err != nil {
+	if err := mb.apiJSON(ctx, "GET", "/posts/"+url.PathEscape(msg.ID)+"/reactions", nil, &updated); err != nil {
 		return nil, fmt.Errorf("reload reactions: %w", err)
 	}
 	return mb.aggregateReactions(updated), nil
@@ -1088,7 +1090,7 @@ func (mb *MmBackend) Pin(ctx context.Context, ch backend.ChatEntry, msg backend.
 	if unpin {
 		action = "unpin"
 	}
-	resp, err := mb.api(ctx, "POST", "/posts/"+msg.ID+"/"+action, nil)
+	resp, err := mb.api(ctx, "POST", "/posts/"+url.PathEscape(msg.ID)+"/"+action, nil)
 	if err != nil {
 		return fmt.Errorf("%s message: %w", action, err)
 	}
@@ -1112,7 +1114,8 @@ func (mb *MmBackend) SearchMessages(ctx context.Context, ch backend.ChatEntry, q
 		Order []string          `json:"order"`
 		Posts map[string]mmPost `json:"posts"`
 	}
-	if err := mb.apiJSON(ctx, "POST", fmt.Sprintf("/teams/%s/posts/search", mb.teamForChannel(ctx, ch)), body, &result); err != nil {
+	if err := mb.apiJSON(ctx, "POST", fmt.Sprintf("/teams/%s/posts/search",
+		url.PathEscape(mb.teamForChannel(ctx, ch))), body, &result); err != nil {
 		return nil, fmt.Errorf("search messages: %w", err)
 	}
 	messages := make([]backend.Message, 0, len(result.Order))
@@ -1159,7 +1162,7 @@ func (mb *MmBackend) searchTeams(ctx context.Context, body map[string]any, limit
 			Order []string          `json:"order"`
 			Posts map[string]mmPost `json:"posts"`
 		}
-		path := fmt.Sprintf("/teams/%s/posts/search", team.ID)
+		path := fmt.Sprintf("/teams/%s/posts/search", url.PathEscape(team.ID))
 		if err := mb.apiJSON(ctx, "POST", path, body, &result); err != nil {
 			return nil, fmt.Errorf("search posts: %w", err)
 		}
@@ -1185,7 +1188,7 @@ func (mb *MmBackend) searchTeams(ctx context.Context, body map[string]any, limit
 		ch, ok := channels[p.ChannelID]
 		if !ok {
 			var c mmChannel
-			if err := mb.apiJSON(ctx, "GET", "/channels/"+p.ChannelID, nil, &c); err == nil {
+			if err := mb.apiJSON(ctx, "GET", "/channels/"+url.PathEscape(p.ChannelID), nil, &c); err == nil {
 				ch = &c
 			}
 			channels[p.ChannelID] = ch
@@ -1318,7 +1321,13 @@ func (mb *MmBackend) SaveMedia(ctx context.Context, msg backend.Message, destDir
 		return fmt.Errorf("this message has no downloadable attachment")
 	}
 
-	resp, err := mb.api(ctx, "GET", "/files/"+fileID, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		mb.ServerURL+"/api/v4/files/"+url.PathEscape(fileID), nil)
+	if err != nil {
+		return fmt.Errorf("download file: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+mb.Token)
+	resp, err := mb.media.Do(req)
 	if err != nil {
 		return fmt.Errorf("download file: %w", err)
 	}
@@ -1458,7 +1467,7 @@ func (mb *MmBackend) UserSearchRemote(ctx context.Context, query string) ([]back
 	}
 	for _, team := range teams {
 		var channels []mmChannel
-		path := fmt.Sprintf("/teams/%s/channels/search", team.ID)
+		path := fmt.Sprintf("/teams/%s/channels/search", url.PathEscape(team.ID))
 		if err := mb.apiJSON(ctx, "POST", path, map[string]string{"term": query}, &channels); err != nil {
 			return out, fmt.Errorf("search channels: %w", err)
 		}
@@ -1482,7 +1491,7 @@ func (mb *MmBackend) OpenUserCandidate(ctx context.Context, c backend.UserCandid
 func (mb *MmBackend) openChannel(ctx context.Context, choice mmChannelChoice) (backend.ChatEntry, error) {
 	ch := choice.ch
 	if !choice.joined {
-		path := "/channels/" + ch.ID + "/members"
+		path := "/channels/" + url.PathEscape(ch.ID) + "/members"
 		if err := mb.apiJSON(ctx, "POST", path, map[string]string{"user_id": mb.UserID}, nil); err != nil {
 			return backend.ChatEntry{}, fmt.Errorf("join channel %s: %w", ch.DisplayName, err)
 		}
@@ -1617,15 +1626,12 @@ func (mb *MmBackend) ReactionChoices(query string) []backend.EmojiOption {
 }
 
 func (mb *MmBackend) StartWebSocket(ctx context.Context) {
-	wsCtx, cancel := context.WithCancel(ctx)
-	mb.wsStop = cancel
-
 	go func() {
 		delay := time.Second
-		for reconnect := false; wsCtx.Err() == nil; reconnect = true {
+		for reconnect := false; ctx.Err() == nil; reconnect = true {
 			start := time.Now()
-			if err := mb.runWebSocket(wsCtx, reconnect); err != nil {
-				if wsCtx.Err() != nil {
+			if err := mb.runWebSocket(ctx, reconnect); err != nil {
+				if ctx.Err() != nil {
 					return
 				}
 			}
@@ -1635,7 +1641,7 @@ func (mb *MmBackend) StartWebSocket(ctx context.Context) {
 				delay = time.Second
 			}
 			select {
-			case <-wsCtx.Done():
+			case <-ctx.Done():
 				return
 			case <-time.After(delay):
 			}
@@ -1668,7 +1674,6 @@ func (mb *MmBackend) runWebSocket(ctx context.Context, reconnect bool) error {
 	// A long post with its metadata easily passes the library's 32 KiB default,
 	// and going over it drops the connection.
 	conn.SetReadLimit(4 << 20)
-	mb.wsConn = conn
 
 	auth := map[string]any{
 		"seq":    1,
@@ -1812,7 +1817,7 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 		// Aggregate here, on the websocket goroutine, never on the UI's.
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		var all []mmReaction
-		mb.apiJSON(ctx, "GET", "/posts/"+reaction.PostID+"/reactions", nil, &all)
+		mb.apiJSON(ctx, "GET", "/posts/"+url.PathEscape(reaction.PostID)+"/reactions", nil, &all)
 		cancel()
 		mb.events.Publish(backend.Event{
 			Kind: backend.EventReaction, Chat: chat,

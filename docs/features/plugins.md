@@ -62,7 +62,8 @@ wiregram.widget { height = 2, render = render }
   stalls only its own card.
 - **Libraries.** Only base, table, string and math are opened. There is no `os`, `io`,
   `debug` or `package`. `dofile`, `loadfile`, `load`, `loadstring`, `require`, `module`,
-  `print` and `collectgarbage` are removed.
+  `print`, `_printregs`, `newproxy` and `collectgarbage` are removed, and `string.rep`
+  refuses to build a string over 1 MB.
 - **Time limits.** Every call into Lua runs under a deadline, and a script that runs too
   long is stopped:
   - loading: 2 s
@@ -91,7 +92,7 @@ wiregram.widget { height = 2, render = render }
 | `wiregram.modal{title=, width=60, height=12, render=fn}` | From `click` only. See [Modals](#modals). |
 | `wiregram.accounts()` | Needs `messages`. The online accounts that have private chats (not email): `{key=, tag="TG1", label=, backend=}`. |
 | `wiregram.unread(key, n)` | Needs `messages`; from `update` or `click` only. The account's chats with unread messages, `{title=, dm=, count=, last=, messages={…}}`, where `dm` is true for a private chat, each with up to `n` (0–50, default 0) of its newest unread messages, oldest first: `{sender=, text=, time=, clock=}`. `clock` is the local time today, else the date. Returns `nil, err` when the account is offline or the fetch fails. |
-| `wiregram.kv.get(k)` / `.set(k, v)` / `.delete(k)` / `.keys()` | String values in `wiregram.db`: keys up to 256 bytes, values up to 64 KB. `set` and `delete` return `true`, or `nil, err`. |
+| `wiregram.kv.get(k)` / `.set(k, v)` / `.delete(k)` / `.keys()` | String values in `wiregram.db`: keys up to 256 bytes, values up to 64 KB, 1 MB in all. `set` and `delete` return `true`, or `nil, err`. |
 | `wiregram.http.get(url)` | Returns the body, or `nil, err`. HTTPS to declared hosts only (redirects included), 10 s, 1 MB, status 200. Not available at load time. |
 | `wiregram.json.decode(s)` | Returns a table, or `nil, err`. |
 | `wiregram.now()` | Unix seconds. |

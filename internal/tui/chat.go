@@ -177,7 +177,9 @@ type linkPreviewLoaded struct {
 // chatEvent is one bus event for the open chat, routed by the root model.
 type chatEvent struct{ ev backend.Event }
 
-type chatReadTick struct{}
+// chatReadTick names the read reporter that started it, so a chat reopened or
+// reloaded keeps a single read loop.
+type chatReadTick struct{ reads *readReporter }
 type chatTypingTimeout struct{}
 type chatReturnToList struct{}
 type chatForwardReq struct{ req forwardRequest }
@@ -308,8 +310,8 @@ func (m chatViewModel) loadHistory() tea.Cmd {
 	entry := m.entry
 	return func() tea.Msg {
 		b.SetActive(entry)
-		if err := b.RefreshReadState(ctx, entry); err != nil && ctx.Err() == nil {
-		}
+		// The read state only refines the unread divider; history loads without it.
+		_ = b.RefreshReadState(ctx, entry)
 		msgs, err := b.History(ctx, entry)
 		return chatHistoryLoaded{chatTag{entry.ID}, msgs, err, false}
 	}
@@ -361,8 +363,9 @@ func (m chatViewModel) sendMessage(outgoing chatOutgoing) tea.Cmd {
 }
 
 func (m chatViewModel) startReadTimer() tea.Cmd {
+	reads := m.reads
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg {
-		return chatReadTick{}
+		return chatReadTick{reads}
 	})
 }
 
@@ -557,6 +560,9 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.b.ClearTyping()
 
 	case chatReadTick:
+		if msg.reads != m.reads {
+			return m, nil
+		}
 		if m.reads != nil && m.selected >= 0 && m.selected < len(m.messages) {
 			delete(m.changedMessages, m.messages[m.selected].ID)
 		}

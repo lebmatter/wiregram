@@ -187,6 +187,19 @@ func (d *DB) PluginPut(plugin, key, value string) error {
 	return nil
 }
 
+// PluginBytes is the size of a plugin's key-value store, keys and values,
+// leaving out the value of except.
+func (d *DB) PluginBytes(plugin, except string) (int, error) {
+	var n int
+	err := d.db.QueryRow(`SELECT COALESCE(SUM(length(CAST(key AS BLOB)) +
+		CASE WHEN key = ? THEN 0 ELSE length(CAST(value AS BLOB)) END), 0)
+		FROM plugin_kv WHERE plugin = ?`, except, plugin).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("measure plugin values: %w", err)
+	}
+	return n, nil
+}
+
 func (d *DB) PluginDelete(plugin, key string) error {
 	if _, err := d.db.Exec(`DELETE FROM plugin_kv WHERE plugin = ? AND key = ?`,
 		plugin, key); err != nil {
