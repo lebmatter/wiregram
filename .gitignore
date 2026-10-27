@@ -1,5 +1,6 @@
 /wiregram
 /wiregram.exe
+/dist/
 .dummy/
 web/
 .wrangler/
