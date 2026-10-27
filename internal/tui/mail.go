@@ -769,7 +769,7 @@ func (m mailListModel) quickBox(width int, focused bool) []string {
 	if m.quickSending {
 		title = m.spin + "sending…"
 	}
-	return m.st.areaBox(title, nil, m.quick, width, border)
+	return m.st.areaBox(title, nil, m.quick, width, border, "")
 }
 
 // readerHeight is how many rows of the mail show above the quick reply.

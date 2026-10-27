@@ -42,7 +42,8 @@ shared by inline images and click-to-open, and are pruned after 7 days unseen.
 
 ## Uploading
 
-<kbd>Ctrl+U</kbd> in a chat opens the upload browser. Browse folders with the arrows,
-or press <kbd>/</kbd> or <kbd>~</kbd> to type a path (<kbd>Tab</kbd> completes,
-<kbd>↑</kbd>/<kbd>↓</kbd> cycle matches). Add an optional caption and press
-<kbd>Enter</kbd>.
+<kbd>Ctrl+U</kbd> in a chat or a thread, or a click on the <kbd>+</kbd> at the end of
+its input, opens the upload modal over it. Type a path, starting in the last folder;
+the entries it matches are listed under it (<kbd>↑</kbd>/<kbd>↓</kbd> choose,
+<kbd>Tab</kbd> completes, <kbd>Enter</kbd> or a click opens a folder or picks a file).
+Add an optional caption and press <kbd>Enter</kbd>.

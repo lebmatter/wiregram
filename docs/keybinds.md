@@ -82,8 +82,8 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Select message (<kbd>↑</kbd> at the top loads older ones) |
 | <kbd>Enter</kbd> | Send text; with an empty input, open the selected message's actions |
-| <kbd>Ctrl+U</kbd> | Upload file (browse, or <kbd>/</kbd> to type a path) |
-| <kbd>Ctrl+F</kbd> | Search messages (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> cancels) |
+| <kbd>Ctrl+U</kbd> | Upload a file, in a modal over the chat (or click the <kbd>+</kbd> at the end of the input) |
+| <kbd>Ctrl+F</kbd> | Search messages, in a modal over the chat (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Enter</kbd> or a click goes to one, <kbd>Esc</kbd> closes) |
 | <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
 | <kbd>Alt+T</kbd> | Open the selected message's thread beside the chat |
 | <kbd>Alt+H</kbd> | Toggle private mode (hide history) |
@@ -145,18 +145,21 @@ beside a message's text there (empty, to start a thread, when it has no replies)
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Move through the chat's messages |
+| <kbd>Ctrl+U</kbd> | Upload a file into the thread (or click its <kbd>+</kbd>) |
 | <kbd>Enter</kbd> | Reply in thread; with an empty input, open the selected message's actions |
 | <kbd>@</kbd> | Mention a member, as in the chat |
 | <kbd>Esc</kbd> | Close thread |
 
 ## Upload
 
+The upload modal sits over the faded chat; a click outside it closes it.
+
 | Key | Action |
 |-----|--------|
-| Arrows, <kbd>Enter</kbd> | Browse folders and pick a file |
-| <kbd>/</kbd>, <kbd>~</kbd> | Type a path instead (<kbd>Tab</kbd> completes, <kbd>↑</kbd>/<kbd>↓</kbd> cycle matches) |
-| <kbd>Enter</kbd> | Send with the optional caption |
-| <kbd>Esc</kbd> | Back, then cancel |
+| Type | A path, starting in the last folder; the entries it matches are listed under it |
+| <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Tab</kbd> | Choose an entry, put it in the path |
+| <kbd>Enter</kbd> | Open the folder or pick the file (or click it), then send with the optional caption |
+| <kbd>Esc</kbd> | Back, then close |
 
 ## Message actions
 

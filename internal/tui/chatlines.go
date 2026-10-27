@@ -39,32 +39,6 @@ func newestIncoming(msgs []backend.Message) string {
 	return ""
 }
 
-// Generic search result lines.
-func (s *styles) genericSearchResultLines(b backend.Backend, results []backend.Message, selected int, entry backend.ChatEntry, query string, width, height int) []string {
-	width = min(width, textfmt.MaxChatLineWidth)
-	available := max(1, height-2)
-	var lines []string
-	heading := fmt.Sprintf("Search: %s (%d results)", textfmt.Plain(query), len(results))
-	lines = append(lines, textfmt.ClipLine(heading, width))
-	lines = append(lines, "")
-	if len(results) == 0 {
-		if query != "" {
-			lines = append(lines, "  No matching messages")
-		}
-	} else {
-		start := max(0, selected-available+1)
-		for i := start; i < min(len(results), start+available); i++ {
-			marker := "  "
-			if i == selected {
-				marker = s.accent.Render("> ")
-			}
-			text := backend.GenericMessageLine(results[i], entry, nil)
-			lines = append(lines, textfmt.ClipLine(marker+text, width))
-		}
-	}
-	return lines
-}
-
 // Generic selected lines rendering.
 // genericSelectedLines also returns, for each line, the index of the message
 // it belongs to (-1 for none) and whether it draws that message's attachment,

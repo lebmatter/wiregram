@@ -6,10 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
-	"charm.land/bubbles/v2/filepicker"
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 
@@ -20,23 +17,24 @@ import (
 type uploadStep int
 
 const (
-	uploadPick uploadStep = iota
-	uploadTyping
+	uploadTyping uploadStep = iota
 	uploadCaption
 )
 
-// uploadPanel is the Ctrl+U flow: browse or type a path, preview, caption.
+// uploadPanel is the Ctrl+U flow: type a path over the entries it matches,
+// then a caption.
 type uploadPanel struct {
 	step    uploadStep
-	picker  filepicker.Model
+	prev    chatSubMode     // the chat or its thread, which Esc returns to
+	thread  bool            // the file is a reply in the open thread
 	input   textinput.Model // the typed path, then the caption
 	path    string
 	size    int64
 	kind    string
 	mime    string
 	lastDir string
-	// Tab completion: candidate names under the path, the text they follow,
-	// and the highlighted one (↑↓ to move, Tab or Enter to accept).
+	// The entries under the typed path, the text they follow and the
+	// highlighted one (↑↓ to move, Tab or Enter to accept).
 	matches     []string
 	matchPrefix string
 	matchIdx    int
@@ -62,61 +60,45 @@ func uploadKindLabel(kind backend.UploadKind) string {
 	return "file"
 }
 
-func (m chatViewModel) startUpload() (chatViewModel, tea.Cmd) {
+// startUpload opens the upload modal, for the open thread when thread is set.
+func (m chatViewModel) startUpload(thread bool) (chatViewModel, tea.Cmd) {
+	sep := string(filepath.Separator)
 	dir := m.upload.lastDir
+	home, err := os.UserHomeDir()
 	if dir == "" {
 		dir = "."
-		if home, err := os.UserHomeDir(); err == nil {
+		if err == nil {
 			dir = home
 		}
 	}
-	p := filepicker.New()
-	p.CurrentDirectory = dir
-	p.ShowPermissions = false
-	p.AutoHeight = false
-	// Esc belongs to the panel (back/cancel), not to directory navigation.
-	p.KeyMap.Back = key.NewBinding(key.WithKeys("h", "backspace", "left"))
-	p.Styles.Cursor = m.st.accent
-	p.Styles.Selected = m.st.accent.Bold(true)
-	p.Styles.Directory = styleQuoteBar
-	p.Styles.EmptyDirectory = m.st.dim.SetString("  This folder is empty")
-	p.SetHeight(max(3, m.height-5))
-	m.upload = uploadPanel{step: uploadPick, picker: p, lastDir: dir}
+	start := strings.TrimSuffix(dir, sep) + sep
+	if err == nil && strings.HasPrefix(start, home+sep) {
+		start = "~" + sep + strings.TrimPrefix(start, home+sep)
+	}
+	m.upload = uploadPanel{prev: m.subMode, thread: thread, lastDir: dir}
+	return m.typeUploadPath(start)
+}
+
+// typeUploadPath puts the path input up with value in it.
+func (m chatViewModel) typeUploadPath(value string) (chatViewModel, tea.Cmd) {
+	u := &m.upload
+	u.step = uploadTyping
+	u.input = textinput.New()
+	u.input.Prompt = ""
+	u.input.SetValue(value)
+	u.input.CursorEnd()
+	u.listMatches()
 	m.subMode = chatSubUpload
-	return m, p.Init()
+	return m, u.input.Focus()
 }
 
 func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	u := &m.upload
 	var cmd tea.Cmd
-	switch u.step {
-	case uploadPick:
+	if u.step == uploadTyping {
 		switch msg.String() {
 		case "esc", "ctrl+c":
-			m.subMode = chatSubNone
-			return m, nil
-		case "/", "~":
-			start := u.picker.CurrentDirectory + string(filepath.Separator)
-			if msg.String() == "~" {
-				start = "~/"
-			}
-			u.input = textinput.New()
-			u.input.Prompt = ""
-			u.input.SetValue(start)
-			u.input.CursorEnd()
-			u.step = uploadTyping
-			return m, u.input.Focus()
-		}
-		u.picker, cmd = u.picker.Update(msg)
-		u.lastDir = u.picker.CurrentDirectory
-		if ok, path := u.picker.DidSelectFile(msg); ok {
-			return m.pickUpload(path)
-		}
-		return m, cmd
-	case uploadTyping:
-		switch msg.String() {
-		case "esc", "ctrl+c":
-			u.step = uploadPick
+			m.subMode = u.prev
 			return m, nil
 		case "up", "down":
 			if n := len(u.matches); n > 0 {
@@ -127,39 +109,37 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 				u.matchIdx = (u.matchIdx + step) % n
 			}
 			return m, nil
-		case "enter":
-			if len(u.matches) == 0 {
-				return m.pickUpload(u.input.Value())
-			}
-			if !u.acceptMatch() {
-				return m.pickUpload(u.input.Value())
-			}
-			u.completePath()
-			return m, nil
 		case "tab":
 			if len(u.matches) > 0 {
 				u.acceptMatch()
+				u.listMatches()
 			}
-			u.completePath()
+			return m, nil
+		case "enter":
+			if len(u.matches) == 0 || !u.acceptMatch() {
+				return m.pickUpload(u.input.Value())
+			}
+			u.listMatches()
 			return m, nil
 		}
-		u.matches = nil
 		u.input, cmd = u.input.Update(msg)
+		u.listMatches()
 		return m, cmd
 	}
 
 	switch msg.String() {
 	case "esc", "ctrl+c":
-		u.step = uploadPick
-		return m, nil
+		return m.typeUploadPath(u.matchPrefix)
 	case "enter":
 		caption, path, size := u.input.Value(), u.path, u.size
 		replyTo := ""
-		if m.replying != nil {
+		if u.thread {
+			replyTo = m.threadRoot
+		} else if m.replying != nil {
 			replyTo = m.replying.ID
 			m.replying = nil
 		}
-		m.subMode = chatSubNone
+		m.subMode = u.prev
 		m.uploads = append(m.uploads, pendingUpload{path, size, time.Now()})
 		return m, tea.Batch(
 			m.sendMessage(chatOutgoing{text: caption, path: path, replyTo: replyTo}),
@@ -169,54 +149,34 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 	return m, cmd
 }
 
-// completePath extends the typed path by the longest common prefix of the
-// matching entries and lists them when more than one remains.
-// acceptMatch puts the highlighted candidate into the path. It reports
-// whether the candidate is a folder, so completion can carry on inside it.
+// acceptMatch puts the highlighted entry into the path. It reports whether
+// the entry is a folder, so the list can carry on inside it.
 func (u *uploadPanel) acceptMatch() bool {
 	match := u.matches[u.matchIdx]
 	u.input.SetValue(u.matchPrefix + match)
 	u.input.CursorEnd()
-	u.matches = nil
 	return strings.HasSuffix(match, string(filepath.Separator))
 }
 
-func (u *uploadPanel) completePath() {
+// listMatches lists the entries the typed path could go on to: the folder's
+// when it ends in a separator, else those starting with its last part.
+func (u *uploadPanel) listMatches() {
 	value := u.input.Value()
+	u.matches, u.matchIdx = nil, 0
 	if value == "~" {
-		// Completing the home folder itself would match its siblings by
-		// name, which the typed "~" cannot be extended into.
-		value = "~/"
-		u.input.SetValue(value)
-		u.input.CursorEnd()
+		u.matchPrefix, u.matches = "", []string{"~" + string(filepath.Separator)}
+		return
 	}
 	line := []rune(value)
 	candidates, _ := backend.PathCompleter{}.Do(line, len(line))
-	u.matches, u.matchIdx = nil, 0
-	if len(candidates) == 0 {
-		return
+	typedBase := filepath.Base(backend.ExpandHome(value))
+	if value == "" || strings.HasSuffix(value, string(filepath.Separator)) ||
+		!strings.HasSuffix(value, typedBase) {
+		typedBase = ""
 	}
-	common := string(candidates[0])
-	for _, c := range candidates[1:] {
-		s := string(c)
-		for !strings.HasPrefix(s, common) {
-			_, size := utf8.DecodeLastRuneInString(common)
-			common = common[:len(common)-size]
-		}
-	}
-	if common != "" {
-		u.input.SetValue(value + common)
-		u.input.CursorEnd()
-	}
-	if len(candidates) > 1 {
-		typedBase := filepath.Base(backend.ExpandHome(value))
-		if strings.HasSuffix(value, string(filepath.Separator)) || value == "" {
-			typedBase = ""
-		}
-		u.matchPrefix = value[:len(value)-len(typedBase)]
-		for _, c := range candidates {
-			u.matches = append(u.matches, typedBase+string(c))
-		}
+	u.matchPrefix = value[:len(value)-len(typedBase)]
+	for _, c := range candidates {
+		u.matches = append(u.matches, typedBase+string(c))
 	}
 }
 
@@ -236,6 +196,9 @@ func (m chatViewModel) pickUpload(value string) (chatViewModel, tea.Cmd) {
 	u := &m.upload
 	u.path, u.size, u.kind, u.mime = path, info.Size(), uploadKindLabel(kind), mime
 	u.lastDir = filepath.Dir(path)
+	// Esc from the caption goes back to the folder as it was typed.
+	typed := u.input.Value()
+	u.matchPrefix = typed[:strings.LastIndex(typed, string(filepath.Separator))+1]
 	u.step = uploadCaption
 	u.input = textinput.New()
 	u.input.Prompt = ""
@@ -243,55 +206,76 @@ func (m chatViewModel) pickUpload(value string) (chatViewModel, tea.Cmd) {
 	return m, u.input.Focus()
 }
 
-func (m chatViewModel) uploadBody(width, height int) []string {
+// uploadView is the upload modal: the typed path over the entries it
+// matches, or the chosen file over its caption.
+func (m chatViewModel) uploadView() string {
+	w, h := chatModalSize(m.width, m.height)
+	inner := w - 4
 	u := m.upload
-	heading := styleTitle.Render("Upload") + m.st.subtle.Render(" to "+textfmt.Plain(m.entry.Title))
-	var lines []string
+	input := u.input
+	var body []string
 	switch u.step {
-	case uploadPick:
-		lines = []string{heading, m.st.dim.Render(truncate(u.picker.CurrentDirectory, width)), ""}
-		lines = append(lines, strings.Split(u.picker.View(), "\n")...)
 	case uploadTyping:
-		lines = []string{heading, ""}
-		lines = append(lines, m.st.composerBox("Path", nil, "file › ", u.input, width, colorQuote)...)
-		limit := max(1, height-len(lines))
-		start := max(0, u.matchIdx-limit+1)
-		for i := start; i < min(len(u.matches), start+limit); i++ {
-			if i == u.matchIdx {
-				lines = append(lines, m.st.selectedRow.Render(m.st.accent.Render("> ")+u.matches[i]))
-			} else {
-				lines = append(lines, "  "+m.st.subtle.Render(u.matches[i]))
-			}
+		input.SetWidth(max(1, inner-9))
+		body = m.st.modalField("file", input.View(), inner)
+		body = append(body, m.st.modalRule(fmt.Sprintf("%d matches", len(u.matches)), inner))
+		rows := chatModalRows(h)
+		first := max(0, u.matchIdx-rows+1)
+		for i := first; i < min(len(u.matches), first+rows); i++ {
+			body = append(body, m.st.modalRow("", truncate(u.matches[i], inner-modalMark-1),
+				i == u.matchIdx, inner))
+		}
+		if len(u.matches) == 0 {
+			body = append(body, m.st.dim.Render("  nothing here"))
 		}
 	case uploadCaption:
-		card := []string{
-			styleTitle.Render(filepath.Base(u.path)),
-			m.st.subtle.Render(u.kind + " · " + u.mime + " · " + textfmt.FormatSize(u.size)),
-			m.st.dim.Render(truncate(filepath.Dir(u.path), width-4)),
+		input.SetWidth(max(1, inner-6))
+		body = []string{
+			" " + styleTitle.Render(truncate(filepath.Base(u.path), inner-2)),
+			" " + m.st.subtle.Render(truncate(u.kind+" · "+u.mime+" · "+
+				textfmt.FormatSize(u.size), inner-2)),
+			" " + m.st.dim.Render(truncate(filepath.Dir(u.path), inner-2)),
+			"",
+			m.st.modalRule("caption", inner),
 		}
-		lines = []string{heading, ""}
-		lines = append(lines, strings.Split(renderBox("Ready to send", card, width, len(card)+2, colorQuote), "\n")...)
-		lines = append(lines, "")
-		lines = append(lines, m.st.composerBox("Caption", m.replyBar(), "› ", u.input, width, m.st.accentColor)...)
+		if m.replying != nil {
+			body = append(body, " "+m.st.subtle.Render(truncate("↪ replying to "+
+				textfmt.Plain(backend.GenericMessageSender(*m.replying)), inner-2)))
+		}
+		body = append(body, m.st.modalField("›", input.View(), inner)...)
 	}
-	if len(lines) > height {
-		lines = lines[:height]
+	body = fillLines(body, h-4)[:h-4]
+	body = append(body, m.st.modalKeys(m.uploadHelp(), "", inner)...)
+	return m.st.modalBox("upload to "+chatName(m.entry), body, w, h)
+}
+
+// uploadClick opens the folder or picks the file at row y of the upload
+// modal, as Enter would.
+func (m chatViewModel) uploadClick(y int) (chatViewModel, tea.Cmd) {
+	u := &m.upload
+	if u.step != uploadTyping {
+		return m, nil
 	}
-	return lines
+	_, h := chatModalSize(m.width, m.height)
+	rows := chatModalRows(h)
+	first := max(0, u.matchIdx-rows+1)
+	i := first + y - chatModalTop
+	if y < chatModalTop || i >= min(len(u.matches), first+rows) {
+		return m, nil
+	}
+	u.matchIdx = i
+	return m.handleUploadKey(keyPress(tea.KeyEnter))
 }
 
 func (m chatViewModel) uploadHelp() []helpKey {
-	switch m.upload.step {
-	case uploadTyping:
-		if len(m.upload.matches) > 0 {
-			return []helpKey{{"↑↓", "choose"}, {"tab/enter", "accept"}, {"esc", "back to browser"}}
-		}
-		return []helpKey{{"tab", "complete"}, {"enter", "continue"}, {"esc", "back to browser"}}
-	case uploadCaption:
-		return []helpKey{{"enter", "send"}, {"esc", "pick another file"}}
+	if m.upload.step == uploadCaption {
+		return []helpKey{{"enter", "send"}, {"esc", "back"}}
 	}
-	return []helpKey{{"↑↓", "browse"}, {"→", "open folder"}, {"←", "up"}, {"enter", "select"},
-		{"/", "type a path"}, {"esc", "cancel"}}
+	if len(m.upload.matches) == 0 {
+		return []helpKey{{"enter", "pick"}, {"esc", "close"}}
+	}
+	return []helpKey{{"↑↓", "choose"}, {"tab", "complete"}, {"enter", "open · pick"},
+		{"esc", "close"}}
 }
 
 func uploadPath(value string) (string, error) {

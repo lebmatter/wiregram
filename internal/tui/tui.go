@@ -905,13 +905,13 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		}
 		return m, cmd
 	}
-	if m.menuShown() {
-		x, y, w, h := m.menuRect()
+	if m.chatModalShown() {
+		x, y, w, h := m.chatModalRect()
 		inside := mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h
 		if right && inside {
 			return m, nil
 		}
-		m.chat, cmd = m.chat.menuClick(mouse.X-x, mouse.Y-y, inside)
+		m.chat, cmd = m.chat.modalClick(mouse.X-x, mouse.Y-y, inside)
 		return m, cmd
 	}
 	if right && (m.overList(mouse.X) || m.unreadOpen || m.agentOpen || m.mailOpen) {
@@ -986,7 +986,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	switch {
 	case m.searchOpen:
 		m.search, cmd = m.search.Update(k)
-	case m.menuShown():
+	case m.chatModalShown():
 		m.chat, cmd = m.chat.Update(k)
 	case m.overList(mouse.X):
 		if m.loadErr == nil {
@@ -1410,9 +1410,9 @@ func (m tuiModel) render() string {
 		body = renderBox(m.list.title(), m.list.body(m.width-4, bodyHeight-2, true),
 			m.width, bodyHeight, m.st.accentColor)
 	}
-	if m.menuShown() {
-		x, y, _, _ := m.menuRect()
-		body = m.st.fadeUnder(body, m.chat.menu.View(m.chat.width), x, y)
+	if m.chatModalShown() {
+		x, y, _, _ := m.chatModalRect()
+		body = m.st.fadeUnder(body, m.chat.modalView(), x, y)
 	}
 	if m.searchOpen {
 		x, y, _, _ := m.searchRect()
@@ -1547,18 +1547,19 @@ func (m tuiModel) pickerAt() (x, y int) {
 	return left + x, y
 }
 
-// menuShown reports whether the open chat's message actions modal is up.
-func (m tuiModel) menuShown() bool {
-	return m.chatOpen && !m.searchOpen && !m.unreadOpen && m.chat.menuOpen()
+// chatModalShown reports whether a modal of the open chat is up: its
+// message actions, search or upload.
+func (m tuiModel) chatModalShown() bool {
+	return m.chatOpen && !m.searchOpen && !m.unreadOpen && m.chat.modalOpen()
 }
 
-// menuRect is where the message actions modal sits: centred over the chat.
-func (m tuiModel) menuRect() (x, y, w, h int) {
+// chatModalRect is where the open chat's modal sits: centred over the chat.
+func (m tuiModel) chatModalRect() (x, y, w, h int) {
 	left := 0
 	if m.twoPane() {
 		left = sidebarWidth
 	}
-	w, h = m.chat.menu.size(m.chat.width)
+	w, h = m.chat.modalSize()
 	return left + (m.chat.width-w)/2, max(0, (m.bodyHeight()-h)/2), w, h
 }
 

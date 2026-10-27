@@ -206,8 +206,10 @@ Keyboard shortcuts:
     Up/Down           Select message (Up at the top loads older ones)
     Enter             Send text; with an empty input, open the selected
                       message's actions
-    Ctrl+U            Upload file (browse, or / to type a path)
-    Ctrl+F            Search messages (Up/Down, Enter jumps, Esc cancels)
+    Ctrl+U            Upload a file, in a modal over the chat (or click
+                      the + at the end of the input)
+    Ctrl+F            Search messages, in a modal over the chat (Up/Down,
+                      Enter or a click goes to one, Esc closes)
     @                 Mention a member (group chats, at the start of a word):
                       channel members first on Mattermost; Telegram members
                       with a username; Matrix room members; WhatsApp group
@@ -268,14 +270,17 @@ Keyboard shortcuts:
     Up/Down           Move through the chat's messages
     Enter             Reply in thread; with an empty input, open the
                       selected message's actions
+    Ctrl+U            Upload a file into the thread (or click its +)
     @                 Mention a member, as in the chat
     Esc               Close thread
 
-  Upload
-    Arrows, Enter     Browse folders and pick a file
-    /, ~              Type a path instead (Tab completes, Up/Down cycle matches)
-    Enter             Send with the optional caption
-    Esc               Back, then cancel
+  Upload (a modal over the faded chat; a click outside closes it)
+    Type              A path, starting in the last folder; the entries it
+                      matches are listed under it
+    Up/Down, Tab      Choose an entry, put it in the path
+    Enter             Open the folder or pick the file (or click it), then
+                      send with the optional caption
+    Esc               Back, then close
 
   Message actions (over the faded screen)
     Up/Down           Select an action: reply, thread, go to quote, edit,

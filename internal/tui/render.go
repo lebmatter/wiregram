@@ -369,17 +369,6 @@ func wheelKey(msg tea.MouseWheelMsg) (tea.KeyPressMsg, bool) {
 	return tea.KeyPressMsg{}, false
 }
 
-// cursorRow is the first line of view whose plain text starts with marker. It
-// finds the selection inside bubbles components that keep theirs private.
-func cursorRow(view, marker string) (int, bool) {
-	for i, line := range strings.Split(view, "\n") {
-		if strings.HasPrefix(ansi.Strip(line), marker) {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
 // accountLabel is the account's label without its [TG] prefix, for rows
 // that show the tag themselves.
 func accountLabel(a *account.Account) string {

@@ -217,6 +217,11 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 			m.subMode = chatSubNone
 			return m.handleKey(msg)
 		}
+	case "ctrl+u":
+		if m.caps.Upload {
+			return m.startUpload(true)
+		}
+		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.threadInput.Value())
 		if text == "" {
@@ -247,7 +252,8 @@ func (m chatViewModel) threadBox(width, height int, focused bool) string {
 }
 
 func (m chatViewModel) threadComposer(inner int, focused bool) []string {
-	return m.st.areaBox("reply in thread", nil, m.threadInput, inner, m.st.border(focused))
+	return m.st.areaBox("reply in thread", nil, m.threadInput, inner, m.st.border(focused),
+		m.uploadButton())
 }
 
 // threadLines lays out the thread inner columns wide and returns, for each

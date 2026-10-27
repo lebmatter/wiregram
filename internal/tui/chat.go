@@ -1069,7 +1069,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if !m.caps.Upload {
 			return m, nil
 		}
-		return m.startUpload()
+		return m.startUpload(false)
 	case "alt+d", "alt+D":
 		if !m.caps.DeleteChat || !m.entry.IsDM {
 			return m, nil
@@ -1161,7 +1161,106 @@ func (m chatViewModel) openMenuOn(sel backend.Message) (chatViewModel, tea.Cmd) 
 	return m, m.menu.search.Focus()
 }
 
-func (m chatViewModel) menuOpen() bool { return m.subMode == chatSubMenu }
+// modalOpen reports whether a modal is up over the chat: the message
+// actions, the search or the upload.
+func (m chatViewModel) modalOpen() bool {
+	switch m.subMode {
+	case chatSubMenu, chatSubSearch, chatSubUpload:
+		return true
+	}
+	return false
+}
+
+// modalSize is the width and height of the open modal.
+func (m chatViewModel) modalSize() (int, int) {
+	if m.subMode == chatSubMenu {
+		return m.menu.size(m.width)
+	}
+	return chatModalSize(m.width, m.height)
+}
+
+func (m chatViewModel) modalView() string {
+	switch m.subMode {
+	case chatSubSearch:
+		return m.searchView()
+	case chatSubUpload:
+		return m.uploadView()
+	}
+	return m.menu.View(m.width)
+}
+
+// modalClick acts on a click at column x and row y of the open modal,
+// counted from its top-left corner; a click outside it closes the modal.
+func (m chatViewModel) modalClick(x, y int, inside bool) (chatViewModel, tea.Cmd) {
+	switch {
+	case m.subMode == chatSubMenu:
+		return m.menuClick(x, y, inside)
+	case !inside && m.subMode == chatSubSearch:
+		return m.handleSearchKey(keyPress(tea.KeyEscape))
+	case !inside:
+		m.subMode = chatSubNone
+		return m, nil
+	case m.subMode == chatSubSearch:
+		return m.searchClick(y)
+	}
+	return m.uploadClick(y)
+}
+
+// chatModalSize is the size of the search and upload modals over a chat
+// width×height cells.
+func chatModalSize(width, height int) (int, int) {
+	return min(76, max(20, width-2)), min(22, max(10, height))
+}
+
+// chatModalTop is the rows above a search or path modal's list: the top
+// border, the field and the rule.
+const chatModalTop = 5
+
+// chatModalRows is how many list rows a search or path modal h rows tall has.
+func chatModalRows(h int) int { return max(1, h-chatModalTop-3) }
+
+func (m chatViewModel) searchFirst(rows int) int {
+	return max(0, m.searchSelected-rows+1)
+}
+
+// searchView is the search modal: the query, then the matching messages.
+func (m chatViewModel) searchView() string {
+	w, h := chatModalSize(m.width, m.height)
+	inner, rows := w-4, chatModalRows(h)
+	input := m.searchInput
+	input.SetWidth(max(1, inner-6))
+	body := m.st.modalField("/", input.View(), inner)
+	heading := "messages"
+	if m.searchQuery != "" {
+		heading = fmt.Sprintf("%d matches", len(m.searchResults))
+	}
+	body = append(body, m.st.modalRule(heading, inner))
+	first := m.searchFirst(rows)
+	for i := first; i < min(len(m.searchResults), first+rows); i++ {
+		text := backend.GenericMessageLine(m.searchResults[i], m.entry, nil)
+		body = append(body, m.st.modalRow("", textfmt.ClipLine(text, inner-modalMark-1),
+			i == m.searchSelected, inner))
+	}
+	if len(m.searchResults) == 0 && m.searchQuery != "" {
+		body = append(body, m.st.dim.Render("  no matching messages"))
+	}
+	body = fillLines(body, chatModalTop-1+rows)
+	body = append(body, m.st.modalKeys(chatSearchHelp, "", inner)...)
+	return m.st.modalBox("search "+chatName(m.entry), body, w, h)
+}
+
+// searchClick jumps to the result at row y of the search modal.
+func (m chatViewModel) searchClick(y int) (chatViewModel, tea.Cmd) {
+	_, h := chatModalSize(m.width, m.height)
+	rows := chatModalRows(h)
+	first := m.searchFirst(rows)
+	i := first + y - chatModalTop
+	if y < chatModalTop || i >= min(len(m.searchResults), first+rows) {
+		return m, nil
+	}
+	m.searchSelected = i
+	return m.handleSearchKey(keyPress(tea.KeyEnter))
+}
 
 func (m chatViewModel) handleMenuKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	var cmd tea.Cmd
@@ -1393,11 +1492,9 @@ func (m chatViewModel) updateInput(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.fitInputs()
 		m.threadInput, cmd = m.threadInput.Update(msg)
 	case chatSubUpload:
+		m.upload.input, cmd = m.upload.input.Update(msg)
 		if m.upload.step == uploadTyping {
-			m.upload.matches = nil
-		}
-		if m.upload.step != uploadPick {
-			m.upload.input, cmd = m.upload.input.Update(msg)
+			m.upload.listMatches()
 		}
 	}
 	return m, cmd
@@ -1585,13 +1682,11 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 // in the desktop's default application and a right click opens its actions.
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	switch m.subMode {
-	case chatSubSearch, chatSubUpload:
-		if msg.right {
-			return m, nil
-		}
-		return m.pickerClick(msg.y - 1)
-	case chatSubMenu, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
+	case chatSubMenu, chatSubSearch, chatSubUpload, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
 		return m, nil
+	}
+	if hit, thread := m.uploadButtonAt(msg.x, msg.y); hit && !msg.right {
+		return m.startUpload(thread)
 	}
 	if act, ok := m.suggestionAt(msg.x, msg.y); ok && !msg.right {
 		return m, func() tea.Msg { return chatSuggestion{act} }
@@ -1688,55 +1783,6 @@ func (m chatViewModel) openAttachment(sel backend.Message) (chatViewModel, tea.C
 	m.notice = ""
 	m.opening = &mediaDownload{filename: filename, part: dir + ".part"}
 	return m, tea.Batch(m.openExternalCmd(sel, dir, filename), mediaProgressCmd(), m.spin.Tick)
-}
-
-// pickerClick acts on a click at body row r of the search results or the
-// upload panel as if the row had been chosen with the keys.
-func (m chatViewModel) pickerClick(r int) (chatViewModel, tea.Cmd) {
-	inner, bodyHeight := m.width-4, m.height-2
-	switch m.subMode {
-	case chatSubSearch:
-		height := bodyHeight - len(m.st.composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote))
-		lines := m.st.genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
-			m.searchQuery, inner, height)
-		// The same layout bottomLines gives the results: heading, blank, rows.
-		row := r - (height - len(lines)) - 2
-		start := max(0, m.searchSelected-max(1, height-2)+1)
-		if r >= height || row < 0 || row >= len(lines)-2 || len(m.searchResults) == 0 {
-			return m, nil
-		}
-		m.searchSelected = start + row
-		return m.handleSearchKey(keyPress(tea.KeyEnter))
-	}
-	u := &m.upload
-	switch u.step {
-	case uploadTyping:
-		limit := max(1, bodyHeight-5) // under the heading, a blank and the path box
-		i := max(0, u.matchIdx-limit+1) + r - 5
-		if r < 5 || i >= min(len(u.matches), max(0, u.matchIdx-limit+1)+limit) {
-			return m, nil
-		}
-		u.matchIdx = i
-		return m.handleUploadKey(keyPress(tea.KeyTab))
-	case uploadPick:
-		// The picker keeps its cursor private, so walk the keys to the row.
-		view := u.picker.View()
-		lines := strings.Split(view, "\n")
-		row := r - 3 // under the heading, the folder and a blank
-		cur, ok := cursorRow(view, u.picker.Cursor)
-		if !ok || row < 0 || row >= len(lines) || strings.TrimSpace(ansi.Strip(lines[row])) == "" {
-			return m, nil
-		}
-		step := keyPress(tea.KeyDown)
-		if row < cur {
-			step = keyPress(tea.KeyUp)
-		}
-		for range max(row-cur, cur-row) {
-			m, _ = m.handleUploadKey(step)
-		}
-		return m.handleUploadKey(keyPress(tea.KeyEnter))
-	}
-	return m, nil
 }
 
 func mediaProgressCmd() tea.Cmd {
@@ -1880,6 +1926,11 @@ func (m chatViewModel) View() string {
 }
 
 func (m chatViewModel) view() string {
+	// A modal opened from the thread leaves the thread drawn under it.
+	if (m.subMode == chatSubUpload && m.upload.prev == chatSubThread) ||
+		(m.subMode == chatSubMenu && m.menu.prev == chatSubThread) {
+		m.subMode = chatSubThread
+	}
 	if m.subMode == chatSubThread {
 		if chatWidth, split := m.threadSplit(); split {
 			return joinColumns(
@@ -1911,13 +1962,6 @@ func (m chatViewModel) chatBox(width, height int, focused bool) string {
 	switch {
 	case m.messages == nil:
 		body = centerLines(inner, bodyHeight, m.spin.View()+"loading messages…")
-	case m.subMode == chatSubSearch:
-		composer := m.st.composerBox("Search", nil, "/ ", m.searchInput, inner, colorQuote)
-		results := m.st.genericSearchResultLines(m.b, m.searchResults, m.searchSelected, m.entry,
-			m.searchQuery, inner, bodyHeight-len(composer))
-		body = append(bottomLines(results, bodyHeight-len(composer)), composer...)
-	case m.subMode == chatSubUpload:
-		body = m.uploadBody(inner, bodyHeight)
 	default:
 		composer := m.composer(inner, focused)
 		body = append(m.messageLines(inner, bodyHeight-len(composer)), composer...)
@@ -1955,7 +1999,8 @@ func (m chatViewModel) composer(width int, focused bool) []string {
 	if m.subMode == chatSubEdit {
 		return m.st.composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
 	}
-	box := m.st.areaBox("message "+chatName(m.entry), m.replyBar(), m.input, width, border)
+	box := m.st.areaBox("message "+chatName(m.entry), m.replyBar(), m.input, width, border,
+		m.uploadButton())
 	if m.suggestion != "" && m.subMode == chatSubNone {
 		box = append(m.suggestionCard(width), box...)
 	}
@@ -1992,6 +2037,57 @@ func (m chatViewModel) suggestionCard(width int) []string {
 }
 
 // suggestionAt is the card button at column x and row y of the chat pane.
+// uploadButton is the + at the end of the composers that opens the upload
+// modal, where the backend can upload.
+func (m chatViewModel) uploadButton() string {
+	if !m.caps.Upload {
+		return ""
+	}
+	return "+"
+}
+
+// buttonWidth is the cells button takes at the end of an input, with its gap.
+func buttonWidth(button string) int {
+	if button == "" {
+		return 0
+	}
+	return 1 + textfmt.DisplayWidth(button)
+}
+
+// uploadButtonAt reports whether column x and row y of the pane hit the +
+// on the chat's or the thread's composer, and whether it was the thread's.
+func (m chatViewModel) uploadButtonAt(x, y int) (hit, thread bool) {
+	if m.uploadButton() == "" {
+		return false, false
+	}
+	left, width := 0, m.width
+	chatWidth, split := m.threadSplit()
+	var composer []string
+	switch {
+	case m.subMode == chatSubThread && (!split || x >= chatWidth):
+		if split {
+			left, width = chatWidth, m.width-chatWidth
+		}
+		composer, thread = m.threadComposer(width-4, false), true
+	case m.subMode == chatSubThread || m.subMode == chatSubNone:
+		if m.subMode == chatSubThread {
+			width = chatWidth
+		}
+		composer = m.composer(width-4, false)
+	default:
+		return false, false
+	}
+	// The composer ends the pane's body; the + is the last cell inside it on
+	// the prompt's row, under the pane's and the composer's edge and padding.
+	for i, line := range composer {
+		if strings.Contains(ansi.Strip(line), "❯ ") {
+			bx := left + width - 5
+			return y == m.height-1-len(composer)+i && x >= bx-1 && x <= bx+1, thread
+		}
+	}
+	return false, false
+}
+
 func (m chatViewModel) suggestionAt(x, y int) (string, bool) {
 	if m.suggestion == "" || m.subMode != chatSubNone {
 		return "", false
@@ -2055,7 +2151,8 @@ func newComposerArea(st *styles, placeholder string) textarea.Model {
 // fitInputs gives the inputs the width their composers draw them at, so
 // their height and scrolling match what is on screen.
 func (m *chatViewModel) fitInputs() {
-	const frame = 4 + 4 + 2 // the pane's and the composer's edges and padding, the prompt
+	// The pane's and the composer's edges and padding, the prompt, the + button.
+	frame := 4 + 4 + 2 + buttonWidth(m.uploadButton())
 	chatWidth, split := m.threadSplit()
 	m.input.SetWidth(max(1, chatWidth-frame))
 	threadWidth := m.width
@@ -2066,18 +2163,23 @@ func (m *chatViewModel) fitInputs() {
 }
 
 // areaBox is composerBox for a growing input: the prompt on its first row,
-// later rows under the text.
+// later rows under the text, and button, if any, at the first row's far end.
 func (s *styles) areaBox(title string, above []string, area textarea.Model, width int,
-	border color.Color) []string {
+	border color.Color, button string) []string {
 	const prompt = "❯ "
-	area.SetWidth(max(1, width-4-textfmt.DisplayWidth(prompt)))
+	area.SetWidth(max(1, width-4-textfmt.DisplayWidth(prompt)-buttonWidth(button)))
 	lines := above
 	for i, row := range strings.Split(area.View(), "\n") {
 		lead := "  "
 		if i == 0 {
 			lead = s.accent.Render(prompt)
 		}
-		lines = append(lines, lead+row)
+		line := lead + row
+		if i == 0 && button != "" {
+			gap := width - 4 - textfmt.DisplayWidth(line) - textfmt.DisplayWidth(button)
+			line += strings.Repeat(" ", max(1, gap)) + s.accent.Render(button)
+		}
+		lines = append(lines, line)
 	}
 	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
 }
@@ -2161,9 +2263,9 @@ func isContextCanceled(err error) bool {
 }
 
 var chatSearchHelp = []helpKey{
-	{"↑↓", "results"},
-	{"enter", "jump"},
-	{"Esc", "cancel"},
+	{"↑↓", "select"},
+	{"enter", "go to"},
+	{"esc", "close"},
 }
 
 var chatEditHelp = []helpKey{
