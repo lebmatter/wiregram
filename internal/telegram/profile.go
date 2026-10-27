@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 
 	"wiregram/internal/backend"
 )
@@ -79,6 +80,58 @@ func (tb *TelegramBackend) Profile(ctx context.Context, userID string) (backend.
 	p.Add("Account", strings.Join(kinds, ", "))
 	p.Add("User ID", userID)
 	return p, nil
+}
+
+// MentionedUser finds @username among the users seen so far, else asks
+// Telegram to resolve it.
+func (tb *TelegramBackend) MentionedUser(ctx context.Context, msg backend.Message, name string) (string, error) {
+	username := strings.TrimPrefix(name, "@")
+	c := tb.C
+	c.mu.Lock()
+	for id, u := range c.users {
+		if strings.EqualFold(u.Username, username) {
+			c.mu.Unlock()
+			return strconv.FormatInt(id, 10), nil
+		}
+		for _, un := range u.Usernames {
+			if strings.EqualFold(un.Username, username) {
+				c.mu.Unlock()
+				return strconv.FormatInt(id, 10), nil
+			}
+		}
+	}
+	c.mu.Unlock()
+	res, err := c.Api.ContactsResolveUsername(ctx,
+		&tg.ContactsResolveUsernameRequest{Username: username})
+	if tgerr.Is(err, "USERNAME_NOT_OCCUPIED", "USERNAME_INVALID") {
+		return "", backend.ErrNoUser
+	}
+	if err != nil {
+		return "", fmt.Errorf("find %s: %w", name, err)
+	}
+	c.Remember(res.Users, res.Chats)
+	peer, ok := res.Peer.(*tg.PeerUser)
+	if !ok {
+		return "", fmt.Errorf("%s is a group or channel, not a person", name)
+	}
+	return strconv.FormatInt(peer.UserID, 10), nil
+}
+
+// DirectChat is the private chat with a user seen so far.
+func (tb *TelegramBackend) DirectChat(ctx context.Context, userID string) (backend.ChatEntry, error) {
+	id, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		return backend.ChatEntry{}, fmt.Errorf("read user ID %q: %w", userID, err)
+	}
+	c := tb.C
+	c.mu.Lock()
+	u := c.users[id]
+	c.mu.Unlock()
+	choice, ok := userChoiceFromUser(u, "")
+	if !ok {
+		return backend.ChatEntry{}, fmt.Errorf("user %d is not loaded", id)
+	}
+	return chatToChatEntry(choice.entry), nil
 }
 
 func birthday(b tg.Birthday) string {

@@ -1729,6 +1729,37 @@ func isForwarded(m *waE2E.Message) bool {
 	return false
 }
 
+// MentionedUser finds @number among the message's mentioned JIDs, a phone
+// number or the LID newer groups mention with. A real mention always names
+// its JID, so other @text names no one.
+func (wa *WaBackend) MentionedUser(ctx context.Context, msg backend.Message, name string) (string, error) {
+	number := strings.TrimPrefix(name, "@")
+	if evt, ok := msg.Raw.(*events.Message); ok {
+		for _, s := range replyContext(evt.Message).GetMentionedJID() {
+			if jid, err := types.ParseJID(s); err == nil && jid.User == number {
+				return jid.ToNonAD().String(), nil
+			}
+		}
+	}
+	return "", backend.ErrNoUser
+}
+
+// DirectChat is the chat with the user's JID, by phone number when a group
+// named them by LID and the number is known.
+func (wa *WaBackend) DirectChat(ctx context.Context, userID string) (backend.ChatEntry, error) {
+	jid, err := types.ParseJID(userID)
+	if err != nil {
+		return backend.ChatEntry{}, fmt.Errorf("read user %q: %w", userID, err)
+	}
+	jid = jid.ToNonAD()
+	if jid.Server == types.HiddenUserServer {
+		if pn, err := wa.Client.Store.LIDs.GetPNForLID(ctx, jid); err == nil && !pn.IsEmpty() {
+			jid = pn.ToNonAD()
+		}
+	}
+	return wa.chatEntry(waChatEntry{jid: jid}), nil
+}
+
 // Profile describes a user from the contact store, their about text and,
 // for a business, its business profile.
 func (wa *WaBackend) Profile(ctx context.Context, userID string) (backend.Profile, error) {

@@ -2077,6 +2077,36 @@ func mxRelatesTo(content map[string]any) map[string]any {
 	return rel
 }
 
+// MentionedUser matches @localpart against the message's m.mentions, then
+// the members of the rooms the user is in.
+func (mx *MxBackend) MentionedUser(ctx context.Context, msg backend.Message, name string) (string, error) {
+	prefix := strings.ToLower(name) + ":"
+	if ev, ok := msg.Raw.(mxTimelineEvent); ok {
+		mentions, _ := ev.Content["m.mentions"].(map[string]any)
+		ids, _ := mentions["user_ids"].([]any)
+		for _, id := range ids {
+			if uid, _ := id.(string); strings.HasPrefix(strings.ToLower(uid), prefix) {
+				return uid, nil
+			}
+		}
+	}
+	mx.mu.Lock()
+	defer mx.mu.Unlock()
+	for _, room := range mx.rooms {
+		for uid := range room.members {
+			if strings.HasPrefix(strings.ToLower(uid), prefix) {
+				return uid, nil
+			}
+		}
+	}
+	return "", backend.ErrNoUser
+}
+
+// DirectChat is the newest DM room with the user, created if there is none.
+func (mx *MxBackend) DirectChat(ctx context.Context, userID string) (backend.ChatEntry, error) {
+	return mx.openDM(ctx, userID)
+}
+
 // Profile describes a user from their profile and, when the homeserver
 // shares it, their presence.
 func (mx *MxBackend) Profile(ctx context.Context, userID string) (backend.Profile, error) {

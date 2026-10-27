@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/textfmt"
@@ -309,14 +310,15 @@ func (m chatViewModel) threadLines(inner, height int) ([]string, []int, []rowKin
 }
 
 // threadOwners maps each row inside a thread pane width columns wide, below
-// its top border, to the threadMessages index drawn there (-1 for none) and
-// what the row draws.
-func (m chatViewModel) threadOwners(width int) ([]int, []rowKind) {
+// its top border, to the threadMessages index drawn there (-1 for none),
+// what the row draws and the row itself.
+func (m chatViewModel) threadOwners(width int) ([]int, []rowKind, []string) {
 	inner := width - 4
 	height := m.height - 2 - len(m.threadComposer(inner, false))
-	_, owners, kinds := m.threadLines(inner, height)
+	lines, owners, kinds := m.threadLines(inner, height)
 	return topRows(scrolled(owners, height, m.threadScroll), height, -1),
-		topRows(scrolled(kinds, height, m.threadScroll), height, rowText)
+		topRows(scrolled(kinds, height, m.threadScroll), height, rowText),
+		topRows(scrolled(lines, height, m.threadScroll), height, "")
 }
 
 // topRows keeps the last height rows, padding at the bottom so a short
@@ -374,7 +376,7 @@ func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, msgHit, bool)
 	if x < left {
 		return backend.Message{}, msgHit{}, false
 	}
-	owners, kinds := m.threadOwners(m.width - left)
+	owners, kinds, lines := m.threadOwners(m.width - left)
 	row := y - 1
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
 		return backend.Message{}, msgHit{}, false
@@ -384,5 +386,5 @@ func (m chatViewModel) threadMessageAt(x, y int) (backend.Message, msgHit, bool)
 		indent = 2 // the root's text starts at the left edge
 	}
 	return m.threadMessages(m.threadRoot)[owners[row]],
-		msgHit{kinds[row], x - left - 2 - indent}, true
+		msgHit{kinds[row], x - left - 2 - indent, ansi.Strip(lines[row]), x - left - 2}, true
 }

@@ -257,14 +257,14 @@ func (m chatViewModel) loadVisibleImages() tea.Cmd {
 	}
 	width, split := m.threadSplit()
 	if m.subMode == chatSubNone || split {
-		owners, _ := m.chatOwners(width)
+		owners, _, _ := m.chatOwners(width)
 		add(m.messages, owners)
 	}
 	if m.subMode == chatSubThread {
 		if !split {
 			width = 0
 		}
-		owners, _ := m.threadOwners(m.width - width)
+		owners, _, _ := m.threadOwners(m.width - width)
 		add(m.threadMessages(m.threadRoot), owners)
 	}
 	var cmds []tea.Cmd

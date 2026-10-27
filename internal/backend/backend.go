@@ -244,10 +244,15 @@ type SelfChatter interface {
 }
 
 // Profiler is implemented by backends whose server can describe a user, so
-// clicking a sender opens their profile.
+// clicking a sender or an @name opens their profile.
 type Profiler interface {
 	// Profile describes the user a message's SenderID names.
 	Profile(ctx context.Context, userID string) (Profile, error)
+	// MentionedUser is the user ID of the person name, an @name in msg's
+	// text, refers to, or ErrNoUser when it names no one.
+	MentionedUser(ctx context.Context, msg Message, name string) (string, error)
+	// DirectChat is the private chat with the user, started if need be.
+	DirectChat(ctx context.Context, userID string) (ChatEntry, error)
 }
 
 // Profile is what the backend's user API tells about one person, as label
@@ -328,6 +333,9 @@ type BotManaged interface {
 	// calls that need it fail with ErrNoBotManager.
 	WithManager(manager BotAccount) BotRegistrar
 }
+
+// ErrNoUser means an @name in a message names no one the network knows.
+var ErrNoUser = errors.New("no one goes by that name")
 
 // ErrNoBotManager means the account needs a manager bot set first.
 var ErrNoBotManager = errors.New("set a manager bot for this account first")

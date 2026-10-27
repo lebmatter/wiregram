@@ -1591,9 +1591,10 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 		}
 		m, follow = m.followThread()
 	}
-	if hit.kind&rowHeader != 0 && !msg.right && m.senderAt(sel, hit.col) {
-		if _, ok := m.b.(backend.Profiler); ok {
-			return m, tea.Batch(follow, func() tea.Msg { return profileOpen{m.b, m.ctx, sel} })
+	if _, ok := m.b.(backend.Profiler); ok && !msg.right {
+		name, ok := mentionAt(hit)
+		if ok || hit.kind&rowHeader != 0 && m.senderAt(sel, hit.col) {
+			return m, tea.Batch(follow, func() tea.Msg { return profileOpen{m.b, m.ctx, sel, name} })
 		}
 	}
 	if hit.kind == rowMeta && !msg.right {
@@ -1745,11 +1746,13 @@ func (m chatViewModel) footerLine() (string, bool) {
 	return line, true
 }
 
-// msgHit is where a click landed in a message: the kind of row, and the
-// column counted from the start of the message's text.
+// msgHit is where a click landed in a message: the kind of row, the column
+// counted from the start of the message's text, and the row as drawn.
 type msgHit struct {
 	kind rowKind
 	col  int
+	line string // the row without its styles, from the gutter on
+	cell int    // the column in line
 }
 
 // messageAt maps a point of the chat pane to the message drawn there, and
@@ -1762,26 +1765,28 @@ func (m chatViewModel) messageAt(x, y int) (int, msgHit, bool) {
 	if x >= width {
 		return 0, msgHit{}, false
 	}
-	owners, kinds := m.chatOwners(width)
+	owners, kinds, lines := m.chatOwners(width)
 	row := y - 1
 	if row < 0 || row >= len(owners) || owners[row] < 0 {
 		return 0, msgHit{}, false
 	}
-	return owners[row], msgHit{kinds[row], x - 2 - m.st.textIndent(m.entry)}, true
+	return owners[row], msgHit{kinds[row], x - 2 - m.st.textIndent(m.entry),
+		ansi.Strip(lines[row]), x - 2}, true
 }
 
 // chatOwners maps each message row of a chat box width columns wide, below
-// its top border, to the message drawn there (-1 for none) and what the row
-// draws.
-func (m chatViewModel) chatOwners(width int) ([]int, []rowKind) {
+// its top border, to the message drawn there (-1 for none), what the row
+// draws and the row itself.
+func (m chatViewModel) chatOwners(width int) ([]int, []rowKind, []string) {
 	_, split := m.threadSplit()
 	// The chat beside an open thread draws its composer unfocused.
 	inner, bodyHeight := width-4, m.height-2
 	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
-	_, owners, kinds := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
+	lines, owners, kinds := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
 		m.changedMessages, m.images, m.quotes, m.openRoot(), m.firstUnread, m.unread, m.flashing(),
 		inner, height)
-	return screenRows(owners, height, -1), screenRows(kinds, height, rowText)
+	return screenRows(owners, height, -1), screenRows(kinds, height, rowText),
+		screenRows(lines, height, "")
 }
 
 // screenRows pads with blank or trims per-line values the way bottomLines

@@ -393,6 +393,24 @@ func (s *styles) inline(text string) string {
 	})
 }
 
+// chatWide are the @names that mention everyone rather than someone.
+var chatWide = map[string]bool{"@all": true, "@channel": true, "@here": true, "@room": true,
+	"@everyone": true}
+
+// mentionAt is the @name drawn under a click, as inline colours it. A
+// trailing full stop or dash ends the sentence rather than the name.
+func mentionAt(hit msgHit) (string, bool) {
+	for _, loc := range atName.FindAllStringSubmatchIndex(hit.line, -1) {
+		name := strings.TrimRight(hit.line[loc[4]:loc[5]], ".-")
+		start := textfmt.DisplayWidth(hit.line[:loc[4]])
+		if hit.cell >= start && hit.cell < start+textfmt.DisplayWidth(name) &&
+			len(name) > 1 && !chatWide[strings.ToLower(name)] {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // rowKind is what a line of a message block draws, so a click knows what it
 // hit. The header row is a flag, since it can draw the attachment's tag too.
 type rowKind uint8

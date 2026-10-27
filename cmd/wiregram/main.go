@@ -76,7 +76,9 @@ Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
 message selects it; right-clicking it opens its actions. Clicking a reaction
 under it adds yours or takes it back, and the reaction blinks. Clicking the
-sender's name opens their profile (not on email). Clicking its
+sender's name or an @name in a message opens their profile (not on
+email), where Enter or a click on go to chat opens your private chat with
+them. Clicking its
 attachment (the image or the [tag] row) downloads it and opens it with
 xdg-open (open on macOS, the default app on Windows). Hold Shift
 while dragging to select text with the terminal.

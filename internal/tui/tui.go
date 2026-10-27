@@ -474,14 +474,21 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		m.profile = newProfileModal(m.st, msg.msg)
-		return m, loadProfile(msg.ctx, p, msg.msg.SenderID)
+		m.profile = newProfileModal(m.st, msg, p, msg.b == m.b)
+		return m, loadProfile(msg, p)
 
 	case profileLoaded:
 		if m.profile != nil {
 			m.profile.loaded(msg)
 		}
 		return m, nil
+
+	case profileChatOpened:
+		if msg.err != nil {
+			m.notice = textfmt.CleanError(msg.err)
+			return m, nil
+		}
+		return m.openChat(msg.entry)
 
 	case agentBotDone:
 		if !m.agentOpen || m.agentPane.rec.ID != msg.agentID {
@@ -512,6 +519,12 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
+		if p := m.profile; p != nil && p.canChat() && msg.Mouse().Button == tea.MouseLeft {
+			if _, y, _, _ := m.profileRect(); msg.Mouse().Y == y+1+p.chatRow() {
+				m.profile = nil
+				return m, p.openChat()
+			}
+		}
 		if m.welcome != nil || m.alert != nil || m.profile != nil {
 			m.welcome, m.alert, m.profile = nil, nil, nil
 			return m, nil
@@ -727,6 +740,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if p := m.profile; p != nil && p.canChat() && msg.String() == "enter" {
+			m.profile = nil
+			return m, p.openChat()
+		}
 		if m.welcome != nil || m.alert != nil || m.profile != nil {
 			m.welcome, m.alert, m.profile = nil, nil, nil
 			return m, nil
@@ -1225,6 +1242,17 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 	return m, cmd
 }
 
+// profileRect is where the profile modal is drawn: centred over the chat.
+func (m tuiModel) profileRect() (x, y, w, h int) {
+	left, width := 0, m.width
+	if m.chatOpen && m.twoPane() {
+		left, width = sidebarWidth, m.chat.width
+	}
+	w, h = m.profile.size()
+	x, y = modalRect(width, m.bodyHeight(), w, h)
+	return left + x, y, w, h
+}
+
 func (m tuiModel) footer() string {
 	if m.welcome != nil {
 		return m.st.footer(welcomeModalHelp, "", m.width)
@@ -1233,7 +1261,7 @@ func (m tuiModel) footer() string {
 		return m.st.footer(m.alert.helpKeys(), "", m.width)
 	}
 	if m.profile != nil {
-		return m.st.footer(profileModalHelp, "", m.width)
+		return m.st.footer(m.profile.helpKeys(), "", m.width)
 	}
 	if m.chatOpen && !m.searchOpen && (m.focus == focusChat || m.chat.opening != nil) {
 		if line, ok := m.chat.footerLine(); ok {
@@ -1383,13 +1411,8 @@ func (m tuiModel) render() string {
 		body = m.st.overlay(body, box, m.width, bodyHeight)
 	}
 	if m.profile != nil {
-		left, width := 0, m.width
-		if m.chatOpen && m.twoPane() {
-			left, width = sidebarWidth, m.chat.width
-		}
-		w, h := m.profile.size()
-		x, y := modalRect(width, bodyHeight, w, h)
-		body = m.st.fadeUnder(body, m.profile.View(), left+x, y)
+		x, y, _, _ := m.profileRect()
+		body = m.st.fadeUnder(body, m.profile.View(), x, y)
 	}
 	if m.alert != nil {
 		w, h := m.alert.size()

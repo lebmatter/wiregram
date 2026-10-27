@@ -1799,6 +1799,29 @@ func (mb *MmBackend) handleWSEvent(data []byte) {
 	}
 }
 
+// MentionedUser looks @username up in /users/usernames, which leaves out
+// names no one has rather than failing.
+func (mb *MmBackend) MentionedUser(ctx context.Context, msg backend.Message, name string) (string, error) {
+	var users []mmUser
+	body := []string{strings.ToLower(strings.TrimPrefix(name, "@"))}
+	if err := mb.apiJSON(ctx, "POST", "/users/usernames", body, &users); err != nil {
+		return "", fmt.Errorf("find %s: %w", name, err)
+	}
+	if len(users) == 0 {
+		return "", backend.ErrNoUser
+	}
+	return users[0].ID, nil
+}
+
+// DirectChat opens the direct channel with the user.
+func (mb *MmBackend) DirectChat(ctx context.Context, userID string) (backend.ChatEntry, error) {
+	var u mmUser
+	if err := mb.apiJSON(ctx, "GET", "/users/"+url.PathEscape(userID), nil, &u); err != nil {
+		return backend.ChatEntry{}, fmt.Errorf("load user: %w", err)
+	}
+	return mb.openDM(ctx, u)
+}
+
 // Profile describes a user from /users/{id} and their status.
 func (mb *MmBackend) Profile(ctx context.Context, userID string) (backend.Profile, error) {
 	var u struct {

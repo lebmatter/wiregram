@@ -91,7 +91,8 @@ The footer's badge reads `CHAT`, or `THREAD` while the thread pane is open.
 
 ## Profiles
 
-Click a sender's name to open their profile over the chat. It shows what the network's
+Click a sender's name, or an `@name` in a message, to open their profile over the chat. An `@name`
+that names no one says so instead. It shows what the network's
 user API returns:
 
 - **Telegram:** name, usernames, phone, bio, birthday, groups in common, last seen and
@@ -104,7 +105,9 @@ user API returns:
 - **WhatsApp:** name, profile name, phone, about text and, for a business, its category,
   address and email.
 
-Email has no profiles. Any key or click closes it.
+Under it, **go to chat** opens your private chat with them (<kbd>Enter</kbd> or a click),
+starting one if there is none; on Matrix that invites them to a new room. Email has no
+profiles. Any other key or click closes it.
 
 ## Message actions
 
