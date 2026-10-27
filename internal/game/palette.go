@@ -24,8 +24,10 @@ func ValidTag(name string) bool {
 	return true
 }
 
-// ValidColour reports whether c is a colour a palette may use.
+// ValidColour reports whether c is a colour a palette may use; "on " before
+// it makes the tag set the background instead.
 func ValidColour(c string) bool {
+	c = strings.TrimPrefix(c, "on ")
 	if colourNames[c] {
 		return true
 	}

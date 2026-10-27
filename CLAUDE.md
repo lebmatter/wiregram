@@ -362,7 +362,7 @@ These are project constraints, not suggestions:
   only trycloudflare hosts). A click on it (`gameInviteAt`) joins with `game.Dial`. The
   host runs the script for both seats in `Update` and sends the guest frame diffs; the
   guest sends keys and never runs Lua. Views colour themselves with `{name}…{/}` tags over
-  the script's `info.palette` (`game.ValidColour`, `CleanPalette` on the guest), drawn by
+  the script's `info.palette` (text colours, or backgrounds after `on `; `game.ValidColour`, `CleanPalette` on the guest), drawn by
   `styles.gameMarkup` on both sides, so no escape code from a script or the network
   reaches the terminal. The root owns the one game (`tuiModel.game`), so
   it outlives chat switches; its pane sits beside its chat (`gameRect`, `focusGame`,

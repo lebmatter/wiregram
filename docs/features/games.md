@@ -6,6 +6,7 @@ The games are small Lua scripts built into wiregram:
 | Game | How it plays |
 |------|--------------|
 | **Battleship** | Both place a fleet of five ships (arrows, <kbd>r</kbd> rotates, <kbd>Enter</kbd> places, <kbd>a</kbd> places the rest at random), seeing only their own; then you fire in turn at the other's waters. Sink the whole fleet to win |
+| **Chess** | Move the cursor with the arrows, <kbd>Enter</kbd> picks up a piece and shows where it can go, <kbd>Enter</kbd> again on a square moves it (on the piece itself, or <kbd>Backspace</kbd>, puts it down). A pawn reaching the last rank asks <kbd>q</kbd> <kbd>r</kbd> <kbd>b</kbd> <kbd>n</kbd>. Checkmate wins and stalemate draws; there is no draw by repetition or the fifty-move rule. The challenger plays white, and each of you sees your own pieces at the bottom |
 | **Connect Four** | Drop discs from the top (<kbd>←</kbd>/<kbd>→</kbd> or <kbd>1</kbd>–<kbd>7</kbd>, then <kbd>Enter</kbd>); four in a row wins |
 | **Pong** | First to 5 points; <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>w</kbd>/<kbd>s</kbd> |
 | **Tic-tac-toe** | Three in a row |
@@ -110,7 +111,9 @@ return "{grid}│{/} {x}X{/} {grid}│{/}", "your turn ({x}X{/})"
 keeps the `{` or `\` after it as written, and a tag the palette lacks shows as written.
 Names are 1 to 16 of `a`–`z`, `0`–`9` and `_`, starting with a letter. A colour is
 `#rrggbb`, a fixed `green`, `yellow`, `red`, `blue` or `violet`, or the theme's `accent`,
-`subtle` or `dim`, which follow each player's own theme. Tags take no room: `min_w` counts
+`subtle` or `dim`, which follow each player's own theme. A colour after `on ` (`dark = "on #80633f"`) is
+a background instead, so a background tag and a colour tag can be combined:
+`{dark}{w} ♞ {/}`. `{/}` and the end of each line clear both. Tags take no room: `min_w` counts
 only what shows. The palette reaches the other player with the game, and each wiregram draws
 the colours itself, so nothing the script returns reaches the terminal as written. Player
 names reach `init` with their `{` and `\` escaped, so they show as written too. Only the `base`, `table`,

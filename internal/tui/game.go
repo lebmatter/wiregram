@@ -313,11 +313,11 @@ func (g *gameModel) helpKeys() []helpKey {
 	return []helpKey{{"tab", "chat"}, {"esc", "close"}}
 }
 
-const fgReset = "\x1b[39m"
+const fgReset, bgReset = "\x1b[39m", "\x1b[49m"
 
 // gameMarkup draws a line of a game's view, from the host's own script or
-// from the network: {name} switches to the palette's colour for name, {/}
-// back to base, and a backslash keeps the { or \ after it as written. The
+// from the network: {name} switches to the palette's colour for name (the
+// background for an "on " colour), {/} back to base and no background, and a backslash keeps the { or \ after it as written. The
 // script never writes to the terminal itself: control characters are dropped
 // and a tag the palette lacks is shown as written.
 func (s *styles) gameMarkup(line string, palette map[string]string, base string) string {
@@ -334,7 +334,7 @@ func (s *styles) gameMarkup(line string, palette map[string]string, base string)
 			if end := runeIndex(r, '}', i+1, i+18); end > 0 {
 				name := string(r[i+1 : end])
 				if name == "/" {
-					b.WriteString(base)
+					b.WriteString(base + bgReset)
 					i = end
 					continue
 				}
@@ -347,7 +347,7 @@ func (s *styles) gameMarkup(line string, palette map[string]string, base string)
 		}
 		b.WriteRune(r[i])
 	}
-	b.WriteString(fgReset)
+	b.WriteString(fgReset + bgReset)
 	return b.String()
 }
 
@@ -361,12 +361,17 @@ func runeIndex(r []rune, want rune, from, limit int) int {
 	return -1
 }
 
-// gameInk is the foreground SGR for a palette colour: one of the theme's,
-// which follow the player's theme, a fixed one or #rrggbb.
+// gameInk is the SGR for a palette colour: one of the theme's, which follow
+// the player's theme, a fixed one or #rrggbb, as the background after "on ".
 func (s *styles) gameInk(name string) string {
+	bg := strings.HasPrefix(name, "on ")
+	name = strings.TrimPrefix(name, "on ")
 	c := s.pluginBorder(name, s.accentColor)
 	if name == "subtle" {
 		c = lipgloss.Color(s.theme.subtle)
+	}
+	if bg {
+		return ansi.NewStyle().BackgroundColor(c).String()
 	}
 	return ansi.NewStyle().ForegroundColor(c).String()
 }
