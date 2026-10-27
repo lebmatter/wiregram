@@ -9,6 +9,7 @@ The games are small Lua scripts built into wiregram:
 | **Chess** | Move the cursor with the arrows, <kbd>Enter</kbd> picks up a piece and shows where it can go, <kbd>Enter</kbd> again on a square moves it (on the piece itself, or <kbd>Backspace</kbd>, puts it down). A pawn reaching the last rank asks <kbd>q</kbd> <kbd>r</kbd> <kbd>b</kbd> <kbd>n</kbd>. Checkmate wins and stalemate draws; there is no draw by repetition or the fifty-move rule. The challenger plays white, and each of you sees your own pieces at the bottom |
 | **Connect Four** | Drop discs from the top (<kbd>←</kbd>/<kbd>→</kbd> or <kbd>1</kbd>–<kbd>7</kbd>, then <kbd>Enter</kbd>); four in a row wins |
 | **Pong** | First to 5 points; <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>w</kbd>/<kbd>s</kbd> |
+| **Snake** | Two snakes on one field, the challenger's green and the other blue. Turn with the arrows or <kbd>w</kbd> <kbd>a</kbd> <kbd>s</kbd> <kbd>d</kbd> and eat to grow; hitting a wall, yourself or the other snake loses the round, and if both crash at once the longer snake takes it. First to 3 rounds |
 | **Tic-tac-toe** | Three in a row |
 
 The challenger moves (or fires) first. In Battleship each player's wiregram shows only their
@@ -54,7 +55,7 @@ Some things to know:
   clicks first with it plays. On servers whose admins can read your chats, they can see it
   too.
 - **Fast games lag a little for the guest.** Each key goes to Cloudflare and back. Turn-based
-  games don't notice; in Pong the player who joined feels it.
+  games don't notice; in Pong and Snake the player who joined feels it.
 - **A new tunnel takes a few seconds.** The pane says *opening a tunnel…* until it is ready;
   joining retries for a few seconds while its address spreads.
 - Quick tunnels are offered by Cloudflare for testing, without guarantees. If
