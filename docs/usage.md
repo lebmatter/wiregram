@@ -51,7 +51,13 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   your private chat with them; any other key or click closes it.
 - A **click on an attachment** (the image or the `[tag]` row) downloads it and opens it
   with `xdg-open` (`open` on macOS, the default app on Windows).
-- Hold <kbd>Shift</kbd> while dragging to select text with the terminal.
+- **Dragging** across the chat or the thread pane selects its text and copies it to the
+  clipboard when you let go: through `wl-copy`, `xclip` or `xsel` (`pbcopy` on macOS) when
+  installed, and through the terminal (OSC 52) for terminals that support it and over
+  SSH, where tmux needs `set-clipboard on`. While it is shown, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+Shift+C</kbd>
+  copies it again. A click acts when you let go, unless you dragged. Any other key, click
+  or scroll clears the selection.
+- Hold <kbd>Shift</kbd> while dragging to select text with the terminal instead.
 
 The login and connecting screens leave the mouse to the terminal.
 

@@ -97,10 +97,14 @@ type chatViewModel struct {
 	// openedAt is when an attachment last went to the desktop's viewer, whose
 	// window takes focus; the root skips the blur lock just after it.
 	openedAt time.Time
+	// copiedAt is when a selection was last copied: wl-copy on GNOME takes
+	// the focus for a moment to reach the clipboard.
+	copiedAt time.Time
 	spin     spinner.Model
 
 	threadRoot  string
 	lastClick   clickMark // the last plain click on a message, to tell a double click
+	drag        *textDrag // a left button held or a selection drawn, else nil
 	threadInput textarea.Model
 	// threadScroll is how many lines the thread pane is scrolled up from its end.
 	threadScroll int
@@ -708,6 +712,10 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 
 	case chatClick:
 		return m.handleClick(msg)
+
+	case clipboardFailed:
+		m.notice = textfmt.CleanError(msg.err)
+		return m, nil
 
 	case mediaProgressTick:
 		if m.opening == nil {
@@ -1868,6 +1876,10 @@ func openExternal(ctx context.Context, b backend.Backend, sel backend.Message, d
 }
 
 func (m chatViewModel) View() string {
+	return m.highlight(m.view())
+}
+
+func (m chatViewModel) view() string {
 	if m.subMode == chatSubThread {
 		if chatWidth, split := m.threadSplit(); split {
 			return joinColumns(

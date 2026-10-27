@@ -83,8 +83,12 @@ sender's name or an @name in a message opens their profile (not on
 email), where Enter or a click on go to chat opens your private chat with
 them. Clicking its
 attachment (the image or the [tag] row) downloads it and opens it with
-xdg-open (open on macOS, the default app on Windows). Hold Shift
-while dragging to select text with the terminal.
+xdg-open (open on macOS, the default app on Windows). Dragging across
+the chat or the thread pane selects its text and copies it to the clipboard
+when let go (wl-copy, xclip or xsel, else the terminal's OSC 52; tmux needs
+set-clipboard on); while it is shown, Ctrl+C
+or Ctrl+Shift+C copies it again. Hold Shift while dragging
+to select text with the terminal instead.
 
 Quitting, deleting a chat, message, bot or provider, removing an account
 and Reset ask first in a modal: y or Enter on the action goes ahead, Esc

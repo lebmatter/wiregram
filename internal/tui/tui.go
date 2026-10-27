@@ -427,8 +427,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case tea.BlurMsg:
 		// Leaving the terminal's tab or window locks the chat at once, unless
-		// focus went to a viewer for an attachment the user just clicked.
-		if m.chatOpen && m.chat.opening == nil && time.Since(m.chat.openedAt) > 5*time.Second {
+		// focus went to a viewer for an attachment the user just clicked or
+		// to the clipboard tool copying a selection.
+		if m.chatOpen && m.chat.opening == nil && time.Since(m.chat.openedAt) > 5*time.Second &&
+			time.Since(m.chat.copiedAt) > 3*time.Second {
 			m.chat.locked = true
 		}
 		return m, nil
@@ -519,6 +521,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
+		m.chat = m.chat.clearSelection()
 		if p := m.profile; p != nil && p.canChat() && msg.Mouse().Button == tea.MouseLeft {
 			if _, y, _, _ := m.profileRect(); msg.Mouse().Y == y+1+p.chatRow() {
 				m.profile = nil
@@ -535,7 +538,22 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		if m.welcome != nil || m.alert != nil || m.profile != nil {
 			return m, nil
 		}
+		m.chat = m.chat.clearSelection()
 		return m.handleWheel(msg)
+
+	case tea.MouseMotionMsg:
+		if mouse := msg.Mouse(); mouse.Button == tea.MouseLeft && m.chatOpen {
+			m.chat = m.chat.dragTo(m.chatX(mouse.X), mouse.Y)
+		}
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		if !m.chatOpen {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.chat, cmd = m.chat.release()
+		return m, cmd
 
 	case busEvent:
 		// The root owns the account's only UI subscription and routes events
@@ -749,6 +767,12 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = ""
+		if m.chatOpen && m.chat.selecting() && copyKey(msg.String()) {
+			var cmd tea.Cmd
+			m.chat, cmd = m.chat.copySelection()
+			return m, cmd
+		}
+		m.chat = m.chat.clearSelection()
 		return m.handleKey(msg)
 
 	case tea.PasteMsg:
@@ -935,6 +959,9 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 			m.agentPane.sel = i
 			m.agentPane, cmd = m.agentPane.Update(keyPress(tea.KeyEnter))
 		}
+	case !right && m.chatOpen:
+		// A click acts when let go, so a drag can select text instead.
+		m.chat = m.chat.press(x, mouse.Y)
 	default:
 		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y, right})
 	}

@@ -17,7 +17,10 @@ opens their profile modal (`backend.Profiler`, `internal/tui/profile.go`) on bac
 that have one, whose go to chat row (Enter) opens the DM (`Profiler.DirectChat`); a left click elsewhere on a message selects it, and on the blank part of its row beside
 the text (`textAt`) at `threadPaneMinWidth` also opens its thread, empty to start one
 (`openThread`); a double click on its text (`clickMark`) or a right click on a message opens its
-actions modal. The login and connecting
+actions modal. A left button in the chat acts when let go: dragging instead selects the
+pane's text in reverse and copies it with `tea.SetClipboard` and the desktop's tool (`systemCopy`: wl-copy, xclip, xsel,
+pbcopy) since VTE terminals ignore OSC 52 (`textDrag`,
+`internal/tui/selection.go`). The login and connecting
 screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|dry-run|reset`
 (`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend
 and handle (`Account.Handle`); WhatsApp is refused there since a second connection would
