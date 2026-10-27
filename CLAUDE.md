@@ -14,7 +14,9 @@ a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`
 a left click on a reaction in its meta row toggles the user's own (`reactionAt`, with a short
 blink); a left click on the sender's name or an `@name` (`mentionAt`, `Profiler.MentionedUser`)
 opens their profile modal (`backend.Profiler`, `internal/tui/profile.go`) on backends
-that have one, whose go to chat row (Enter) opens the DM (`Profiler.DirectChat`); a left click elsewhere on a message selects it and a right click on a message opens its
+that have one, whose go to chat row (Enter) opens the DM (`Profiler.DirectChat`); a left click elsewhere on a message selects it, and on the blank part of its row beside
+the text (`textAt`) at `threadPaneMinWidth` also opens its thread, empty to start one
+(`openThread`); a double click on its text (`clickMark`) or a right click on a message opens its
 actions modal. The login and connecting
 screens leave the mouse to the terminal. Besides the TUI, `wiregram accounts|chats|stream|send|dry-run|reset`
 (`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend

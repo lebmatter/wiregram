@@ -74,7 +74,10 @@ approval, and the messages a bot sent. Messages go to the provider.
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
-message selects it; right-clicking it opens its actions. Clicking a reaction
+message selects it. Clicking the blank part of its row, beside the text, in
+wide terminals also opens its thread beside the chat, an empty one to start a
+thread when it has no replies. Double-clicking its text or right-clicking it
+opens its actions. Clicking a reaction
 under it adds yours or takes it back, and the reaction blinks. Clicking the
 sender's name or an @name in a message opens their profile (not on
 email), where Enter or a click on go to chat opens your private chat with
@@ -255,8 +258,9 @@ Keyboard shortcuts:
     Esc               Close, keeping the draft (c opens it again)
     Ctrl+X            Discard the draft
 
-  Thread (opens by itself on a threaded message in wide terminals; also Alt+T,
-  a click on a replies chip, or Thread in the actions)
+  Thread (opens by itself on a threaded message in wide terminals, and on a click
+  beside a message's text; also Alt+T, a click on a replies chip, or Thread in
+  the actions)
     Up/Down           Move through the chat's messages
     Enter             Reply in thread; with an empty input, open the
                       selected message's actions

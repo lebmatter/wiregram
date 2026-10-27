@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -409,6 +410,24 @@ func mentionAt(hit msgHit) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// textAt reports whether a click fell on the row's text, from its first
+// character to its last, rather than on the blank around it. The gutter is
+// never text.
+func textAt(hit msgHit) bool {
+	first, last, x := -1, -1, 0
+	for _, r := range hit.line {
+		w := textfmt.DisplayWidth(string(r))
+		if x >= 2 && !unicode.IsSpace(r) {
+			if first < 0 {
+				first = x
+			}
+			last = x + w
+		}
+		x += w
+	}
+	return first >= 0 && hit.cell >= first && hit.cell < last
 }
 
 // rowKind is what a line of a message block draws, so a click knows what it

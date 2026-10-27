@@ -138,7 +138,8 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 
 ## Thread
 
-The thread pane opens by itself on a threaded message in wide terminals, and with
+The thread pane opens by itself on a threaded message in wide terminals, and on a click
+beside a message's text there (empty, to start a thread, when it has no replies); also with
 <kbd>Alt+T</kbd>, a click on a message's replies chip, or **Thread** in its actions.
 
 | Key | Action |

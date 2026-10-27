@@ -41,7 +41,10 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   would, without moving focus. Over the thread pane it scrolls the thread.
 - A **click** on a chat, account, card, menu row or picker entry opens it, as
   <kbd>Enter</kbd> would.
-- A **click on a message** selects it; a **right click** opens its actions.
+- A **click on a message** selects it. A click on the **blank part of its row**, beside the
+  text, also opens its thread beside the chat in wide terminals; on a message without
+  replies the thread starts empty, so you can start one.
+- A **double click on its text** or a **right click** opens its actions.
 - A **click on a reaction** under a message adds yours or takes it back, with a short blink.
 - A **click on a sender's name** or an **`@name`** in a message opens their profile:
   what the network shares about them. <kbd>Enter</kbd> or a click on **go to chat** opens

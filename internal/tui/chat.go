@@ -100,6 +100,7 @@ type chatViewModel struct {
 	spin     spinner.Model
 
 	threadRoot  string
+	lastClick   clickMark // the last plain click on a message, to tell a double click
 	threadInput textarea.Model
 	// threadScroll is how many lines the thread pane is scrolled up from its end.
 	threadScroll int
@@ -197,6 +198,17 @@ type chatClick struct {
 	x, y  int
 	right bool
 }
+
+// clickMark is where and when a message was clicked; a second click there
+// soon after is a double click on the same message, though opening its
+// thread has moved the chat under the pointer.
+type clickMark struct {
+	x, y int
+	at   time.Time
+	msg  backend.Message
+}
+
+const doubleClickTime = 400 * time.Millisecond
 
 type mediaOpened struct {
 	filename string
@@ -1576,8 +1588,15 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	if act, ok := m.suggestionAt(msg.x, msg.y); ok && !msg.right {
 		return m, func() tea.Msg { return chatSuggestion{act} }
 	}
+	last := m.lastClick
+	m.lastClick = clickMark{}
+	if !msg.right && last.x == msg.x && last.y == msg.y &&
+		time.Since(last.at) < doubleClickTime {
+		return m.openMenuOn(last.msg)
+	}
 	var follow tea.Cmd
 	sel, hit, ok := m.threadMessageAt(msg.x, msg.y)
+	inChat := !ok
 	if !ok {
 		var i int
 		i, hit, ok = m.messageAt(msg.x, msg.y)
@@ -1606,6 +1625,17 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	}
 	if !msg.right {
 		if _, saveable := m.b.MediaSaveable(sel); hit.kind&rowMedia == 0 || !saveable {
+			if textAt(hit) {
+				m.lastClick = clickMark{msg.x, msg.y, time.Now(), sel}
+				return m, follow
+			}
+			if inChat && m.width >= threadPaneMinWidth && !m.privateMode &&
+				m.openRoot() != m.threadRootOf(sel).ID {
+				// A message without replies opens an empty thread to start one.
+				var open tea.Cmd
+				m, open = m.openThread(sel)
+				return m, tea.Batch(follow, open)
+			}
 			return m, follow
 		}
 		var cmd tea.Cmd

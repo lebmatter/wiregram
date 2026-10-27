@@ -80,7 +80,8 @@ than the loaded history, Wiregram fetches it, or reads `earlier message` where i
 ## Threads
 
 Replies form threads. In wide terminals, selecting a threaded message opens the thread
-pane beside the chat, titled `thread · #chat`; <kbd>Alt+T</kbd>, a click on its replies
+pane beside the chat, titled `thread · #chat`, and a click on the blank part of a message's
+row opens it too, empty when the message has no replies so you can start a thread; <kbd>Alt+T</kbd>, a click on its replies
 chip or **Thread** in its actions open it too (in the chat's place on narrow terminals).
 The open thread's replies chip is solid. The pane shows that first message with its day and
 time, then the reply count and the replies. <kbd>Enter</kbd> there replies in the thread,
