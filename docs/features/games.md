@@ -1,0 +1,98 @@
+# Games
+
+Challenge someone in a chat to a two-player game, played in a pane beside the chat.
+The games are small Lua scripts built into wiregram:
+
+| Game | How it plays |
+|------|--------------|
+| **Battleship** | Both place a fleet of five ships (arrows, <kbd>r</kbd> rotates, <kbd>Enter</kbd> places, <kbd>a</kbd> places the rest at random), seeing only their own; then you fire in turn at the other's waters. Sink the whole fleet to win |
+| **Connect Four** | Drop discs from the top (<kbd>←</kbd>/<kbd>→</kbd> or <kbd>1</kbd>–<kbd>7</kbd>, then <kbd>Enter</kbd>); four in a row wins |
+| **Pong** | First to 5 points; <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>w</kbd>/<kbd>s</kbd> |
+| **Tic-tac-toe** | Three in a row |
+
+The challenger moves (or fires) first. In Battleship each player's wiregram shows only their
+own fleet, though the challenger's wiregram, which runs the game, holds both.
+
+## Playing
+
+1. In a private chat or a group, click **game+** at the end of the input, or press
+   <kbd>Alt+G</kbd>, and pick a game.
+2. Wiregram opens a tunnel and sends the chat an invite:
+   `🎮 Pong challenge · wiregame://…trycloudflare.com/…`
+3. Whoever clicks the invite in their wiregram joins, and the game opens beside the chat
+   for both of you. In a group the first to click plays; anyone after is told the game has
+   started.
+
+Each game lists its keys under the board. <kbd>Tab</kbd> moves between the sidebar, the
+chat and the game, and a click on the pane gives it the keys. <kbd>Esc</kbd> leaves; while
+a game is being played it asks first, and the other player is told you left. Leaving the
+chat keeps the game going (the footer says where it is), so you can come back to it;
+leaving the account's screen ends it. One game runs at a time.
+
+An invite is good for 10 minutes and for one player. Bots never answer invites. When
+something goes wrong (cloudflared missing, a tunnel that won't open, an invite that has
+expired or been taken) an alert says so over the screen; any key or click closes it.
+
+## What it needs
+
+Only the challenger needs [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+installed and on the `PATH`. The player who joins needs only wiregram.
+
+The challenger's wiregram runs the game for both players on a server that listens only on
+`127.0.0.1`, and starts a cloudflared [quick tunnel](https://try.cloudflare.com) to it:
+a random `trycloudflare.com` address with no Cloudflare account and no incoming
+connections, so no firewall or router needs opening. The player who joins connects to that
+address over HTTPS and sends only key presses; the board comes back as text. Wiregram stops
+cloudflared when the game ends.
+
+Some things to know:
+
+- **Cloudflare sees the game.** The tunnel's TLS ends at Cloudflare, so it can see the
+  moves and the invite's token. Nothing else of yours goes through it.
+- **Anyone who sees the invite can join.** The invite holds a one-time secret; whoever
+  clicks first with it plays. On servers whose admins can read your chats, they can see it
+  too.
+- **Fast games lag a little for the guest.** Each key goes to Cloudflare and back. Turn-based
+  games don't notice; in Pong the player who joined feels it.
+- **A new tunnel takes a few seconds.** The pane says *opening a tunnel…* until it is ready;
+  joining retries for a few seconds while its address spreads.
+- Quick tunnels are offered by Cloudflare for testing, without guarantees. If
+  `~/.cloudflared/config.yaml` exists, cloudflared may refuse to open one; an alert says why.
+
+## Writing a game
+
+Games are Lua 5.1 scripts in `internal/game/scripts/`, embedded in the binary. Adding a
+`.lua` file there adds the game. The challenger's wiregram runs the script for **both**
+seats; the other player's wiregram never runs it, so scripts do no networking and do not
+know which seat is local.
+
+```lua
+game = {
+  info = {
+    id = "tictactoe",        -- stable id
+    name = "Tic-tac-toe",
+    desc = "Three in a row", -- one line in the picker
+    help = "arrows move · enter places your mark", -- shown under the board
+    players = 2,             -- always 2
+    min_w = 21, min_h = 11,  -- the board's size in cells (at most 120×60)
+    tick_ms = 0,             -- 0 for turn-based, else 16 or more
+  },
+}
+
+function game.init(names) end              -- names[1] is seat 1 (the challenger)
+function game.key(seat, key) end           -- BubbleTea key: "up", "enter", "space", "a"…
+function game.tick() end                   -- every tick_ms; needed only when tick_ms > 0
+function game.view(seat, w, h)             -- w, h are min_w, min_h
+  return board, status                     -- board is lines joined by "\n"
+end
+function game.over() return false end
+function game.result(seat)                 -- optional; once over:
+  return "win"                             -- "win", "lose" or "draw"
+end
+```
+
+`view` is called for both seats after every key and tick, so keep it cheap. Plain text
+only: control characters are stripped on the guest's side. Only the `base`, `table`,
+`string` and `math` libraries are loaded, with no way to load more code, and every call
+into the script has 50 ms; a call that takes longer, or raises an error, ends the game and
+says why in an alert.

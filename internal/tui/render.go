@@ -640,6 +640,15 @@ func styleLinks(text string) string {
 			}
 			out.WriteString(rest[:end])
 			i += end
+		case strings.HasPrefix(rest, "wiregame://"):
+			// A game invite looks like a link but opens in wiregram, so it
+			// gets no OSC 8 target for the terminal to open.
+			end := strings.IndexAny(rest, " \t\n\x1b")
+			if end < 0 {
+				end = len(rest)
+			}
+			out.WriteString(linkOn + rest[:end] + linkOff)
+			i += end
 		case strings.HasPrefix(rest, "https://") || strings.HasPrefix(rest, "http://"):
 			end := strings.IndexAny(rest, " \t\n\x1b")
 			if end < 0 {

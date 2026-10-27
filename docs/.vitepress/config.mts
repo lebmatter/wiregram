@@ -51,6 +51,7 @@ export default defineConfig({
           { text: 'Themes', link: '/features/themes' },
           { text: 'AI Powered Chat Bots', link: '/features/chat-bots' },
           { text: 'Plugins', link: '/features/plugins' },
+          { text: 'Games', link: '/features/games' },
           { text: 'CLI', link: '/features/cli' },
         ],
       },

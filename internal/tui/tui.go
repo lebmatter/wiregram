@@ -20,6 +20,7 @@ type tuiFocus int
 const (
 	focusList tuiFocus = iota
 	focusChat
+	focusGame
 )
 
 type tuiResult struct {
@@ -96,6 +97,11 @@ type tuiModel struct {
 	mailDraft *mailComposer
 	// moving is the mail the move picker is choosing a folder for.
 	moving []string
+	// game is the screen's one game, beside the chat it was started from;
+	// gamePicker chooses the game for a challenge, over the chat.
+	game       *gameModel
+	gamePicker *gamePickerModel
+	gameSeq    int
 }
 
 type tuiDialogsLoaded struct {
@@ -294,6 +300,17 @@ func (m tuiModel) sized() tuiModel {
 	if m.labels != nil {
 		m.labels.resized(m.width, bodyHeight)
 	}
+	if _, width, alone, ok := m.gameRect(); !ok {
+		if m.focus == focusGame {
+			m.focus = focusChat
+		}
+	} else if alone {
+		if m.focus == focusChat {
+			m.focus = focusGame
+		}
+	} else {
+		m.chat.width -= width
+	}
 	m.chat.embedded = m.twoPane()
 	m.chat.focused = m.focus == focusChat
 	m.list = m.list.scrolled()
@@ -301,6 +318,7 @@ func (m tuiModel) sized() tuiModel {
 }
 
 func (m tuiModel) done(result tuiResult) (tuiModel, tea.Cmd) {
+	m = m.closeGame()
 	m.result = &result
 	return m, tea.Sequence(m.kitty.deleteAll(), tea.Quit)
 }
@@ -457,6 +475,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
+	}
+	if next, cmd, ok := m.updateGame(msg); ok {
+		return next, cmd
 	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -974,6 +995,25 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if p := m.gamePicker; p != nil {
+		x, y, w, h := m.gamePickerRect()
+		if right {
+			return m, nil
+		}
+		m.gamePicker = nil
+		if mouse.X >= x && mouse.X < x+w && mouse.Y >= y && mouse.Y < y+h {
+			if pick, ok := p.click(mouse.Y - y); ok {
+				return m.startChallenge(*pick)
+			}
+			m.gamePicker = p
+		}
+		return m, nil
+	}
+	if left, width, _, ok := m.gameRect(); ok && !m.searchOpen && !m.chatModalShown() &&
+		mouse.X >= left && mouse.X < left+width {
+		m.focus = focusGame
+		return m, nil
+	}
 	var cmd tea.Cmd
 	if m.searchOpen {
 		x, y, w, h := m.searchRect()
@@ -1060,8 +1100,12 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 	if m.composing() {
 		return m, nil
 	}
-	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil || m.labels != nil {
+	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil || m.labels != nil ||
+		m.gamePicker != nil {
 		return m.handleKey(k)
+	}
+	if left, _, _, ok := m.gameRect(); ok && mouse.X >= left {
+		return m, nil
 	}
 	var cmd tea.Cmd
 	switch {
@@ -1134,6 +1178,20 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.search, cmd = m.search.Update(msg)
 		return m, cmd
 	}
+	if p := m.gamePicker; p != nil {
+		pick, done := p.key(msg.String())
+		if done {
+			m.gamePicker = nil
+		}
+		if pick != nil && m.chatOpen {
+			return m.startChallenge(*pick)
+		}
+		return m, nil
+	}
+	if m.game != nil && m.game.confirm != nil ||
+		m.focus == focusGame && m.gameShown() && msg.String() != "tab" {
+		return m.gameKey(msg)
+	}
 	if m.composing() {
 		m.focus = focusChat
 		m.mail, cmd = m.mail.key(msg)
@@ -1147,7 +1205,19 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	// With no mail being read, ←/→ move between the sidebar and the folder.
 	mailIdle := m.mailOpen && m.mail.reading == nil && !m.mail.typing()
 	k := msg.String()
+	_, _, gameAlone, gameShown := m.gameRect()
 	switch {
+	case k == "tab" && gameShown && (m.focus == focusGame || chatFocused &&
+		m.chat.subMode == chatSubNone):
+		switch {
+		case m.focus != focusGame:
+			m.focus = focusGame
+		case m.twoPane():
+			m.focus = focusList
+		case !gameAlone:
+			m.focus = focusChat
+		}
+		return m, nil
 	case k == "tab" && m.twoPane() && m.paneOpen() && !editing &&
 		(!chatFocused || m.chat.subMode == chatSubNone):
 		if paneFocused {
@@ -1373,6 +1443,17 @@ func (m tuiModel) footer() string {
 	if m.profile != nil {
 		return m.st.footer(m.profile.helpKeys(), "", m.width)
 	}
+	if m.gamePicker != nil {
+		return m.st.footer(m.gamePicker.helpKeys(), "", m.width)
+	}
+	if g := m.game; g != nil && m.focus == focusGame && m.gameShown() {
+		keys := g.helpKeys()
+		if g.confirm != nil {
+			keys = g.confirm.helpKeys()
+		}
+		badge := m.st.badge.Render(" GAME ") + " "
+		return badge + m.st.footer(keys, m.chat.notice, m.width-textfmt.DisplayWidth(badge))
+	}
 	if m.chatOpen && !m.searchOpen && (m.focus == focusChat || m.chat.opening != nil) {
 		if line, ok := m.chat.footerLine(); ok {
 			return truncate(line, m.width)
@@ -1408,6 +1489,12 @@ func (m tuiModel) footer() string {
 	case m.chatOpen && m.focus == focusChat:
 		keys = m.chat.helpKeys()
 		notice = m.chat.notice
+		if m.gameShown() && m.chat.subMode == chatSubNone {
+			keys = append(keys, helpKey{"tab", "game"})
+		}
+		if notice == "" {
+			notice = m.gameNotice()
+		}
 		mode := " CHAT "
 		if m.chat.subMode == chatSubThread {
 			mode = " THREAD "
@@ -1436,6 +1523,9 @@ func (m tuiModel) footer() string {
 		}
 		if !m.paneOpen() {
 			keys = append(keys, helpKey{"esc", "home"})
+		}
+		if notice == "" {
+			notice = m.gameNotice()
 		}
 	}
 	return m.st.footer(keys, notice, m.width)
@@ -1478,7 +1568,7 @@ func (m tuiModel) render() string {
 		case m.agentOpen:
 			right = m.agentPane.view(!listFocused)
 		case m.chatOpen:
-			right = m.chat.View()
+			right = m.chatWithGame()
 		}
 		body = joinColumns(list, right)
 	case m.mailOpen:
@@ -1488,7 +1578,7 @@ func (m tuiModel) render() string {
 	case m.agentOpen:
 		body = m.agentPane.view(true)
 	case m.chatOpen:
-		body = m.chat.View()
+		body = m.chatWithGame()
 	default:
 		body = renderBox(m.list.title(), m.list.body(m.width-4, bodyHeight-2, true),
 			m.width, bodyHeight, m.st.accentColor)
@@ -1500,6 +1590,10 @@ func (m tuiModel) render() string {
 	if m.searchOpen {
 		x, y, _, _ := m.searchRect()
 		body = m.st.fadeUnder(body, m.search.View(), x, y)
+	}
+	if m.gamePicker != nil {
+		x, y, _, _ := m.gamePickerRect()
+		body = m.st.fadeUnder(body, m.gamePicker.View(), x, y)
 	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		body = m.st.fadeUnder(body, c.View(), x, y)
@@ -1560,6 +1654,9 @@ func (m tuiModel) confirmShown() (c *confirmModal, x, y int, ok bool) {
 			left = sidebarWidth
 		}
 		width = m.agentPane.width
+	case m.game != nil && m.game.confirm != nil && m.gameShown():
+		c = m.game.confirm
+		left, width, _, _ = m.gameRect()
 	default:
 		return nil, 0, 0, false
 	}

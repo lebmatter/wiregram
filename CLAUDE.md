@@ -349,6 +349,19 @@ These are project constraints, not suggestions:
   and the sign-in prompts are form modals centred over
   the screen they were opened from, faded behind it (`styles.overlay`): answered
   steps as label and value rows, then the current question (`wizardModel.formView`).
+- Games (`internal/game`, `internal/tui/game.go`, `docs/features/games.md`): `game+` at the
+  end of a DM's or group's composer, or Alt+G, opens a picker over the chat
+  (`gamePickerModel`). The challenger hosts: `game.Listen` serves one guest on
+  `127.0.0.1`, `game.StartTunnel` runs cloudflared (an optional external program, like
+  mpv) for a quick tunnel, read from its metrics `/quicktunnel` or its log and waited on
+  with `/ready`, then the invite goes to the chat as plain text
+  (`🎮 NAME challenge · wiregame://HOST.trycloudflare.com/TOKEN`, `game.InviteRe` accepts
+  only trycloudflare hosts). A click on it (`gameInviteAt`) joins with `game.Dial`. The
+  host runs the script for both seats in `Update` and sends the guest frame diffs; the
+  guest sends keys and never runs Lua. The root owns the one game (`tuiModel.game`), so
+  it outlives chat switches; its pane sits beside its chat (`gameRect`, `focusGame`,
+  Tab cycles, a `GAME` footer badge) or in the chat's place when narrow. Invites expire
+  after `game.Expiry` and admit one guest; bots skip them (`isGameInvite`).
 - Every yes/no question (quit, delete chat/message/bot/provider, remove account, Reset;
   not moving mail to Trash) is a `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
   there, never a footer notice. Deletes and Reset start on Cancel.
@@ -386,6 +399,8 @@ internal/
                      each answers, message history and the record of what they sent
   plugin/            Lua plugin VMs, their API (settings, kv, http, widgets, modals)
                      and the embedded built-in plugins
+  game/              two-player Lua games: the script sandbox, the host's server,
+                     the guest's connection, invites and the cloudflared tunnel
   account/           account manager (discovery, connect, login state) and the
                      account-owned agent runtime (and its dry runs)
   tui/               BubbleTea screens and the account/mode loop (run.go)

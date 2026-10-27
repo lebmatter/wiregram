@@ -386,6 +386,13 @@ func mentionAt(hit msgHit) (string, bool) {
 	return "", false
 }
 
+// gameInviteAt reports whether a click fell on a row of a game invite: the
+// line with its 🎮 or its link.
+func gameInviteAt(hit msgHit) bool {
+	return hit.kind&(rowMedia|rowMeta) == 0 &&
+		(strings.Contains(hit.line, "wiregame://") || strings.Contains(hit.line, "🎮"))
+}
+
 // textAt reports whether a click fell on the row's text, from its first
 // character to its last, rather than on the blank around it. The gutter is
 // never text.

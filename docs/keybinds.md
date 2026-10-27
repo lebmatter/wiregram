@@ -82,10 +82,11 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Select message (<kbd>↑</kbd> at the top loads older ones) |
 | <kbd>Enter</kbd> | Send text; with an empty input, open the selected message's actions |
-| <kbd>Ctrl+U</kbd> | Upload a file, in a modal over the chat (or click the <kbd>+</kbd> at the end of the input) |
+| <kbd>Ctrl+U</kbd> | Upload a file, in a modal over the chat (or click <kbd>upload+</kbd> at the end of the input) |
 | <kbd>Ctrl+F</kbd> | Search, in a modal over the chat: chats and people, then this chat's messages (<kbd>Enter</kbd> or a click goes to one) |
 | <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
 | <kbd>Alt+T</kbd> | Open the selected message's thread beside the chat |
+| <kbd>Alt+G</kbd> | Challenge the chat to a [game](/features/games) (DMs and groups; or click <kbd>game+</kbd> at the end of the input) |
 | <kbd>Alt+H</kbd> | Toggle private mode (hide history) |
 | <kbd>Alt+L</kbd> | Lock the chat (also locks when the terminal loses focus) |
 | <kbd>Alt+D</kbd> | Delete chat (you only) |
@@ -136,6 +137,16 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Esc</kbd> | Close, keeping the draft (<kbd>c</kbd> opens it again) |
 | <kbd>Ctrl+X</kbd> | Discard the draft |
 
+## Game
+
+A [game](/features/games) plays in a pane beside the chat; a click on a 🎮 invite joins it.
+
+| Key | Action |
+|-----|--------|
+| Game keys | Play: each game lists its own under the board |
+| <kbd>Tab</kbd> | Move between the sidebar, the chat and the game |
+| <kbd>Esc</kbd> | Leave the game (asks first while it is being played) |
+
 ## Thread
 
 The thread pane opens by itself on a threaded message in wide terminals, and on a click
@@ -145,7 +156,7 @@ beside a message's text there (empty, to start a thread, when it has no replies)
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Move through the chat's messages |
-| <kbd>Ctrl+U</kbd> | Upload a file into the thread (or click its <kbd>+</kbd>) |
+| <kbd>Ctrl+U</kbd> | Upload a file into the thread (or click its <kbd>upload+</kbd>) |
 | <kbd>Enter</kbd> | Reply in thread; with an empty input, open the selected message's actions |
 | <kbd>@</kbd> | Mention a member, as in the chat |
 | <kbd>Esc</kbd> | Close thread |

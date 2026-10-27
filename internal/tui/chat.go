@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"wiregram/internal/backend"
+	"wiregram/internal/game"
 	"wiregram/internal/textfmt"
 )
 
@@ -1057,6 +1058,10 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if sel, ok := m.selectedMsg(); ok && m.inThread(sel) && !m.privateMode {
 			return m.openThread(sel)
 		}
+	case "alt+g", "alt+G":
+		if m.gameAllowed() {
+			return m, func() tea.Msg { return gameChallengeReq{} }
+		}
 	case "alt+h", "alt+H":
 		m.privateMode = !m.privateMode
 		if m.privateMode {
@@ -1556,6 +1561,9 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	if hit, thread := m.uploadButtonAt(msg.x, msg.y); hit && !msg.right {
 		return m.startUpload(thread)
 	}
+	if m.gameButtonAt(msg.x, msg.y) && !msg.right {
+		return m, func() tea.Msg { return gameChallengeReq{} }
+	}
 	if act, ok := m.suggestionAt(msg.x, msg.y); ok && !msg.right {
 		return m, func() tea.Msg { return chatSuggestion{act} }
 	}
@@ -1580,6 +1588,10 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 			return m.openThread(sel)
 		}
 		m, follow = m.followThread()
+	}
+	if host, token, ok := game.ParseInvite(sel.Text); ok && !msg.right && gameInviteAt(hit) {
+		own := sel.Outgoing
+		return m, tea.Batch(follow, func() tea.Msg { return gameJoinReq{host, token, own} })
 	}
 	if _, ok := m.b.(backend.Profiler); ok && !msg.right {
 		name, ok := mentionAt(hit)
@@ -1868,7 +1880,7 @@ func (m chatViewModel) composer(width int, focused bool) []string {
 		return m.st.composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
 	}
 	box := m.st.areaBox("message "+chatName(m.entry), m.replyBar(), m.input, width, border,
-		m.uploadButton())
+		m.composerButtons())
 	if m.suggestion != "" && m.subMode == chatSubNone {
 		box = append(m.suggestionCard(width), box...)
 	}
@@ -1905,13 +1917,62 @@ func (m chatViewModel) suggestionCard(width int) []string {
 }
 
 // suggestionAt is the card button at column x and row y of the chat pane.
-// uploadButton is the + at the end of the composers that opens the upload
-// modal, where the backend can upload.
+// uploadButton is the upload+ chip at the end of the composers that opens
+// the upload modal, where the backend can upload.
 func (m chatViewModel) uploadButton() string {
 	if !m.caps.Upload {
 		return ""
 	}
-	return "+"
+	return "upload+"
+}
+
+// gameButton is the chip on the chat's composer that challenges the chat to
+// a game.
+const gameButton = "game+"
+
+// gameAllowed reports whether the chat can be challenged to a game: a private
+// chat with someone else or a group, on the user's own connection.
+func (m chatViewModel) gameAllowed() bool {
+	return m.bot == nil && (m.entry.IsDM && !m.entry.IsSelf || m.entry.IsGroup)
+}
+
+// composerButtons are the chips at the end of the chat's composer: game+ and
+// upload+. The thread's composer has only upload+.
+func (m chatViewModel) composerButtons() string {
+	if !m.gameAllowed() {
+		return m.uploadButton()
+	}
+	if up := m.uploadButton(); up != "" {
+		return gameButton + " " + up
+	}
+	return gameButton
+}
+
+// gameButtonAt reports whether column x and row y of the pane hit game+ on
+// the chat's composer.
+func (m chatViewModel) gameButtonAt(x, y int) bool {
+	buttons := m.composerButtons()
+	i := strings.Index(buttons, gameButton)
+	if i < 0 || m.subMode != chatSubNone && m.subMode != chatSubThread {
+		return false
+	}
+	width := m.width
+	if m.subMode == chatSubThread {
+		chatWidth, split := m.threadSplit()
+		if !split || x >= chatWidth {
+			return false
+		}
+		width = chatWidth
+	}
+	composer := m.composer(width-4, false)
+	for r, line := range composer {
+		if strings.Contains(ansi.Strip(line), "❯ ") {
+			// The buttons end on the last cell inside the composer.
+			start := width - 4 - textfmt.DisplayWidth(buttons) + i
+			return y == m.height-1-len(composer)+r && x >= start && x < start+len(gameButton)
+		}
+	}
+	return false
 }
 
 // buttonWidth is the cells button takes at the end of an input, with its gap.
@@ -1922,7 +1983,7 @@ func buttonWidth(button string) int {
 	return 1 + textfmt.DisplayWidth(button)
 }
 
-// uploadButtonAt reports whether column x and row y of the pane hit the +
+// uploadButtonAt reports whether column x and row y of the pane hit upload+
 // on the chat's or the thread's composer, and whether it was the thread's.
 func (m chatViewModel) uploadButtonAt(x, y int) (hit, thread bool) {
 	if m.uploadButton() == "" {
@@ -1945,12 +2006,14 @@ func (m chatViewModel) uploadButtonAt(x, y int) (hit, thread bool) {
 	default:
 		return false, false
 	}
-	// The composer ends the pane's body; the + is the last cell inside it on
-	// the prompt's row, under the pane's and the composer's edge and padding.
+	// The composer ends the pane's body; upload+ ends on the last cell inside
+	// it on the prompt's row, under the pane's and the composer's edge and
+	// padding.
 	for i, line := range composer {
 		if strings.Contains(ansi.Strip(line), "❯ ") {
-			bx := left + width - 5
-			return y == m.height-1-len(composer)+i && x >= bx-1 && x <= bx+1, thread
+			end := left + width - 5
+			start := end - textfmt.DisplayWidth(m.uploadButton()) + 1
+			return y == m.height-1-len(composer)+i && x >= start && x <= end, thread
 		}
 	}
 	return false, false
@@ -2019,15 +2082,15 @@ func newComposerArea(st *styles, placeholder string) textarea.Model {
 // fitInputs gives the inputs the width their composers draw them at, so
 // their height and scrolling match what is on screen.
 func (m *chatViewModel) fitInputs() {
-	// The pane's and the composer's edges and padding, the prompt, the + button.
-	frame := 4 + 4 + 2 + buttonWidth(m.uploadButton())
+	// The pane's and the composer's edges and padding, the prompt, the buttons.
+	frame := 4 + 4 + 2
 	chatWidth, split := m.threadSplit()
-	m.input.SetWidth(max(1, chatWidth-frame))
+	m.input.SetWidth(max(1, chatWidth-frame-buttonWidth(m.composerButtons())))
 	threadWidth := m.width
 	if split {
 		threadWidth -= chatWidth
 	}
-	m.threadInput.SetWidth(max(1, threadWidth-frame))
+	m.threadInput.SetWidth(max(1, threadWidth-frame-buttonWidth(m.uploadButton())))
 }
 
 // areaBox is composerBox for a growing input: the prompt on its first row,

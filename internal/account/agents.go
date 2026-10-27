@@ -17,6 +17,7 @@ import (
 
 	"wiregram/internal/agent"
 	"wiregram/internal/backend"
+	"wiregram/internal/game"
 	"wiregram/internal/textfmt"
 )
 
@@ -407,12 +408,18 @@ func messageText(msg backend.Message) string {
 	return msg.MediaLabel + " — " + text
 }
 
+func isGameInvite(msg backend.Message) bool {
+	_, _, ok := game.ParseInvite(msg.Text)
+	return ok
+}
+
 // dmText is the DM message an event carries and what the agent sees of it.
 // The subscription filter already guarantees a DM; it is checked again
-// because answering in a group would be far worse than a wasted check.
+// because answering in a group would be far worse than a wasted check. Game
+// invites are for the person, never the bot.
 func dmText(ev backend.Event) (backend.Message, string, bool) {
 	if ev.Kind != backend.EventMessage || ev.Message == nil || !(ev.DM || ev.Self) ||
-		ev.Message.ViaBot {
+		ev.Message.ViaBot || isGameInvite(*ev.Message) {
 		return backend.Message{}, "", false
 	}
 	text := messageText(*ev.Message)
@@ -1158,6 +1165,8 @@ func (rt *agentRuntime) DryRun(a *Account, b backend.Backend, entry backend.Chat
 		return rec, "", fmt.Errorf("bots only answer private chats")
 	case msg.Outgoing:
 		return rec, "", fmt.Errorf("message %s is your own; pick an incoming one", msg.ID)
+	case isGameInvite(msg):
+		return rec, "", fmt.Errorf("message %s is a game invite, which bots never answer", msg.ID)
 	}
 	key := rt.mgr.AccountKey(a)
 	claims, err := rt.Db.ChatClaims(key)

@@ -210,13 +210,15 @@ Keyboard shortcuts:
     Enter             Send text; with an empty input, open the selected
                       message's actions
     Ctrl+U            Upload a file, in a modal over the chat (or click
-                      the + at the end of the input)
+                      upload+ at the end of the input)
     Ctrl+F            Search, in a modal over the chat: chats and people,
                       then this chat's messages (Enter or a click goes to one)
     @                 Mention a member (group chats, at the start of a word):
                       channel members first on Mattermost; Telegram members
                       with a username; Matrix room members; WhatsApp group
     Alt+T             Open the selected message's thread beside the chat
+    Alt+G             Challenge the chat to a game (DMs and groups; or click
+                      game+ at the end of the input). Needs cloudflared
     Alt+H             Toggle private mode (hide history)
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
@@ -267,13 +269,18 @@ Keyboard shortcuts:
     Esc               Close, keeping the draft (c opens it again)
     Ctrl+X            Discard the draft
 
+  Game (a pane beside the chat; a click on a 🎮 invite joins its game)
+    Keys              Play: each game shows its own keys under the board
+    Tab               Move between the sidebar, the chat and the game
+    Esc               Leave the game (it asks first while one is being played)
+
   Thread (opens by itself on a threaded message in wide terminals, and on a click
   beside a message's text; also Alt+T, a click on a replies chip, or Thread in
   the actions)
     Up/Down           Move through the chat's messages
     Enter             Reply in thread; with an empty input, open the
                       selected message's actions
-    Ctrl+U            Upload a file into the thread (or click its +)
+    Ctrl+U            Upload a file into the thread (or click its upload+)
     @                 Mention a member, as in the chat
     Esc               Close thread
 
