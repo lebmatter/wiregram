@@ -18,7 +18,7 @@ import (
 // active account expanded to a line of view chips (Unread, Mentions, You,
 // archive and search; on email, Compose and Labels), then its chats in
 // folding sections (on email, its folders), then its bots, and the others
-// collapsed above and below it. Home and Settings are pinned under the tree.
+// collapsed above it. Home and Settings are pinned under the tree.
 // Selection indexes run over the stops in display order: every chip, section
 // header and row that Enter acts on.
 type chatListModel struct {
@@ -180,18 +180,20 @@ func agentsAllowed(mgr *account.AccountManager, a *account.Account) bool {
 	return mgr != nil && mgr.Agents != nil && a != nil && a.BackendType != "email"
 }
 
-// others splits the accounts other than the active one into those listed
-// above and below it.
-func (m chatListModel) others() (above, below []*account.Account) {
+// others is the number of each account other than the active one, all
+// listed collapsed above it, and the active account's number.
+func (m chatListModel) others() (rest []int, active int) {
 	if m.mgr == nil {
-		return nil, nil
+		return nil, 0
 	}
 	for i, a := range m.mgr.Accounts {
 		if a == m.active {
-			return m.mgr.Accounts[:i], m.mgr.Accounts[i+1:]
+			active = i
+		} else {
+			rest = append(rest, i)
 		}
 	}
-	return nil, m.mgr.Accounts
+	return rest, active
 }
 
 // listStop is a place the selection can rest and what Enter there does.
@@ -227,12 +229,12 @@ type listSection struct {
 
 // layout builds the tree and the footer pinned under it for a width.
 func (m chatListModel) layout(width int) (tree, foot []listRow) {
-	above, below := m.others()
-	for i, a := range above {
-		tree = append(tree, m.accountItem(a, i, false, width))
+	rest, n := m.others()
+	for _, i := range rest {
+		tree = append(tree, m.accountItem(m.mgr.Accounts[i], i, false, width))
 	}
 	if m.active != nil {
-		tree = append(tree, m.accountItem(m.active, len(above), true, width))
+		tree = append(tree, m.accountItem(m.active, n, true, width))
 		tree = append(tree, m.chipRows(width)...)
 		switch {
 		case m.loading:
@@ -249,12 +251,6 @@ func (m chatListModel) layout(width int) (tree, foot []listRow) {
 			}
 			tree = append(tree, sec.rows...)
 		}
-		if len(below) > 0 {
-			tree = append(tree, static(m.st.dim.Render(strings.Repeat("─", width))))
-		}
-	}
-	for i, a := range below {
-		tree = append(tree, m.accountItem(a, len(above)+1+i, false, width))
 	}
 	home := listAction{entry: backend.ChatEntry{Title: "home"}, glyph: "⌂",
 		msg: chatListAccounts{}}
@@ -602,8 +598,8 @@ func (m chatListModel) firstChat() int {
 			return i
 		}
 	}
-	above, _ := m.others()
-	return len(above)
+	rest, _ := m.others()
+	return len(rest)
 }
 
 // selectEntry selects entries[i], unfolding its section.
