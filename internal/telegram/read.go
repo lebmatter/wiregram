@@ -70,7 +70,14 @@ func (c *Client) readMarker(entry chat, m *tg.Message) string {
 }
 
 func (c *Client) markRead(ctx context.Context, entry chat, id int) error {
-	if id <= 0 || id <= c.readState(entry.key).inbox {
+	// No ID means the unread messages are ones wiregram does not show, such as
+	// a contact joining; MaxID 0 marks the whole chat read.
+	if id <= 0 {
+		if c.cachedChatUnread(entry.key) == 0 {
+			return nil
+		}
+		id = 0
+	} else if id <= c.readState(entry.key).inbox {
 		return nil
 	}
 	var err error
@@ -85,7 +92,9 @@ func (c *Client) markRead(ctx context.Context, entry chat, id int) error {
 	if err != nil {
 		return fmt.Errorf("mark messages read: %w", err)
 	}
-	c.rememberRead(entry.key, id, 0)
+	if id > 0 {
+		c.rememberRead(entry.key, id, 0)
+	}
 	if _, err := c.refreshChatUnread(ctx, entry); err != nil {
 		// Reading succeeded. Keep that result even if the best-effort counter
 		// refresh fails; the lock screen will retry its own refresh.

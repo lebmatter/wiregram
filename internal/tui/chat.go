@@ -370,7 +370,9 @@ func (m chatViewModel) startReadTimer() tea.Cmd {
 func (m chatViewModel) markRead() tea.Cmd {
 	r := m.reads
 	id := newestIncoming(m.messages)
-	if r == nil || r.inFlight || id == "" || id == r.marked {
+	// Unread with nothing shown to point at, such as a contact joining.
+	hidden := id == "" && m.b.Capabilities().ReadAll && m.b.CachedUnread(m.entry) > 0
+	if r == nil || r.inFlight || (id == "" && !hidden) || (id != "" && id == r.marked) {
 		return nil
 	}
 	r.inFlight = true

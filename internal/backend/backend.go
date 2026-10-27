@@ -148,6 +148,9 @@ type Capabilities struct {
 	// MentionCounts means Dialogs fills ChatEntry.Mentions from the server;
 	// elsewhere the UI counts the mentions among a chat's unread messages.
 	MentionCounts bool
+	// ReadAll means MarkRead with no ID marks the whole chat read, for unread
+	// messages the UI never shows.
+	ReadAll bool
 	// RevokeWindow is how long after sending the user may delete a message
 	// for everyone; zero means no limit.
 	RevokeWindow time.Duration
