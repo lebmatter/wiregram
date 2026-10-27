@@ -43,7 +43,7 @@ func inboxCards(ctx context.Context, b backend.Backend,
 		}
 		msgs, err := b.History(ctx, e)
 		cards = append(cards, unreadCard{entry: e, count: e.Unread, err: err,
-			msgs: msgs[max(0, len(msgs)-unreadCardLines):], waiting: waiting[e.ID]})
+			msgs: msgs[max(0, len(msgs)-unreadCardFull):], waiting: waiting[e.ID]})
 	}
 	sort.SliceStable(cards, func(i, j int) bool { return cards[i].waiting && !cards[j].waiting })
 	return cards, nil

@@ -17,6 +17,9 @@ import (
 const (
 	unreadMaxChats  = 24
 	unreadCardLines = 3
+	// unreadCardFull is the most messages a card loads, all of which the
+	// selected card shows in full.
+	unreadCardFull = 20
 )
 
 type chatKind int
@@ -72,6 +75,7 @@ type unreadModel struct {
 	loading  bool
 	gen      int
 	selected int
+	scroll   int // first message line shown of a selected card taller than the pane
 	offset   int // first visible card
 	width    int
 	height   int
@@ -110,7 +114,7 @@ func (m unreadModel) load() (unreadModel, tea.Cmd) {
 		var wg sync.WaitGroup
 		for i, e := range entries {
 			wg.Go(func() {
-				msgs, err := unreadMessages(ctx, b, e, unreadCardLines)
+				msgs, err := unreadMessages(ctx, b, e, unreadCardFull)
 				cards[i] = unreadCard{entry: e, msgs: msgs, count: e.Unread, err: err}
 			})
 		}
@@ -133,13 +137,57 @@ func unreadMessages(ctx context.Context, b backend.Backend, e backend.ChatEntry,
 
 func (m unreadModel) resized(width, height int) unreadModel {
 	m.width, m.height = width, height
+	m.scroll = min(m.scroll, m.overflow(m.selected))
 	return m.scrolled()
 }
 
 // cardHeight is the rows card i takes: its lines, its keys when selected,
 // and its border.
 func (m unreadModel) cardHeight(i int) int {
-	return len(m.cardLines(i, max(1, m.width-8))) + 2
+	return len(m.shownLines(i)) + 2
+}
+
+// cardInner is the cells inside a card's border.
+func (m unreadModel) cardInner() int {
+	return max(1, m.width-8)
+}
+
+// overflow is how many of card i's message lines do not fit in the pane, so
+// how far it scrolls; only the selected card is ever taller than one line
+// per message.
+func (m unreadModel) overflow(i int) int {
+	if i != m.selected {
+		return 0
+	}
+	lines := len(m.cardLines(i, m.cardInner()))
+	return max(0, lines-max(3, m.height-4))
+}
+
+// shownLines is card i's body as drawn: a selected card taller than the
+// pane shows the part from scroll down, with its keys kept under it and the
+// lines above and below counted in the rule over them.
+func (m unreadModel) shownLines(i int) []string {
+	width := m.cardInner()
+	lines := m.cardLines(i, width)
+	over := m.overflow(i)
+	if over == 0 {
+		return lines
+	}
+	keys := lines[len(lines)-1]
+	msgs := lines[:len(lines)-2]
+	top := min(m.scroll, over)
+	msgs = msgs[top : len(msgs)-over+top]
+	var more []string
+	if top > 0 {
+		more = append(more, fmt.Sprintf("↑ %d more", top))
+	}
+	if over-top > 0 {
+		more = append(more, fmt.Sprintf("↓ %d more", over-top))
+	}
+	label := " " + strings.Join(more, "  ") + " "
+	rule := m.st.dim.Render("╌╌" + label + strings.Repeat("╌",
+		max(0, width-2-textfmt.DisplayWidth(label))))
+	return append(msgs, rule, keys)
 }
 
 // scrolled keeps the selected card whole inside the pane.
@@ -212,6 +260,7 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 		m.loading = false
 		m.cards, m.err = msg.cards, msg.err
 		m.selected = min(m.selected, max(0, len(m.cards)-1))
+		m.scroll = min(m.scroll, m.overflow(m.selected))
 		return m.scrolled(), nil
 
 	case tea.KeyPressMsg:
@@ -223,9 +272,21 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 		case "/":
 			return m, func() tea.Msg { return chatListSearch{} }
 		case "up", "k":
-			m.selected = max(0, m.selected-1)
+			// A tall card scrolls to its top before the one above is selected,
+			// which opens at its bottom.
+			if m.scroll > 0 {
+				m.scroll--
+			} else if m.selected > 0 {
+				m.selected--
+				m.scroll = m.overflow(m.selected)
+			}
 		case "down", "j":
-			m.selected = min(max(0, len(m.cards)-1), m.selected+1)
+			if m.scroll < m.overflow(m.selected) {
+				m.scroll++
+			} else if m.selected < len(m.cards)-1 {
+				m.selected++
+				m.scroll = 0
+			}
 		case "enter":
 			if m.selected < len(m.cards) {
 				card := m.cards[m.selected]
@@ -261,6 +322,7 @@ func (m unreadModel) markRead() (unreadModel, tea.Cmd) {
 	}
 	m.cards = append(m.cards[:m.selected:m.selected], m.cards[m.selected+1:]...)
 	m.selected = min(m.selected, max(0, len(m.cards)-1))
+	m.scroll = 0
 	ctx, b := m.ctx, m.b
 	return m.scrolled(), func() tea.Msg {
 		return unreadMarked{b.MarkRead(ctx, c.entry, newest)}
@@ -357,7 +419,7 @@ func (m unreadModel) card(i, width int, focused bool) []string {
 	inner := width - 4
 	side := bs.Render("│")
 	lines := []string{top}
-	for _, l := range m.cardLines(i, inner) {
+	for _, l := range m.shownLines(i) {
 		l = textfmt.ClipLine(l, inner)
 		lines = append(lines, side+" "+l+strings.Repeat(" ", max(0, inner-textfmt.DisplayWidth(l)))+
 			" "+side)
@@ -370,21 +432,28 @@ const unreadNickWidth = 16
 
 // cardLines is card i's body: its messages, a run of the same message from
 // the same sender as one line with ×N, and on the selected card its keys.
+// Other cards show their newest few messages on a line each; the selected
+// one shows all it loaded, wrapped.
 func (m unreadModel) cardLines(i, width int) []string {
 	c := m.cards[i]
+	full := i == m.selected
+	msgs := c.msgs
+	if !full {
+		msgs = msgs[max(0, len(msgs)-unreadCardLines):]
+	}
 	var lines []string
 	if c.err != nil {
 		lines = append(lines, styleError.Render(textfmt.CleanError(c.err)))
 	}
 	threaded := false
-	for _, msg := range c.msgs {
+	for _, msg := range msgs {
 		threaded = threaded || msg.ReplyToID != ""
 	}
-	for j := 0; j < len(c.msgs); {
-		msg := c.msgs[j]
+	for j := 0; j < len(msgs); {
+		msg := msgs[j]
 		n := 1
-		for j+n < len(c.msgs) && c.msgs[j+n].Sender == msg.Sender &&
-			backend.GenericMessageText(c.msgs[j+n]) == backend.GenericMessageText(msg) {
+		for j+n < len(msgs) && msgs[j+n].Sender == msg.Sender &&
+			backend.GenericMessageText(msgs[j+n]) == backend.GenericMessageText(msg) {
 			n++
 		}
 		j += n
@@ -413,10 +482,23 @@ func (m unreadModel) cardLines(i, width int) []string {
 		if n > 1 {
 			repeat = " " + m.st.tag.Render(fmt.Sprintf(" ×%d ", n))
 		}
-		room := width - textfmt.DisplayWidth(line) - textfmt.DisplayWidth(repeat)
-		lines = append(lines, line+m.excerpt(msg, room)+repeat)
+		lead := textfmt.DisplayWidth(line)
+		room := width - lead - textfmt.DisplayWidth(repeat)
+		if !full {
+			lines = append(lines, line+m.excerpt(msg, room)+repeat)
+			continue
+		}
+		pad := strings.Repeat(" ", lead)
+		for k, l := range m.fullText(msg, room) {
+			if k == 0 {
+				l = line + l + repeat
+			} else {
+				l = pad + l
+			}
+			lines = append(lines, l)
+		}
 	}
-	if i == m.selected {
+	if full {
 		keys := []helpKey{{"enter", "open"}}
 		if _, ok := m.threadReply(c); ok {
 			keys = append(keys, helpKey{"t", "open thread"})
@@ -438,6 +520,48 @@ func (m unreadModel) cardLines(i, width int) []string {
 // a tag, emoji codes dim and, in a message mentioning the user, @names in the
 // accent.
 func (m unreadModel) excerpt(msg backend.Message, width int) string {
+	kind, text := m.mediaText(msg)
+	text = strings.Join(strings.Fields(text), " ")
+	out := ""
+	if kind != "" {
+		out = m.st.tag.Render(" "+kind+" ") + " "
+		width -= textfmt.DisplayWidth(kind) + 3
+	}
+	return out + m.lit(msg, truncate(text, max(1, width)))
+}
+
+// fullText is the whole message wrapped to width, keeping its line breaks,
+// its media kind as a tag before the first line.
+func (m unreadModel) fullText(msg backend.Message, width int) []string {
+	kind, text := m.mediaText(msg)
+	lead := ""
+	if kind != "" {
+		lead = m.st.tag.Render(" "+kind+" ") + " "
+		width -= textfmt.DisplayWidth(kind) + 3
+	}
+	pad := strings.Repeat(" ", textfmt.DisplayWidth(lead))
+	var lines []string
+	for _, para := range strings.Split(text, "\n") {
+		for k, l := range textfmt.WrapLineIndent(para, max(1, width), 0) {
+			if k > 0 {
+				l = strings.TrimLeft(l, " ")
+			}
+			lines = append(lines, m.lit(msg, l))
+		}
+	}
+	for k := range lines {
+		if k == 0 {
+			lines[k] = lead + lines[k]
+		} else {
+			lines[k] = pad + lines[k]
+		}
+	}
+	return lines
+}
+
+// mediaText splits the message into its media kind and its text, the
+// media's details before any caption.
+func (m unreadModel) mediaText(msg backend.Message) (string, string) {
 	kind, text := "", textfmt.Plain(msg.Text)
 	if label := textfmt.Plain(msg.MediaLabel); label != "" {
 		if rest, ok := strings.CutPrefix(label, "["); ok {
@@ -452,16 +576,15 @@ func (m unreadModel) excerpt(msg backend.Message, width int) string {
 			text = label
 		}
 	}
-	text = strings.Join(strings.Fields(text), " ")
-	if text == "" && kind == "" {
+	if strings.TrimSpace(text) == "" && kind == "" {
 		text = "message"
 	}
-	out := ""
-	if kind != "" {
-		out = m.st.tag.Render(" "+kind+" ") + " "
-		width -= textfmt.DisplayWidth(kind) + 3
-	}
-	text = truncate(text, max(1, width))
+	return kind, text
+}
+
+// lit dims emoji codes in text and, in a message mentioning the user, puts
+// @names in the accent.
+func (m unreadModel) lit(msg backend.Message, text string) string {
 	var b strings.Builder
 	for _, word := range strings.SplitAfter(text, " ") {
 		core := strings.TrimRight(word, " ")
@@ -476,7 +599,7 @@ func (m unreadModel) excerpt(msg backend.Message, width int) string {
 			b.WriteString(word)
 		}
 	}
-	return out + b.String()
+	return b.String()
 }
 
 func newestAt(msgs []backend.Message) time.Time {

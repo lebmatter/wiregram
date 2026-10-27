@@ -17,6 +17,12 @@ times in a row shows once with `×3`. Media is a small tag such as `photo` befor
 details, emoji codes like `:fire:` are dim, and in a message mentioning you the
 `@names` are in the accent.
 
+A card shows its newest three messages, a line each. The selected card opens up to
+show every unread message it loaded (up to 20) in full, wrapped and with its line
+breaks; moving to another card folds it back. When it is taller than the pane, ↑/↓
+and the wheel scroll through it first (the rule over its keys counts the lines above
+and below), then move on to the next card.
+
 The selected card lists its keys: <kbd>Enter</kbd> opens the chat (<kbd>Esc</kbd> there
 brings you back to Unread), <kbd>t</kbd> opens the newest reply's thread where the
 server keeps threads (Mattermost), and <kbd>m</kbd> marks the chat read and drops the

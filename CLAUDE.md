@@ -152,6 +152,9 @@ These are project constraints, not suggestions:
   of full-width cards as tall as their messages, one per chat with unread messages. The
   top border holds `#`/`@`, the name and a team tag, with the newest message's time
   (`whenText`) and the count on the right; borders are dim, the selected card's accent.
+  A card shows its newest `unreadCardLines` messages a line each; the selected one shows
+  all it loaded (`unreadCardFull`) wrapped in full, scrolling within itself with ↑/↓ when
+  taller than the pane (`scroll`, `shownLines`).
   Authors sit in a fixed column (none in channels), replies get `↳`, repeats collapse to
   `×N`, media is a tag, emoji codes are dim. The selected card lists its keys: `t` opens
   the newest reply's thread on `backend.ThreadFetcher` backends, `m` marks the chat read.

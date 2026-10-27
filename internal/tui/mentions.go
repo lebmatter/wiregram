@@ -42,7 +42,7 @@ func mentionCards(ctx context.Context, b backend.Backend) ([]unreadCard, error) 
 			cards = append(cards, unreadCard{entry: mn.Chat})
 		}
 		cards[i].count++
-		if len(cards[i].msgs) < unreadCardLines {
+		if len(cards[i].msgs) < unreadCardFull {
 			cards[i].msgs = append([]backend.Message{mn.Message}, cards[i].msgs...)
 		}
 	}
