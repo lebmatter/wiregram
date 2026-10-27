@@ -156,6 +156,42 @@ func listenBotEvents(sub *backend.Subscription) tea.Cmd {
 	}
 }
 
+type tuiMentionsCounted struct{ counts map[backend.ChatID]int }
+
+// countMentions counts the mentions among the unread messages of each group
+// and channel, for backends whose chat list carries no count of its own.
+func (m tuiModel) countMentions() tea.Cmd {
+	if !m.list.mentions || m.b.Capabilities().MentionCounts {
+		return nil
+	}
+	var chats []backend.ChatEntry
+	for _, e := range m.entries {
+		if !e.IsDM && e.Unread > 0 {
+			chats = append(chats, e)
+		}
+	}
+	if len(chats) == 0 {
+		return nil
+	}
+	ctx, b := m.ctx, m.b
+	return func() tea.Msg {
+		counts := make(map[backend.ChatID]int)
+		for _, e := range chats {
+			msgs, err := unreadMessages(ctx, b, e, e.Unread)
+			if err != nil {
+				continue
+			}
+			counts[e.ID] = 0
+			for _, msg := range msgs {
+				if msg.Mentioned {
+					counts[e.ID]++
+				}
+			}
+		}
+		return tuiMentionsCounted{counts}
+	}
+}
+
 func loadDialogs(ctx context.Context, b backend.Backend, archived bool) tea.Cmd {
 	return func() tea.Msg {
 		entries, archiveUnread, err := b.Dialogs(ctx, archived)
@@ -576,6 +612,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 			cmd = tea.Batch(cmd, reload)
 		}
 		m.list = m.list.refreshUnread()
+		if ev := msg.ev; ev.Kind == backend.EventMessage && ev.Message != nil &&
+			ev.Message.Mentioned && !(m.chatOpen && m.chat.entry.ID == ev.Chat) {
+			m.list = m.list.mentioned(ev.Chat)
+		}
 		// A message in a chat the list lacks is a new chat: reload to show it.
 		newChat := msg.ev.Kind == backend.EventMessage && !m.archived && !m.list.mailbox &&
 			!m.list.has(msg.ev.Chat)
@@ -724,6 +764,10 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		}
 		m.searchOpen = true
 		return m, cmd
+
+	case tuiMentionsCounted:
+		m.list = m.list.withMentions(msg.counts)
+		return m, nil
 
 	case userSearchGlobal:
 		m.searchOpen = false
@@ -1191,15 +1235,17 @@ func (m tuiModel) updateList(msg tea.Msg) (tuiModel, tea.Cmd) {
 		if m.list.loading && !m.spinning {
 			m.spinning, tick = true, m.spin.Tick
 		}
+		count := m.countMentions()
 		label := m.goToLabel
 		m.goToLabel = ""
 		for i, e := range m.entries {
 			if label != "" && e.ID.Id == label {
 				m.list = m.list.selectEntry(i)
-				return m.chooseChat(i)
+				m, cmd := m.chooseChat(i)
+				return m, tea.Batch(cmd, count)
 			}
 		}
-		return m, tick
+		return m, tea.Batch(tick, count)
 
 	case tuiRetryDialogs:
 		m.retryPending = false

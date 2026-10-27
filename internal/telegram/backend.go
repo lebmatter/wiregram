@@ -33,6 +33,7 @@ func chatToChatEntry(ch chat) backend.ChatEntry {
 		ID:        peerKeyToID(ch.key),
 		Title:     ch.title,
 		Unread:    ch.unread,
+		Mentions:  ch.mentions,
 		IsDM:      ch.key.kind == 'u',
 		IsGroup:   ch.key.kind == 'g' || ch.key.kind == 'c',
 		IsSelf:    isSelf,
@@ -264,6 +265,7 @@ func (tb *TelegramBackend) Capabilities() backend.Capabilities {
 		Forward: true, DeleteForMe: true, OutboxReceipt: true,
 		ViewOnce: true, Reactions: true, Edit: true, Pin: true,
 		Upload: true, Search: true, Typing: true, DeleteChat: true, Archive: true,
+		MentionCounts: true,
 	}
 }
 

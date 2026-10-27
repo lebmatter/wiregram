@@ -168,6 +168,7 @@ func (mb *MmBackend) Capabilities() backend.Capabilities {
 		Upload:        true,
 		Search:        true,
 		ChannelSearch: true,
+		MentionCounts: true,
 		Typing:        true,
 		DeleteChat:    false,
 	}
@@ -359,6 +360,7 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 	type channelWithUnread struct {
 		Ch       mmChannel
 		Unread   int
+		Mentions int
 		TeamName string
 	}
 	teamNames := make(map[string]string, len(teams))
@@ -412,14 +414,15 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 			continue
 		}
 		seen[ch.ID] = true
-		unread := 0
+		unread, mentions := 0, 0
 		if m, ok := memberMap[ch.ID]; ok {
 			unread = int(ch.TotalMsgCount - m.MsgCount)
 			if unread < 0 {
 				unread = 0
 			}
+			mentions = m.MentionCount
 		}
-		channels = append(channels, channelWithUnread{ch, unread, teamNames[ch.TeamID]})
+		channels = append(channels, channelWithUnread{ch, unread, mentions, teamNames[ch.TeamID]})
 	}
 
 	sort.Slice(channels, func(i, j int) bool {
@@ -447,14 +450,15 @@ func (mb *MmBackend) Dialogs(ctx context.Context, archived bool) ([]backend.Chat
 		mb.unreads[cw.Ch.ID] = cw.Unread
 		mb.mu.Unlock()
 		entries = append(entries, backend.ChatEntry{
-			ID:      backend.ChatID{Backend: "mattermost", Id: cw.Ch.ID},
-			Title:   title,
-			Unread:  cw.Unread,
-			IsDM:    isDM,
-			IsGroup: !isDM,
-			IsSelf:  cw.Ch.Type == "D" && cw.Ch.Name == mb.UserID+"__"+mb.UserID,
-			Section: section,
-			Raw:     cw.Ch,
+			ID:       backend.ChatID{Backend: "mattermost", Id: cw.Ch.ID},
+			Title:    title,
+			Unread:   cw.Unread,
+			Mentions: cw.Mentions,
+			IsDM:     isDM,
+			IsGroup:  !isDM,
+			IsSelf:   cw.Ch.Type == "D" && cw.Ch.Name == mb.UserID+"__"+mb.UserID,
+			Section:  section,
+			Raw:      cw.Ch,
 		})
 	}
 	return entries, 0, nil

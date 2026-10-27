@@ -31,7 +31,7 @@ tag (`TG`, `WA`, `MX`, `MM`, `EM`, on the accent fill when expanded), the accoun
 number and label, its unseen count while collapsed and a violet ✦ when it has bots. The
 active account is expanded to:
 
-- a line of chips: **unread** (with the total), **@ mentions** (see
+- a line of chips: **unread** (with the total), **@mentions** (with the unread mentions; see
   [Unread & Mentions](/features/unread-mentions)), **you** (your chat with yourself),
   **archived** (Telegram only) and **search**, which opens the [search](/features/chats#search)
 - its chats in sections with a ruled header: the team on Mattermost, else **groups**

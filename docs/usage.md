@@ -24,7 +24,7 @@ Terminals 100 columns wide or wider show the chat list as a sidebar beside the o
 
 The sidebar is an account tree. Every account is a row with an arrow, a status glyph,
 a tag such as `TG` with the account's number, and its label. The active account is
-expanded to a line of chips: unread, @ mentions, you (the chat with yourself: Saved
+expanded to a line of chips: unread, @mentions, you (the chat with yourself: Saved
 Messages on Telegram, your own DM on Mattermost and WhatsApp), archived (Telegram) and
 search; then its chats in folding sections (teams on Mattermost, else groups or rooms
 and channels, then direct), unread chats first; then its [bots](/features/chat-bots).

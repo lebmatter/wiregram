@@ -8,10 +8,11 @@ import (
 )
 
 type chat struct {
-	key    peerKey
-	peer   tg.InputPeerClass
-	title  string
-	unread int
+	key      peerKey
+	peer     tg.InputPeerClass
+	title    string
+	unread   int
+	mentions int // unread messages mentioning the user
 	// broadcast marks a channel only its admins post in.
 	broadcast bool
 }
@@ -61,7 +62,7 @@ func (c *Client) dialogs(ctx context.Context, archived bool) ([]chat, int, error
 			c.rememberRead(keyOf(d.Peer), d.ReadInboxMaxID, d.ReadOutboxMaxID)
 			c.rememberUnread(keyOf(d.Peer), d.UnreadCount)
 			if entry, ok := peers[keyOf(d.Peer)]; ok {
-				entry.unread = d.UnreadCount
+				entry.unread, entry.mentions = d.UnreadCount, d.UnreadMentionsCount
 				entries = append(entries, entry)
 			}
 		case *tg.DialogFolder:

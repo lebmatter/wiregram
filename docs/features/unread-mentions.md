@@ -30,8 +30,9 @@ card. <kbd>r</kbd> reloads.
 
 ## Mentions
 
-<kbd>m</kbd> (or the **@ mentions** chip) shows the same cards for groups and channels
-with recent messages mentioning you. <kbd>Enter</kbd> opens the chat with the mention
+<kbd>m</kbd> (or the **@mentions** chip) shows the same cards for groups and channels
+with recent messages mentioning you. The chip counts the unread messages that mention
+you in groups and channels, and goes up as new mentions arrive. <kbd>Enter</kbd> opens the chat with the mention
 selected, in its thread on Mattermost.
 
 Where the mentions come from:

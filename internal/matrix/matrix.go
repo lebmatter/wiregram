@@ -47,6 +47,7 @@ type MxBackend struct {
 	subscribed  string
 	typing      map[string]time.Time
 	unreads     map[string]int
+	highlights  map[string]int // roomID → unread messages mentioning the user
 	rooms       map[string]*mxRoom
 	userCache   map[string]string
 	dmRooms     map[string]bool
@@ -141,6 +142,7 @@ func NewMXBackend(homeserver string) *MxBackend {
 		Homeserver: strings.TrimRight(homeserver, "/"),
 		typing:     make(map[string]time.Time),
 		unreads:    make(map[string]int),
+		highlights: make(map[string]int),
 		rooms:      make(map[string]*mxRoom),
 		userCache:  make(map[string]string),
 		dmRooms:    make(map[string]bool),
@@ -161,6 +163,7 @@ func (mx *MxBackend) Capabilities() backend.Capabilities {
 		Pin:           false,
 		Upload:        true,
 		Search:        true,
+		MentionCounts: true,
 		Typing:        true,
 		DeleteChat:    false,
 		Archive:       false,
@@ -519,6 +522,7 @@ func (mx *MxBackend) processJoinedRoom(ctx context.Context, roomID string, joine
 	}
 	room.invitedBy = ""
 	mx.unreads[roomID] = joined.UnreadNotifications.NotificationCount
+	mx.highlights[roomID] = joined.UnreadNotifications.HighlightCount
 	subscribed := mx.subscribed
 	mx.mu.Unlock()
 
@@ -917,17 +921,18 @@ func (mx *MxBackend) roomEntry(id string) (backend.ChatEntry, bool) {
 		return backend.ChatEntry{}, false
 	}
 	isDM := mx.dmRooms[id]
-	unread := mx.unreads[id]
+	unread, mentions := mx.unreads[id], mx.highlights[id]
 	memberCount := len(room.members)
 	lastAt := room.lastAt
 	mx.mu.Unlock()
 	return backend.ChatEntry{
-		ID:      backend.ChatID{Backend: "matrix", Id: id},
-		Title:   mx.roomDisplayName(id),
-		Unread:  unread,
-		LastAt:  lastAt,
-		IsDM:    isDM && memberCount <= 2,
-		IsGroup: !isDM || memberCount > 2,
+		ID:       backend.ChatID{Backend: "matrix", Id: id},
+		Title:    mx.roomDisplayName(id),
+		Unread:   unread,
+		Mentions: mentions,
+		LastAt:   lastAt,
+		IsDM:     isDM && memberCount <= 2,
+		IsGroup:  !isDM || memberCount > 2,
 	}, true
 }
 
@@ -1550,6 +1555,7 @@ func (mx *MxBackend) MarkRead(ctx context.Context, ch backend.ChatEntry, upToID 
 	}
 	mx.mu.Lock()
 	mx.unreads[ch.ID.Id] = 0
+	mx.highlights[ch.ID.Id] = 0
 	mx.mu.Unlock()
 	return nil
 }

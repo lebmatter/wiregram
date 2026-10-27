@@ -25,13 +25,15 @@ type ChatID struct {
 }
 
 type ChatEntry struct {
-	ID      ChatID
-	Title   string
-	Unread  int
-	LastAt  time.Time
-	IsDM    bool
-	IsGroup bool
-	IsSelf  bool
+	ID     ChatID
+	Title  string
+	Unread int
+	// Mentions is how many of the unread messages mention the user.
+	Mentions int
+	LastAt   time.Time
+	IsDM     bool
+	IsGroup  bool
+	IsSelf   bool
 	// IsChannel marks a broadcast channel only its admins post in.
 	IsChannel bool
 	// Section is the server's grouping of the chat, such as its Mattermost
@@ -143,6 +145,9 @@ type Capabilities struct {
 	Typing        bool
 	DeleteChat    bool
 	Archive       bool
+	// MentionCounts means Dialogs fills ChatEntry.Mentions from the server;
+	// elsewhere the UI counts the mentions among a chat's unread messages.
+	MentionCounts bool
 	// RevokeWindow is how long after sending the user may delete a message
 	// for everyone; zero means no limit.
 	RevokeWindow time.Duration

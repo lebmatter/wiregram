@@ -124,8 +124,14 @@ func (m chatListModel) top() []listAction {
 	}
 	acts := []listAction{{entry: unread, msg: chatListUnread{}}}
 	if m.mentions {
-		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "@ mentions"},
-			msg: chatListMentions{}})
+		// Its view lists groups and channels, so DMs stay out of the count.
+		mentions := backend.ChatEntry{Title: "@mentions"}
+		for _, e := range m.entries {
+			if !e.IsDM {
+				mentions.Unread += e.Mentions
+			}
+		}
+		acts = append(acts, listAction{entry: mentions, msg: chatListMentions{}})
 	}
 	if m.self {
 		acts = append(acts, listAction{entry: backend.ChatEntry{Title: "you"}, msg: chatListSelf{}})
@@ -638,6 +644,27 @@ func (m chatListModel) Init() tea.Cmd { return nil }
 func (m chatListModel) refreshUnread() chatListModel {
 	for i := range m.entries {
 		m.entries[i].Unread = m.b.CachedUnread(m.entries[i])
+		m.entries[i].Mentions = min(m.entries[i].Mentions, m.entries[i].Unread)
+	}
+	return m
+}
+
+// mentioned counts a new message mentioning the user in chat id.
+func (m chatListModel) mentioned(id backend.ChatID) chatListModel {
+	for i := range m.entries {
+		if m.entries[i].ID == id {
+			m.entries[i].Mentions++
+		}
+	}
+	return m
+}
+
+// withMentions sets the mention counts the UI counted itself.
+func (m chatListModel) withMentions(counts map[backend.ChatID]int) chatListModel {
+	for i, e := range m.entries {
+		if n, ok := counts[e.ID]; ok {
+			m.entries[i].Mentions = n
+		}
 	}
 	return m
 }

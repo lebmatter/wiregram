@@ -104,7 +104,7 @@ These are project constraints, not suggestions:
   every account is a row (`▸`/`▾`, status glyph, `TG` tag on a fill that turns accent
   when expanded, number, label, unseen count while collapsed, a violet `✦` when it
   has a bot), the active one expanded to a line of chips, each a stop for ↑/↓: unread,
-  @ mentions, you (`backend.SelfChatter`: the chat with oneself on Telegram, Mattermost
+  @mentions, you (`backend.SelfChatter`: the chat with oneself on Telegram, Mattermost
   and WhatsApp), archived (Telegram only) and search. Then its chats in sections under
   ruled headers that Space, Enter or a click folds for the session (`folded`): the team
   (`ChatEntry.Section`, whose `[Team] ` title prefix the sidebar drops) on Mattermost,
@@ -164,7 +164,12 @@ These are project constraints, not suggestions:
   `backend.MentionFetcher` get a mentions chip (`m`) beside it: the same cards,
   one per group or channel with recent mentions (Telegram's MyMentions search over
   recent groups, Mattermost's mention search, Matrix highlight notifications,
-  WhatsApp's in-memory messages). Email has none.
+  WhatsApp's in-memory messages). Email has none. The `@mentions` chip counts the
+  unread messages mentioning the user in groups and channels (`ChatEntry.Mentions`):
+  the server's count where `Capabilities.MentionCounts` (Telegram's unread mentions,
+  Mattermost's `mention_count`, Matrix's highlight count), else counted from the unread
+  messages after each chat list load (`countMentions`); a new mention outside the open
+  chat adds one and a chat with nothing unread has none.
 - At `twoPaneWidth` (100) columns and wider the chat list is a sidebar beside
   the chat and Tab moves focus; narrower terminals show one pane at a time.
 - The root `tuiModel` owns the screen's only bus subscription and routes

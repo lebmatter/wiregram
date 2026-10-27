@@ -44,7 +44,7 @@ Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.
 The sidebar lists every account with the active one expanded to a line of
-chips (unread, @ mentions, you, archived, search), then its chats in
+chips (unread, @mentions, you, archived, search), then its chats in
 sections that Space folds (teams on Mattermost, else groups or rooms and
 channels, then direct), unread chats first, then its bots; Enter on another
 account switches to it; home (the account list) and settings… stay pinned
