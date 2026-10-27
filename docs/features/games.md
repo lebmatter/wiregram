@@ -19,6 +19,9 @@ own fleet, though the challenger's wiregram, which runs the game, holds both.
 
 1. In a private chat or a group, click **game+** at the end of the input, or press
    <kbd>Alt+G</kbd>, and pick a game.
+
+   <img class="wg-shot" src="/img/game-picker.png" alt="The game picker over a group chat">
+
 2. Wiregram opens a tunnel and sends the chat an invite:
    `🎮 Pong challenge · wiregame://…trycloudflare.com/…`
 3. Whoever clicks the invite in their wiregram joins, and the game opens beside the chat

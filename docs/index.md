@@ -36,6 +36,7 @@ format may change between releases. Please report bugs in
 - [Email](/features/email): IMAP and SMTP, folders of threaded conversations
 - [Themes](/features/themes): Zest and Copper
 - [AI Powered Chat Bots](/features/chat-bots): bots that answer an account's private messages, each its own chats, and can be registered on Mattermost or Telegram with an inbox of their own
+- [Games](/features/games): challenge a chat to Chess, Battleship, Snake and more, over a cloudflared quick tunnel
 - [Plugins](/features/plugins): sandboxed Lua widgets
 - [CLI](/features/cli): JSON Lines commands for scripts and AI coding tools
 

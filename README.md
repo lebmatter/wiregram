@@ -1,8 +1,9 @@
 [<img src="assets/wiregram-animated.svg" alt="" height="117"> <img src="assets/wiregram-logo.svg" alt="Wiregram" width="360">](https://wiregram.chat)
 
-Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Matrix and
-Mattermost in one keyboard-driven window, with optional AI powered chat bots that answer
-your DMs. It is a single static binary, written in Go.
+Wiregram is a multi-backend chat client for the terminal. Telegram, WhatsApp, Matrix,
+Mattermost and email in one keyboard-driven window, with optional AI powered chat bots that
+answer your DMs and two-player games you can challenge any chat to. It is a single static
+binary, written in Go.
 
 > **Alpha software.** Wiregram is under active development. Expect rough edges, and
 > settings or the database format may change between releases. Please report bugs in
@@ -77,6 +78,25 @@ directly and it answers as itself:
 
 A registered bot gets an **Inbox** of its own chats, where you approve its replies or
 answer as the bot. Conversations are sent to the provider you configure.
+
+## Multiplayer Games
+
+Challenge anyone in a DM or group to **Chess, Battleship, Snake, Pong, Connect Four or
+Tic-tac-toe** with `Alt+G` (or a click on `game+` beside the input). The game plays in a
+pane beside the chat. Your wiregram hosts it on `127.0.0.1` behind a
+[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+quick tunnel and posts a `wiregame://` invite; the other player joins with a click on it
+and needs only wiregram. Only the challenger needs cloudflared.
+
+No chat needed either:
+
+```sh
+wiregram game                        # pick a game, host it and copy the invite
+wiregram game wiregame://…/…         # join the game an invite links to
+```
+
+Games are small sandboxed Lua scripts; see the
+[games docs](https://docs.wiregram.chat/features/games) for how to write one.
 
 ## Command line
 
