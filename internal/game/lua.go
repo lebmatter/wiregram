@@ -66,6 +66,7 @@ func load(src string) (*lua.LState, *lua.LTable, error) {
 }
 
 // NewSession starts a match. names are in seat order; seat 1 is the host.
+// They reach the script escaped, so a name shows as written in its views.
 func NewSession(s Script, names []string) (*Session, error) {
 	L, g, err := load(s.Src)
 	if err != nil {
@@ -74,7 +75,7 @@ func NewSession(s Script, names []string) (*Session, error) {
 	sess := &Session{L: L, game: g, info: s.Info}
 	t := L.NewTable()
 	for _, n := range names {
-		t.Append(lua.LString(n))
+		t.Append(lua.LString(EscapeTags(n)))
 	}
 	if _, err := sess.call("init", 0, t); err != nil {
 		L.Close()

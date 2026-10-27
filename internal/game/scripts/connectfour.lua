@@ -5,6 +5,8 @@ game = {
            desc = "Four in a row, dropped from the top", players = 2,
            help = "←/→ or 1-7 pick a column · enter drops",
            min_w = 29, min_h = 9, tick_ms = 0,
+           palette = { p1 = "#ff5f5f", p2 = "#ffd75f", frame = "blue", win = "accent",
+                       num = "dim" },
            icon = "│ │○│ │ │\n│●│●│○│ │\n└─┴─┴─┴─┘" },
 }
 
@@ -90,14 +92,14 @@ function game.result(seat)
   if full then return "draw" end
 end
 
-local discs = { [0] = " ", "●", "○" }
+local inked = { [0] = " ", "{p1}●{/}", "{p2}○{/}" }
 
 function game.view(seat, w, h)
   local rows = {}
   local top = {}
   for c = 1, COLS do
     if c == cursor[seat] and not game.over() then
-      top[c] = " " .. (seat == turn and discs[seat] or "▼") .. " "
+      top[c] = " " .. (seat == turn and inked[seat] or "{num}▼{/}") .. " "
     else
       top[c] = "   "
     end
@@ -106,19 +108,20 @@ function game.view(seat, w, h)
   for r = 1, ROWS do
     local cells = {}
     for c = 1, COLS do
-      local m = discs[board[r][c]]
+      local m = inked[board[r][c]]
       if line[r * 10 + c] then
-        cells[c] = "[" .. m .. "]"
+        cells[c] = "{win}[{/}" .. m .. "{win}]{/}"
       else
         cells[c] = " " .. m .. " "
       end
     end
-    table.insert(rows, "│" .. table.concat(cells, "│") .. "│")
+    local bar = "{frame}│{/}"
+    table.insert(rows, bar .. table.concat(cells, bar) .. bar)
   end
-  table.insert(rows, "└" .. string.rep("───┴", COLS - 1) .. "───┘")
+  table.insert(rows, "{frame}└" .. string.rep("───┴", COLS - 1) .. "───┘{/}")
   local nums = {}
   for c = 1, COLS do nums[c] = " " .. c .. " " end
-  table.insert(rows, " " .. table.concat(nums, " "))
+  table.insert(rows, "{num} " .. table.concat(nums, " ") .. "{/}")
   local status
   if winner == seat then
     status = "you won"
@@ -127,7 +130,7 @@ function game.view(seat, w, h)
   elseif full then
     status = "draw"
   elseif turn == seat then
-    status = "your turn (" .. discs[seat] .. ")"
+    status = "your turn (" .. inked[seat] .. ")"
   else
     status = names[turn] .. "'s turn"
   end

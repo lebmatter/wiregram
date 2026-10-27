@@ -78,6 +78,7 @@ game = {
     tick_ms = 0,             -- 0 for turn-based, else 16 or more
     icon = " X │ O │   \n───┼───┼───\n   │ X │ O ", -- optional: the picker's
                              -- drawing, up to 3 lines of 15 cells
+    palette = { x = "#ff875f", o = "#5fafff", grid = "dim" }, -- optional; see Colours
   },
 }
 
@@ -93,8 +94,26 @@ function game.result(seat)                 -- optional; once over:
 end
 ```
 
-`view` is called for both seats after every key and tick, so keep it cheap. Plain text
-only: control characters are stripped on the guest's side. Only the `base`, `table`,
+`view` is called for both seats after every key and tick, so keep it cheap.
+
+### Colours
+
+A script never writes escape codes: control characters are dropped on both sides. Instead it
+names its colours in `info.palette`, up to 16, and marks up `view`'s board and status with
+them:
+
+```lua
+return "{grid}│{/} {x}X{/} {grid}│{/}", "your turn ({x}X{/})"
+```
+
+`{name}` switches to the palette's colour for `name` and `{/}` switches back; a backslash
+keeps the `{` or `\` after it as written, and a tag the palette lacks shows as written.
+Names are 1 to 16 of `a`–`z`, `0`–`9` and `_`, starting with a letter. A colour is
+`#rrggbb`, a fixed `green`, `yellow`, `red`, `blue` or `violet`, or the theme's `accent`,
+`subtle` or `dim`, which follow each player's own theme. Tags take no room: `min_w` counts
+only what shows. The palette reaches the other player with the game, and each wiregram draws
+the colours itself, so nothing the script returns reaches the terminal as written. Player
+names reach `init` with their `{` and `\` escaped, so they show as written too. Only the `base`, `table`,
 `string` and `math` libraries are loaded, with no way to load more code, and every call
 into the script has 50 ms; a call that takes longer, or raises an error, ends the game and
 says why in an alert.

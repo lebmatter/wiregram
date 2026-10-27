@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"wiregram/internal/backend"
 	"wiregram/internal/game"
@@ -275,7 +277,10 @@ func (g *gameModel) view(width, height int, focused bool) string {
 }
 
 func (g *gameModel) playView() string {
-	lines := append([]string{}, g.board...)
+	var lines []string
+	for _, l := range g.board {
+		lines = append(lines, g.st.gameMarkup(l, g.info.Palette, fgReset))
+	}
 	lines = append(lines, "")
 	if g.state == gameOver {
 		switch {
@@ -292,7 +297,8 @@ func (g *gameModel) playView() string {
 		}
 	}
 	if g.ended == "" {
-		lines = append(lines, g.st.accent.Render(g.status))
+		accent := ansi.NewStyle().ForegroundColor(g.st.accentColor).String()
+		lines = append(lines, g.st.gameMarkup(g.status, g.info.Palette, accent))
 	}
 	if g.state == gamePlaying && g.info.Help != "" {
 		lines = append(lines, g.st.dim.Render(g.info.Help))
@@ -305,6 +311,64 @@ func (g *gameModel) helpKeys() []helpKey {
 		return []helpKey{{"keys", "play"}, {"tab", "chat"}, {"esc", "leave"}}
 	}
 	return []helpKey{{"tab", "chat"}, {"esc", "close"}}
+}
+
+const fgReset = "\x1b[39m"
+
+// gameMarkup draws a line of a game's view, from the host's own script or
+// from the network: {name} switches to the palette's colour for name, {/}
+// back to base, and a backslash keeps the { or \ after it as written. The
+// script never writes to the terminal itself: control characters are dropped
+// and a tag the palette lacks is shown as written.
+func (s *styles) gameMarkup(line string, palette map[string]string, base string) string {
+	r := []rune(textfmt.Plain(line))
+	var b strings.Builder
+	b.WriteString(base)
+	for i := 0; i < len(r); i++ {
+		if r[i] == '\\' && i+1 < len(r) && (r[i+1] == '{' || r[i+1] == '\\') {
+			i++
+			b.WriteRune(r[i])
+			continue
+		}
+		if r[i] == '{' {
+			if end := runeIndex(r, '}', i+1, i+18); end > 0 {
+				name := string(r[i+1 : end])
+				if name == "/" {
+					b.WriteString(base)
+					i = end
+					continue
+				}
+				if c, ok := palette[name]; ok {
+					b.WriteString(s.gameInk(c))
+					i = end
+					continue
+				}
+			}
+		}
+		b.WriteRune(r[i])
+	}
+	b.WriteString(fgReset)
+	return b.String()
+}
+
+// runeIndex is the index of want in r from from up to limit, or -1.
+func runeIndex(r []rune, want rune, from, limit int) int {
+	for j := from; j < min(len(r), limit); j++ {
+		if r[j] == want {
+			return j
+		}
+	}
+	return -1
+}
+
+// gameInk is the foreground SGR for a palette colour: one of the theme's,
+// which follow the player's theme, a fixed one or #rrggbb.
+func (s *styles) gameInk(name string) string {
+	c := s.pluginBorder(name, s.accentColor)
+	if name == "subtle" {
+		c = lipgloss.Color(s.theme.subtle)
+	}
+	return ansi.NewStyle().ForegroundColor(c).String()
 }
 
 // gamePlayerName is the user's name as the other player sees it: the
@@ -585,6 +649,7 @@ func (m tuiModel) gameEnvelope(msg gameEnvelope) (tuiModel, tea.Cmd, bool) {
 		info := *env.Game
 		info.Name, info.Help = textfmt.Plain(info.Name), textfmt.Plain(info.Help)
 		info.MinW, info.MinH = min(max(info.MinW, 1), 120), min(max(info.MinH, 1), 60)
+		info.Palette = game.CleanPalette(info.Palette)
 		g.info, g.state = info, gamePlaying
 		g.names = []string{textfmt.Plain(env.Names[0]), textfmt.Plain(env.Names[1])}
 	case game.TFrame:

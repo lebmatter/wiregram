@@ -30,6 +30,8 @@ type Info struct {
 	// Icon is a small drawing of the game for the picker: up to IconLines
 	// lines of up to IconWidth cells.
 	Icon []string `json:"-"`
+	// Palette names the colours a view's {name}…{/} tags draw in.
+	Palette map[string]string `json:"palette,omitempty"`
 }
 
 // The largest icon the picker draws.
@@ -82,6 +84,28 @@ func readInfo(src string) (Info, error) {
 	info := Info{
 		ID: str("id"), Name: str("name"), Desc: str("desc"), Help: str("help"),
 		MinW: num("min_w"), MinH: num("min_h"), TickMS: num("tick_ms"),
+	}
+	if p, ok := t.RawGetString("palette").(*lua.LTable); ok {
+		info.Palette = map[string]string{}
+		var bad error
+		p.ForEach(func(k, v lua.LValue) {
+			name, colour := lua.LVAsString(k), lua.LVAsString(v)
+			switch {
+			case bad != nil:
+			case !ValidTag(name):
+				bad = fmt.Errorf("game.info.palette: %q is not a tag name", name)
+			case !ValidColour(colour):
+				bad = fmt.Errorf("game.info.palette.%s: %q is not a colour", name, colour)
+			default:
+				info.Palette[name] = colour
+			}
+		})
+		switch {
+		case bad != nil:
+			return Info{}, bad
+		case len(info.Palette) > MaxPalette:
+			return Info{}, fmt.Errorf("game.info.palette has more than %d colours", MaxPalette)
+		}
 	}
 	if icon := strings.Trim(str("icon"), "\n"); icon != "" {
 		info.Icon = strings.Split(icon, "\n")

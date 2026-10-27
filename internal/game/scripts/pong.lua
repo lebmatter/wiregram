@@ -6,6 +6,8 @@ game = {
            desc = "First to 5 points", players = 2,
            help = "up/down or w/s move · hold to keep moving",
            min_w = 60, min_h = 21, tick_ms = 33,
+           palette = { you = "accent", foe = "#ff875f", ball = "yellow", net = "dim",
+                       wall = "dim" },
            icon = "█    ·      \n█     ·    █\n       ●   █" },
 }
 
@@ -94,22 +96,25 @@ function game.view(seat, w, h)
   for y = 0, H - 1 do
     local r = {}
     for x = 1, W do r[x] = " " end -- 1-based: r[x + 1] is column x
-    if y % 2 == 0 then r[W / 2 + 1] = "┆" end
+    if y % 2 == 0 then r[W / 2 + 1] = "{net}┆{/}" end
     rows[y] = r
   end
   for s = 1, 2 do
     local top = math.floor(pad[s] + 0.5)
-    for y = top, top + PH - 1 do rows[y][COL[s] + 1] = "█" end
+    local paddle = s == seat and "{you}█{/}" or "{foe}█{/}"
+    for y = top, top + PH - 1 do rows[y][COL[s] + 1] = paddle end
   end
   local bx, by = math.floor(ball.x + 0.5), math.floor(ball.y + 0.5)
   if not winner and bx >= 0 and bx < W and by >= 0 and by < H then
-    rows[by][bx + 1] = "●"
+    rows[by][bx + 1] = "{ball}●{/}"
   end
 
   local left = names[1]:sub(1, 20) .. "  " .. score[1]
   local right = score[2] .. "  " .. names[2]:sub(1, 20)
-  local out = { left .. string.rep(" ", math.max(1, W - #left - #right)) .. right }
-  local wall = string.rep("─", W)
+  local gap = string.rep(" ", math.max(1, W - #left - #right))
+  local ink = { seat == 1 and "you" or "foe", seat == 2 and "you" or "foe" }
+  local out = { "{" .. ink[1] .. "}" .. left .. "{/}" .. gap .. "{" .. ink[2] .. "}" .. right .. "{/}" }
+  local wall = "{wall}" .. string.rep("─", W) .. "{/}"
   table.insert(out, wall)
   for y = 0, H - 1 do
     table.insert(out, table.concat(rows[y]))

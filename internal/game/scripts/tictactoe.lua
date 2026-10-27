@@ -5,6 +5,7 @@ game = {
            desc = "Three in a row", players = 2,
            help = "arrows move · enter places your mark",
            min_w = 21, min_h = 11, tick_ms = 0,
+           palette = { x = "#ff875f", o = "#5fafff", cursor = "accent", grid = "dim" },
            icon = " X │ O │   \n───┼───┼───\n   │ X │ O " },
 }
 
@@ -67,25 +68,27 @@ function game.result(seat)
   if full then return "draw" end
 end
 
-local marks = { [0] = " ", "X", "O" }
+local inked = { [0] = " ", "{x}X{/}", "{o}O{/}" }
 
 function game.view(seat, w, h)
   local rows = {}
+  local bar = "{grid}│{/}"
+  local open = "     " .. bar .. "     " .. bar .. "     "
   for r = 0, 2 do
     local cells = {}
     for c = 1, 3 do
       local i = r * 3 + c
-      local m = marks[board[i]]
+      local m = inked[board[i]]
       if i == cursor[seat] and not game.over() then
-        cells[c] = "[ " .. m .. " ]"
+        cells[c] = "{cursor}[{/} " .. m .. " {cursor}]{/}"
       else
         cells[c] = "  " .. m .. "  "
       end
     end
-    table.insert(rows, "     │     │     ")
-    table.insert(rows, table.concat(cells, "│"))
-    table.insert(rows, "     │     │     ")
-    if r < 2 then table.insert(rows, "─────┼─────┼─────") end
+    table.insert(rows, open)
+    table.insert(rows, table.concat(cells, bar))
+    table.insert(rows, open)
+    if r < 2 then table.insert(rows, "{grid}─────┼─────┼─────{/}") end
   end
   local status
   if winner == seat then
@@ -95,7 +98,7 @@ function game.view(seat, w, h)
   elseif full then
     status = "draw"
   elseif turn == seat then
-    status = "your turn (" .. marks[seat] .. ")"
+    status = "your turn (" .. inked[seat] .. ")"
   else
     status = names[turn] .. "'s turn"
   end

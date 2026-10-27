@@ -7,6 +7,8 @@ game = {
            desc = "Hide a fleet, sink theirs", players = 2,
            help = "arrows move · r rotates · enter places or fires · a places the rest",
            min_w = 48, min_h = 14, tick_ms = 0,
+           palette = { ship = "#9aa3ad", hit = "#ff5f5f", sunk = "#af5f5f", miss = "#5f87d7",
+                       water = "dim", place = "accent", cursor = "accent", label = "dim" },
            icon = "     |\\     \n  ___|_\\___ \n~~\\_______/~~" },
 }
 
@@ -149,29 +151,29 @@ local GAP = "    "
 local function header()
   local cols = {}
   for c = 1, N do cols[c] = " " .. COLS:sub(c, c) end
-  local line = "  " .. table.concat(cols)
+  local line = "{label}  " .. table.concat(cols) .. "{/}"
   return line .. GAP .. line
 end
 
 local function ownCell(seat, r, c, preview)
   local foe = 3 - seat
   local shot = shots[foe][r][c]
-  if shot == "hit" then return "X" end
-  if preview and preview[r * 100 + c] then return "□" end
-  if grid[seat][r][c] ~= 0 then return "■" end
-  if shot == "miss" then return "o" end
-  return "·"
+  if shot == "hit" then return "{hit}X{/}" end
+  if preview and preview[r * 100 + c] then return "{place}□{/}" end
+  if grid[seat][r][c] ~= 0 then return "{ship}■{/}" end
+  if shot == "miss" then return "{miss}o{/}" end
+  return "{water}·{/}"
 end
 
 local function foeCell(seat, r, c)
   local shot = shots[seat][r][c]
-  if shot == "miss" then return "o" end
+  if shot == "miss" then return "{miss}o{/}" end
   if shot == "hit" then
     local ship = ships[3 - seat][grid[3 - seat][r][c]]
-    if ship.hits == #ship.cells then return "#" end
-    return "X"
+    if ship.hits == #ship.cells then return "{sunk}#{/}" end
+    return "{hit}X{/}"
   end
-  return "·"
+  return "{water}·{/}"
 end
 
 function game.view(seat, w, h)
@@ -191,18 +193,22 @@ function game.view(seat, w, h)
     local mine, theirs = {}, {}
     for c = 1, N do
       local m, t = " ", " "
-      if not placed(seat) and r == cur[1] and c == cur[2] then m = "▸" end
-      if placed(seat) and not game.over() and r == cur[1] and c == cur[2] then t = "▸" end
+      if not placed(seat) and r == cur[1] and c == cur[2] then m = "{cursor}▸{/}" end
+      if placed(seat) and not game.over() and r == cur[1] and c == cur[2] then
+        t = "{cursor}▸{/}"
+      end
       mine[c] = m .. ownCell(seat, r, c, preview)
       theirs[c] = t .. foeCell(seat, r, c)
     end
-    local label = string.format("%2d", r)
+    local label = "{label}" .. string.format("%2d", r) .. "{/}"
     table.insert(rows, label .. table.concat(mine) .. GAP .. label .. table.concat(theirs))
   end
   table.insert(rows, "")
   local afloat = {}
   for i, ship in ipairs(ships[seat]) do
-    if ship.hits < #ship.cells then table.insert(afloat, string.rep("■", #ship.cells)) end
+    if ship.hits < #ship.cells then
+      table.insert(afloat, "{ship}" .. string.rep("■", #ship.cells) .. "{/}")
+    end
   end
   if placed(seat) then
     table.insert(rows, "afloat: " .. table.concat(afloat, " "))
