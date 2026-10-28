@@ -460,6 +460,11 @@ func (m tuiModel) openBotChat(bot inboxBot, b backend.Backend, entry backend.Cha
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	next = next.withSuggestion().sized()
+	if _, width, _, ok := next.gameRect(); ok {
+		if err := next.game.resize(width, next.bodyHeight()); err != nil {
+			next = next.stopGame(err)
+		}
+	}
 	if next.chatOpen && imagesMoved(msg) {
 		cmd = tea.Batch(cmd, next.chat.loadVisibleImages(), next.chat.placeImages())
 	}

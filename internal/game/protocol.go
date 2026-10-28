@@ -19,6 +19,7 @@ const (
 	TStart = "start" // host → guest: Game, Names
 	TKey   = "key"   // guest → host: P is a KeyMsg
 	TFrame = "frame" // host → guest: P is a FrameMsg
+	TSize  = "size"  // guest → host: P is a SizeMsg
 	TLeave = "leave"
 	TError = "error"
 )
@@ -26,15 +27,22 @@ const (
 const (
 	// ReadLimit caps one websocket message on both sides.
 	ReadLimit = 64 << 10
-	// maxBoardW and maxBoardH bound a board, so a frame stays under ReadLimit.
-	maxBoardW, maxBoardH = 120, 60
+	// MaxBoardW and MaxBoardH bound a board, so a frame stays under ReadLimit.
+	MaxBoardW, MaxBoardH = 120, 60
 	// MaxFrameLines bounds the lines a guest keeps from a frame.
-	MaxFrameLines = maxBoardH
+	MaxFrameLines = MaxBoardH
 )
 
 // KeyMsg is a guest's key press, sent to the host.
 type KeyMsg struct {
 	Key string `json:"k"`
+}
+
+// SizeMsg is the area the guest has for the board, sent when the game starts
+// and whenever it changes.
+type SizeMsg struct {
+	W int `json:"w"`
+	H int `json:"h"`
 }
 
 // FrameMsg is the host's view for the guest. Lines holds only the lines that

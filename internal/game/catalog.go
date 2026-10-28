@@ -118,9 +118,9 @@ func readInfo(src string) (Info, error) {
 		return Info{}, errors.New("game.info needs id and name")
 	case num("players") != 2:
 		return Info{}, errors.New("game.info.players must be 2")
-	case info.MinW < 1 || info.MinW > maxBoardW || info.MinH < 1 || info.MinH > maxBoardH:
+	case info.MinW < 1 || info.MinW > MaxBoardW || info.MinH < 1 || info.MinH > MaxBoardH:
 		return Info{}, fmt.Errorf("game.info.min_w and min_h must be 1 to %d and %d",
-			maxBoardW, maxBoardH)
+			MaxBoardW, MaxBoardH)
 	case info.TickMS < 0 || (info.TickMS > 0 && info.TickMS < 16):
 		return Info{}, errors.New("game.info.tick_ms must be 0 or at least 16")
 	}

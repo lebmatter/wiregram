@@ -281,7 +281,17 @@ local function material(side)
   return "  {coord}" .. table.concat(out) .. "{/}"
 end
 
+-- squareSize is the largest square that fits a board in w×h: cw cells wide and
+-- ch rows tall, cw about twice ch since a cell is twice as tall as it is wide.
+local function squareSize(w, h)
+  local ch = 1
+  while 2 + 8 * (2 * ch + 3) <= w and 8 * (ch + 1) + 3 <= h do ch = ch + 1 end
+  return 2 * ch + 1, ch
+end
+
 function game.view(seat, w, h)
+  local cw, ch = squareSize(w, h)
+  local pad, mid = string.rep(" ", (cw - 1) / 2), math.ceil(ch / 2)
   local live = not game.over()
   local from = picked[seat]
   local targets = {}
@@ -295,7 +305,7 @@ function game.view(seat, w, h)
   if seat == 2 then ranks, files = { 1, 2, 3, 4, 5, 6, 7, 8 }, { 8, 7, 6, 5, 4, 3, 2, 1 } end
   local rows = { material(3 - seat) }
   for _, r in ipairs(ranks) do
-    local cells = { "{coord}" .. r .. "{/} " }
+    local bgs, mids = {}, {}
     for _, f in ipairs(files) do
       local s = sq(r, f)
       local p = board[s]
@@ -305,18 +315,26 @@ function game.view(seat, w, h)
       if targets[s] and p then bg = "cap" end
       if s == from then bg = "sel" end
       if live and s == cursor[seat] then bg = "cur" end
-      local mid = " "
+      local piece = " "
       if p then
-        mid = (p.side == 1 and "{w}" or "{b}") .. GLYPH[p.kind]
+        piece = (p.side == 1 and "{w}" or "{b}") .. GLYPH[p.kind]
       elseif targets[s] then
-        mid = "{hint}•"
+        piece = "{hint}•"
       end
-      table.insert(cells, "{" .. bg .. "} " .. mid .. " {/}")
+      table.insert(bgs, bg)
+      table.insert(mids, piece)
     end
-    table.insert(rows, table.concat(cells))
+    for line = 1, ch do
+      local cells = { line == mid and "{coord}" .. r .. "{/} " or "  " }
+      for i, bg in ipairs(bgs) do
+        local piece = line == mid and mids[i] or " "
+        table.insert(cells, "{" .. bg .. "}" .. pad .. piece .. pad .. "{/}")
+      end
+      table.insert(rows, table.concat(cells))
+    end
   end
   local head = { "  " }
-  for _, f in ipairs(files) do table.insert(head, " " .. FILES:sub(f, f) .. " ") end
+  for _, f in ipairs(files) do table.insert(head, pad .. FILES:sub(f, f) .. pad) end
   table.insert(rows, "{coord}" .. table.concat(head) .. "{/}")
   table.insert(rows, material(seat))
 

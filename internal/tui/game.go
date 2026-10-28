@@ -49,7 +49,11 @@ type gameModel struct {
 	// sent and sentStatus are the guest's board and status as last sent.
 	sent       []string
 	sentStatus string
-	ended      string // why the game stopped early, shown in the pane
+	// w and h are the area this side's pane has for the board; guestW and
+	// guestH are the guest's, as it last said.
+	w, h           int
+	guestW, guestH int
+	ended          string // why the game stopped early, shown in the pane
 	// invite is the link shown while waiting, when no chat carries it.
 	invite  string
 	confirm *confirmModal
@@ -119,6 +123,37 @@ func (g *gameModel) width() int {
 	return g.info.MinW + 4
 }
 
+// gameBelowBoard is the lines playView draws under the board.
+const gameBelowBoard = 3
+
+// area is the size a board is drawn for: w×h within the script's minimum and
+// the frame's bounds.
+func (g *gameModel) area(w, h int) (int, int) {
+	return min(max(w, g.info.MinW), game.MaxBoardW), min(max(h, g.info.MinH), game.MaxBoardH)
+}
+
+// resize fits the board to a pane of width×height, redrawing the host's or
+// telling the host the guest's.
+func (g *gameModel) resize(width, height int) error {
+	w, h := width-4, height-2-gameBelowBoard
+	if w == g.w && h == g.h {
+		return nil
+	}
+	g.w, g.h = w, h
+	return g.sendSize()
+}
+
+func (g *gameModel) sendSize() error {
+	switch {
+	case g.host && g.session != nil:
+		return g.refresh()
+	case !g.host && g.conn != nil && g.state == gamePlaying:
+		size := game.SizeMsg{W: g.w, H: g.h}
+		return g.conn.Send(game.Envelope{T: game.TSize, P: game.Payload(size)})
+	}
+	return nil
+}
+
 // live reports whether leaving would end a game someone is playing.
 func (g *gameModel) live() bool { return g.state == gamePlaying }
 
@@ -181,7 +216,8 @@ func (g *gameModel) tick() tea.Cmd {
 // refresh redraws the host's board and sends the guest the lines of its own
 // that changed.
 func (g *gameModel) refresh() error {
-	board, status, err := g.session.View(1, g.info.MinW, g.info.MinH)
+	w, h := g.area(g.w, g.h)
+	board, status, err := g.session.View(1, w, h)
 	if err != nil {
 		return err
 	}
@@ -196,7 +232,8 @@ func (g *gameModel) refresh() error {
 		}
 		g.state = gameOver
 	}
-	board, status, err = g.session.View(2, g.info.MinW, g.info.MinH)
+	w, h = g.area(g.guestW, g.guestH)
+	board, status, err = g.session.View(2, w, h)
 	if err != nil {
 		return err
 	}
@@ -706,6 +743,9 @@ func (g *gameModel) receive(msg gameEnvelope) (tea.Cmd, error) {
 		info.Palette = game.CleanPalette(info.Palette)
 		g.info, g.state = info, gamePlaying
 		g.names = []string{textfmt.Plain(env.Names[0]), textfmt.Plain(env.Names[1])}
+		if err := g.sendSize(); err != nil {
+			return nil, err
+		}
 	case game.TFrame:
 		var f game.FrameMsg
 		if g.host || g.state != gamePlaying || json.Unmarshal(env.P, &f) != nil {
@@ -720,6 +760,15 @@ func (g *gameModel) receive(msg gameEnvelope) (tea.Cmd, error) {
 		if err := g.session.Key(2, k.Key); err != nil {
 			return nil, err
 		}
+		if err := g.refresh(); err != nil {
+			return nil, err
+		}
+	case game.TSize:
+		var size game.SizeMsg
+		if !g.host || g.state != gamePlaying || json.Unmarshal(env.P, &size) != nil {
+			break
+		}
+		g.guestW, g.guestH = size.W, size.H
 		if err := g.refresh(); err != nil {
 			return nil, err
 		}

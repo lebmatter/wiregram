@@ -80,7 +80,19 @@ func (m gameAppModel) stop(err error) gameAppModel {
 	return m
 }
 
+// Update handles msg, then fits the board to the screen.
 func (m gameAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	m = next.(gameAppModel)
+	if m.game != nil {
+		if err := m.game.resize(m.width, max(1, m.height-1)); err != nil {
+			m = m.stop(err)
+		}
+	}
+	return m, cmd
+}
+
+func (m gameAppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	g := m.game
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
