@@ -135,6 +135,17 @@ wiregram --version
 Prints the version, such as `wiregram v0.8.0`. A build from source names the commit
 it was built from.
 
+## debug
+
+```sh
+wiregram --debug
+```
+
+Runs the app as usual and appends the steps of each Mattermost sign-in to
+`~/.config/wiregram/debug.log`: every login request, whether it carried an
+authenticator code, and the server's status and error. Passwords, codes and tokens
+are never written. Attach the log when reporting a sign-in that fails.
+
 ## A reply loop
 
 ```sh

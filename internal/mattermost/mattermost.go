@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -34,6 +35,7 @@ type MmBackend struct {
 	Token     string
 	UserID    string
 	Username  string
+	Debug     *log.Logger // sign-in steps for --debug, or nil
 
 	mu          sync.Mutex
 	subscribed  string               // channel ID
@@ -240,7 +242,8 @@ func (mb *MmBackend) loadEditLimit(ctx context.Context) {
 func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc, report func(error)) error {
 	if mb.Token != "" {
 		var me mmUser
-		if err := mb.apiJSON(ctx, "GET", "/users/me", nil, &me); err == nil {
+		err := mb.apiJSON(ctx, "GET", "/users/me", nil, &me)
+		if err == nil {
 			mb.UserID = me.ID
 			mb.Username = me.Username
 			mb.mu.Lock()
@@ -248,6 +251,7 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 			mb.mu.Unlock()
 			return nil
 		}
+		mb.debugf("saved token refused: %v", err)
 		mb.Token = ""
 	}
 
@@ -291,6 +295,13 @@ func (mb *MmBackend) Authenticate(ctx context.Context, prompt config.PromptFunc,
 	return nil
 }
 
+// debugf writes to the --debug log, when there is one.
+func (mb *MmBackend) debugf(format string, args ...any) {
+	if mb.Debug != nil {
+		mb.Debug.Printf("mattermost %s: "+format, append([]any{mb.ServerURL}, args...)...)
+	}
+}
+
 type mmAPIError struct {
 	ID      string `json:"id"`
 	Message string `json:"message"`
@@ -314,13 +325,17 @@ func (mb *MmBackend) login(ctx context.Context, loginID, password, code string) 
 	}
 	resp, err := mb.api(ctx, "POST", "/users/login", body)
 	if err != nil {
+		mb.debugf("POST /users/login (with code: %t): %v", code != "", err)
 		return nil, fmt.Errorf("login: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK {
+		mb.debugf("POST /users/login (with code: %t): %s", code != "", resp.Status)
 		return resp, nil
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	mb.debugf("POST /users/login (with code: %t): %s %s", code != "", resp.Status,
+		strings.TrimSpace(string(data)))
 	var apiErr mmAPIError
 	if json.Unmarshal(data, &apiErr) == nil && apiErr.Message != "" {
 		return nil, &apiErr

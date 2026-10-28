@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -120,6 +121,7 @@ type AccountManager struct {
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
 	Plugins  *plugin.Manager
+	debug    *log.Logger // --debug's log, or nil
 	// changed is closed and replaced on every change, so every waiting screen
 	// wakes, including listeners left behind by screens that have quit.
 	changed   chan struct{}
@@ -209,8 +211,8 @@ func (a *Account) set(m *AccountManager, update func(*AccountState)) {
 	m.notify()
 }
 
-func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager, error) {
-	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, changed: make(chan struct{}), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
+func LoadAccounts(cfg config.Config, dir string, db *store.DB, debug *log.Logger) (*AccountManager, error) {
+	m := &AccountManager{cfg: cfg, Dir: dir, Store: db, debug: debug, changed: make(chan struct{}), agentChanged: make(chan struct{}, 1), inboxChanged: make(chan struct{}, 1), connecting: make(chan struct{}, 4), owners: make(map[int64]*Account)}
 	add := func(key string, requireIdentity bool) error {
 		a := &Account{Key: key, BackendType: "telegram", Histories: make(map[backend.ChatID][]string), Chats: newChatCache()}
 		a.state.Status = "offline"
@@ -291,6 +293,7 @@ func LoadAccounts(cfg config.Config, dir string, db *store.DB) (*AccountManager,
 				continue
 			}
 			mb := mattermost.NewMMBackend(identity.ServerURL)
+			mb.Debug = m.debug
 			mb.UserID = identity.UserID
 			mb.Username = identity.Username
 			mb.Token = identity.Token
@@ -372,6 +375,7 @@ func (m *AccountManager) AddMattermost(serverURL string) (*Account, error) {
 		return nil, err
 	}
 	mb := mattermost.NewMMBackend(serverURL)
+	mb.Debug = m.debug
 	a := &Account{
 		Key:         key,
 		BackendType: "mattermost",

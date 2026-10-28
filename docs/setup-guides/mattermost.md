@@ -10,6 +10,9 @@ Mattermost accounts are tagged `MM`.
 4. Enter your password.
 5. If multi-factor authentication is on, enter the code from your authenticator app.
 
+If sign-in fails, run `wiregram --debug` and try again: the server's answers are
+written to `~/.config/wiregram/debug.log`.
+
 ## Notes
 
 - **Search users** (<kbd>/</kbd>) also finds channels; picking a public channel you

@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"wiregram/internal/account"
@@ -126,6 +128,10 @@ Commands (for scripts and AI coding tools; output is one JSON object per line):
       Reset does. Asks first unless -y is given.
   wiregram --version
       Print the version.
+  wiregram --debug
+      Run the app, writing the steps of each Mattermost sign-in to
+      ~/.config/wiregram/debug.log: the server's status and error, never
+      the password, code or token.
 
   BACKEND is telegram, mattermost, matrix or email (tg, mm, mx, em).
   WhatsApp is not available: it allows one connection, and a command would
@@ -362,6 +368,7 @@ func run() (result error) {
 	flags := flag.NewFlagSet("wiregram", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	showVersion := flags.Bool("version", false, "")
+	debug := flags.Bool("debug", false, "")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(os.Stdout, usageText)
@@ -384,7 +391,7 @@ func run() (result error) {
 		if err != nil {
 			return err
 		}
-		err = session(ctx, dir)
+		err = session(ctx, dir, *debug)
 		if _, reset := err.(tui.ResetRequested); !reset {
 			return err
 		}
@@ -394,13 +401,24 @@ func run() (result error) {
 	}
 }
 
-// session runs wiregram on the data in dir until it quits or is reset.
-func session(ctx context.Context, dir string) error {
+// session runs wiregram on the data in dir until it quits or is reset. With
+// debug, sign-in steps go to dir/debug.log.
+func session(ctx context.Context, dir string, debug bool) error {
 	db, err := store.Open(dir)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	var debugLog *log.Logger
+	if debug {
+		f, err := os.OpenFile(filepath.Join(dir, "debug.log"),
+			os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+		if err != nil {
+			return fmt.Errorf("open debug log: %w", err)
+		}
+		defer f.Close()
+		debugLog = log.New(f, "", log.LstdFlags)
+	}
 	if err := account.ImportLegacy(db, dir); err != nil {
 		return err
 	}
@@ -408,7 +426,7 @@ func session(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	accounts, err := account.LoadAccounts(cfg, dir, db)
+	accounts, err := account.LoadAccounts(cfg, dir, db, debugLog)
 	if err != nil {
 		return err
 	}

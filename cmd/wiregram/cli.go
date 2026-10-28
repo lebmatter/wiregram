@@ -63,7 +63,7 @@ func openSession() (*cliSession, error) {
 		db.Close()
 		return nil, err
 	}
-	mgr, err := account.LoadAccounts(cfg, dir, db)
+	mgr, err := account.LoadAccounts(cfg, dir, db, nil)
 	if err != nil {
 		db.Close()
 		return nil, err
