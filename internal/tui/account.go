@@ -684,9 +684,11 @@ type loginModel struct {
 	pair     *timer.Model
 	pairFull time.Duration
 	backdrop string // the screen sign-in was opened from, faded behind it
-	done     bool
-	width    int
-	height   int
+	// alert shows why sign-in failed until a key closes it and the screen.
+	alert  *confirmModal
+	done   bool
+	width  int
+	height int
 }
 
 // loginTurn is one answered sign-in prompt, kept for the transcript.
@@ -788,13 +790,21 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.done = true
 			return m, tea.Quit
 		}
-		m.notice = s.Notice
-		if m.notice == "" {
-			m.notice = "sign-in failed"
+		if m.ctx.Err() != nil {
+			return m, tea.Quit
 		}
-		return m, tea.Quit
+		text := "The server gave no reason."
+		if s.Notice != "" {
+			text = sentence(s.Notice)
+		}
+		m.current, m.notice = nil, ""
+		m.alert = newAlertModal(m.st, "Sign-in failed", text)
+		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.alert != nil {
+			return m, tea.Quit
+		}
 		if m.current == nil {
 			if msg.String() == "esc" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -884,6 +894,9 @@ func (m loginModel) View() tea.View {
 	}
 	keys := []helpKey{{"enter", "answer"}, {"esc", "cancel"}}
 	box, _ := formBox("sign in — "+m.label, lines, keys, w, bodyHeight, m.st)
+	if m.alert != nil {
+		box, keys = m.alert.View(), m.alert.helpKeys()
+	}
 	content := m.st.overlay(m.backdrop, box, m.width, bodyHeight) + "\n" +
 		m.st.footer(keys, "", m.width)
 	v := tea.NewView(content)

@@ -42,7 +42,8 @@ headers or subject. Mail is cached in wiregram.db for the window set in an
 email account's Settings (90 days by default); mail on the server is never
 deleted by it.
 A new account opens with an Account connected card listing the keys to get
-around and search; any key or click closes it.
+around and search; any key or click closes it. A failed sign-in shows the
+server's reason in a Sign-in failed alert; any key closes it.
 Config and sessions are stored in ~/.config/wiregram/.
 
 Layout: terminals 100+ columns wide show the chat list beside the open chat.

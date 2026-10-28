@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
@@ -93,14 +91,7 @@ type agentBotDone struct {
 
 // alert is the alert a failed request shows.
 func (d agentBotDone) alert() agentBotAlert {
-	text := textfmt.CleanError(d.err)
-	if r, size := utf8.DecodeRuneInString(text); size > 0 {
-		text = string(unicode.ToUpper(r)) + text[size:]
-	}
-	if !strings.HasSuffix(text, ".") {
-		text += "."
-	}
-	return agentBotAlert{title: d.fail, text: text}
+	return agentBotAlert{title: d.fail, text: sentence(textfmt.CleanError(d.err))}
 }
 
 // botTimeout bounds a request to the server about a bot.

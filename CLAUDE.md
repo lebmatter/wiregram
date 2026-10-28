@@ -375,6 +375,9 @@ These are project constraints, not suggestions:
 - Every yes/no question (quit, delete chat/message/bot/provider, remove account, Reset;
   not moving mail to Trash) is a `confirmModal` (`internal/tui/confirm.go`) centred over the screen, or over the chat when asked
   there, never a footer notice. Deletes and Reset start on Cancel.
+- A sign-in that fails ends in a `Sign-in failed` alert (`newAlertModal`) over the
+  sign-in form with the account's notice as a sentence (`sentence`); any key closes it
+  and returns to the chooser.
 - A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
   over its screen, faded behind it: navigation and search keys; any key or click closes it.
 - Bots answer incoming DMs only (`BackendEvent.DM`); they never act in

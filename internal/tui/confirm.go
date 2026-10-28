@@ -2,6 +2,8 @@ package tui
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -37,6 +39,17 @@ func newConfirmModal(st *styles, title, question, action string, safe bool) *con
 // newAlertModal tells the user something; any key or click closes it.
 func newAlertModal(st *styles, title, text string) *confirmModal {
 	return &confirmModal{st: st, title: title, question: text, action: "OK", alert: true}
+}
+
+// sentence makes an error's text read as a sentence in an alert.
+func sentence(text string) string {
+	if r, size := utf8.DecodeRuneInString(text); size > 0 {
+		text = string(unicode.ToUpper(r)) + text[size:]
+	}
+	if !strings.HasSuffix(text, ".") {
+		text += "."
+	}
+	return text
 }
 
 func newQuitModal(st *styles) *confirmModal {

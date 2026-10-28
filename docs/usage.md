@@ -10,7 +10,9 @@ for the current screen; [Keybinds](/keybinds) and `wiregram -h` list all of them
 1. **Splash.** The logo shows for about a second.
 2. **Account chooser.** Every account with its status (and its bots, if it has
    any), then Settings…, Add account and Quit. Under them sit the
-   [plugin widgets](/features/plugins), such as Unread and Weather.
+   [plugin widgets](/features/plugins), such as Unread and Weather. A sign-in that
+   fails shows the server's reason in a **Sign-in failed** alert; any key closes it
+   and returns here.
 3. **Chat mode.** The chat list and the open chat. Inside an account the screen is
    the body and a footer with the keys for what has focus; notices show on the right
    of the footer.
