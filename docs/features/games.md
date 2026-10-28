@@ -6,7 +6,7 @@ The games are small Lua scripts built into wiregram:
 | Game | How it plays |
 |------|--------------|
 | **Battleship** | Both place a fleet of five ships (arrows, <kbd>r</kbd> rotates, <kbd>Enter</kbd> places, <kbd>a</kbd> places the rest at random), seeing only their own; then you fire in turn at the other's waters. Sink the whole fleet to win |
-| **Chess** | Move the cursor with the arrows, <kbd>Enter</kbd> picks up a piece and shows where it can go, <kbd>Enter</kbd> again on a square moves it (on the piece itself, or <kbd>Backspace</kbd>, puts it down). A pawn reaching the last rank asks <kbd>q</kbd> <kbd>r</kbd> <kbd>b</kbd> <kbd>n</kbd>. Checkmate wins and stalemate draws; there is no draw by repetition or the fifty-move rule. The challenger plays white, and each of you sees your own pieces at the bottom, on a board as large as your pane fits |
+| **Chess** | Move the cursor with the arrows, <kbd>Enter</kbd> picks up a piece and shows where it can go, <kbd>Enter</kbd> again on a square moves it (on the piece itself, or <kbd>Backspace</kbd>, puts it down). A pawn reaching the last rank asks <kbd>q</kbd> <kbd>r</kbd> <kbd>b</kbd> <kbd>n</kbd>. Checkmate wins and stalemate draws; there is no draw by repetition or the fifty-move rule. The challenger plays white, and each of you sees your own pieces at the bottom, on a larger board when your pane has room |
 | **Connect Four** | Drop discs from the top (<kbd>←</kbd>/<kbd>→</kbd> or <kbd>1</kbd>–<kbd>7</kbd>, then <kbd>Enter</kbd>); four in a row wins |
 | **Pong** | First to 5 points; <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>w</kbd>/<kbd>s</kbd> |
 | **Snake** | Two snakes on one field, the challenger's green and the other blue. Turn with the arrows or <kbd>w</kbd> <kbd>a</kbd> <kbd>s</kbd> <kbd>d</kbd> and eat to grow; hitting a wall, yourself or the other snake loses the round, and if both crash at once the longer snake takes it. First to 3 rounds |
@@ -118,7 +118,7 @@ end
 `view` is called for both seats after every key and tick, so keep it cheap. `w` and `h` are
 the room each player's pane has for the board, never less than `min_w`×`min_h` nor more
 than 120×60; it is called again when a pane changes size, so a board can grow with it.
-Chess draws its squares as large as fit.
+Chess grows its squares from 3×1 to 5×2 when they fit.
 
 ### Colours
 

@@ -283,9 +283,10 @@ end
 
 -- squareSize is the largest square that fits a board in w×h: cw cells wide and
 -- ch rows tall, cw about twice ch since a cell is twice as tall as it is wide.
+-- A piece is one cell, so squares stop at 5×2, past which it looks lost.
 local function squareSize(w, h)
   local ch = 1
-  while 2 + 8 * (2 * ch + 3) <= w and 8 * (ch + 1) + 3 <= h do ch = ch + 1 end
+  while ch < 2 and 2 + 8 * (2 * ch + 3) <= w and 8 * (ch + 1) + 3 <= h do ch = ch + 1 end
   return 2 * ch + 1, ch
 end
 
