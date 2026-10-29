@@ -75,6 +75,11 @@ if it is registered on the network later. A violet ✦ marks accounts with a
 bot, the private chats one answers while on, chats with a reply waiting for
 approval, and the messages a bot sent. Messages go to the provider.
 
+Settings > AI also lists small models wiregram can run itself, with each
+one's download size: Enter downloads one from Hugging Face (to
+~/.cache/wiregram/models, checked against its pinned SHA-256) and adds a
+Local provider, so nothing leaves this machine.
+
 The same providers summarise and rewrite for you, each task with the
 provider Settings > AI gives it. Summarise chat (and Summarise thread) in a
 message's actions, or s on an Unread card, streams a summary of the unread
@@ -227,7 +232,9 @@ Keyboard shortcuts:
                       to the next provider; on a provider it opens its name,
                       URL, key variable and model, each edited in place, or
                       deletes it (not while a bot uses it); Add provider…
-                      asks step by step
+                      asks step by step. Under local models, Enter downloads
+                      a model, stops its download (Enter again resumes it),
+                      or asks before removing it
     Reset…            Sign out of every account and delete all local data
                       (settings, plugins, bots, cached mail and media),
                       then start over as a fresh installation

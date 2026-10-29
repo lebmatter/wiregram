@@ -16,6 +16,7 @@ import (
 
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
+	"wiregram/internal/ai/local"
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
 	"wiregram/internal/store"
@@ -659,6 +660,10 @@ func cmdDryRun(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if dir, err := config.ModelsDir(); err == nil {
+		s.mgr.Local = local.New(dir)
+		defer s.mgr.Local.Close()
+	}
 	rt := account.NewAgentRuntime(ctx, db, s.mgr)
 	defer rt.Stop()
 	b, err := connect(ctx, s.mgr, a)
@@ -759,6 +764,10 @@ func cmdSummarize(ctx context.Context, args []string) error {
 		history = history[max(0, len(history)-count):]
 	}
 	tasks := &account.AITasks{Db: db, Store: s.db}
+	if dir, err := config.ModelsDir(); err == nil {
+		tasks.Models = local.New(dir)
+		defer tasks.Models.Close()
+	}
 	stream := tasks.Summarize(ctx, ch, history)
 	var summary strings.Builder
 	for c := range stream.C {

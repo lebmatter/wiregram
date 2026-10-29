@@ -43,6 +43,16 @@ func Dir() (string, error) {
 	return dir, nil
 }
 
+// ModelsDir is where local models are downloaded to, in wiregram's cache
+// directory, so Wipe removes them.
+func ModelsDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("locate cache directory: %w", err)
+	}
+	return filepath.Join(base, "wiregram", "models"), nil
+}
+
 // Wipe deletes the configuration directory dir and wiregram's cache
 // directory, leaving the state of a fresh installation.
 func Wipe(dir string) error {

@@ -20,6 +20,8 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: "0"
+          # go-llama's SIMD kernels; local models crawl without them.
+          GOAMD64: v2
         run: |
           mkdir -p dist
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 \

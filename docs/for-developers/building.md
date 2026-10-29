@@ -12,8 +12,13 @@ Requires Go 1.26 or newer.
 ```sh
 git clone https://github.com/lebmatter/wiregram
 cd wiregram
-make            # CGO_ENABLED=0 go build, with the git describe version in --version
+make            # CGO_ENABLED=0 GOAMD64=v2 go build, with the version in --version
 ```
+
+On amd64, build with `GOAMD64=v2` as `make` does: it gives go-llama, which runs
+[local models](/features/ai#local-models), its SIMD kernels. Without it a local model takes
+minutes per reply, so such a build refuses to run one and says why. The first build
+takes several minutes, compiling go-llama's engine.
 
 ## Embedded credentials
 
@@ -23,7 +28,7 @@ environment or a secret manager, never commit them.
 **Telegram** API ID and hash, so users skip the API-ID prompt:
 
 ```sh
-CGO_ENABLED=0 go build -buildvcs=false \
+CGO_ENABLED=0 GOAMD64=v2 go build -buildvcs=false \
   -ldflags "-X wiregram/internal/config.buildAPIID=${TG_API_ID} \
             -X wiregram/internal/config.buildAPIHash=${TG_API_HASH}" \
   -o wiregram ./cmd/wiregram

@@ -18,6 +18,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 
 	"wiregram/internal/agent"
+	"wiregram/internal/ai/local"
 	"wiregram/internal/backend"
 	"wiregram/internal/config"
 	"wiregram/internal/mail"
@@ -120,7 +121,8 @@ type AccountManager struct {
 	Store    *store.DB
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
-	AI       *AITasks // nil when the agent database could not be opened
+	AI       *AITasks      // nil when the agent database could not be opened
+	Local    *local.Engine // downloaded models; nil outside the app
 	Plugins  *plugin.Manager
 	debug    *log.Logger // --debug's log, or nil
 	// changed is closed and replaced on every change, so every waiting screen

@@ -110,7 +110,12 @@ func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *
 	return m
 }
 
-func (m settingsModel) Init() tea.Cmd { return listenAccounts(m.mgr) }
+func (m settingsModel) Init() tea.Cmd {
+	if m.downloading() {
+		return tea.Batch(listenAccounts(m.mgr), localTickCmd())
+	}
+	return listenAccounts(m.mgr)
+}
 
 func (m settingsModel) leftRows() int { return len(m.accounts) + len(settingsActions) }
 
@@ -205,6 +210,10 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case settingsNotice:
 		m.notice = string(msg)
 		m.reload()
+	case localTick:
+		if m.downloading() {
+			return m, localTickCmd()
+		}
 	case settingsReset:
 		m.result.reset = true
 		return m, tea.Quit

@@ -48,9 +48,15 @@ holds the API key and a default model, then Save, Start over or Cancel. Presets:
 | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` |
 | OpenAI | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `gpt-4o-mini` |
 | Ollama (this machine) | `http://localhost:11434/v1` | none | `llama3.2` |
+| llama.cpp server (this machine) | `http://localhost:8080/v1` | none | `default` |
 
 Or choose **Other OpenAI-compatible API** and give its base URL, which must use HTTPS
 unless it runs on this machine.
+
+A **Local** provider runs a model inside Wiregram, with nothing else to install: it
+appears when you first download one of the [local models](/features/ai#local-models).
+Open it and <kbd>Enter</kbd> on **Model** moves to the next downloaded model. Local
+models read text only, so a bot that sees photos gets their `[photo]` tags.
 
 Wiregram never stores API keys. You name the **environment variable** that holds the key
 (letters, digits and `_`), and Wiregram reads it at run time, so set it in the shell you

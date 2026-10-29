@@ -1,14 +1,17 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
+	"wiregram/internal/ai/local"
 	"wiregram/internal/textfmt"
 )
 
@@ -26,12 +29,33 @@ const (
 )
 
 // providerRow is one row of Settings' AI pane: a task and the provider that
-// does it, a provider, one of the fields of the opened provider, or Add
-// provider… (p nil, no task).
+// does it, a provider, one of the fields of the opened provider, Add
+// provider… (p nil, no task or model), or a local model to download.
 type providerRow struct {
 	task  string
 	p     *agent.AgentProvider
 	field int
+	model *local.Model
+}
+
+// localTick redraws the AI pane while a model downloads.
+type localTick struct{}
+
+func localTickCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return localTick{} })
+}
+
+// downloading reports whether any local model is downloading.
+func (m settingsModel) downloading() bool {
+	if m.mgr.Local == nil {
+		return false
+	}
+	for _, lm := range local.Catalog {
+		if m.mgr.Local.Progress(lm).Running {
+			return true
+		}
+	}
+	return false
 }
 
 // aiTasks are the AI pane's task rows and their labels.
@@ -63,11 +87,21 @@ func (m settingsModel) providerRows() []providerRow {
 		rows = append(rows, providerRow{p: &p, field: provHeader})
 		if p.ID == m.openProvider {
 			for f := provName; f <= provDelete; f++ {
+				// A local provider has no server to reach.
+				if p.Kind == agent.ProviderLocal && (f == provURL || f == provEnv) {
+					continue
+				}
 				rows = append(rows, providerRow{p: &p, field: f})
 			}
 		}
 	}
-	return append(rows, providerRow{})
+	rows = append(rows, providerRow{})
+	if m.mgr.Local != nil {
+		for _, lm := range local.Catalog {
+			rows = append(rows, providerRow{model: &lm})
+		}
+	}
+	return rows
 }
 
 func (m settingsModel) providersKey(k string) (tea.Model, tea.Cmd) {
@@ -93,6 +127,10 @@ func (m settingsModel) applyProvider(r providerRow) (tea.Model, tea.Cmd) {
 	switch {
 	case r.task != "":
 		return m.nextTaskProvider(r.task), nil
+	case r.model != nil:
+		return m.applyLocalModel(*r.model)
+	case r.p != nil && r.p.Kind == agent.ProviderLocal && r.field == provModel:
+		return m.nextLocalModel(*r.p), nil
 	case r.p == nil:
 		wiz := newWizard(m.st, "add AI provider", providerSteps(), nil)
 		m.wiz = &wiz
@@ -118,6 +156,81 @@ func (m settingsModel) applyProvider(r providerRow) (tea.Model, tea.Cmd) {
 	in.SetValue(providerField(*r.p, r.field))
 	m.edit, m.editing = in, true
 	return m, m.edit.Focus()
+}
+
+// applyLocalModel downloads lm, stops its download, or asks before removing
+// it. The first download adds a Local provider for the downloaded models.
+func (m settingsModel) applyLocalModel(lm local.Model) (tea.Model, tea.Cmd) {
+	models := m.mgr.Local
+	switch {
+	case models.Installed(lm):
+		m.confirm = newConfirmModal(m.st, "Remove model", "Remove "+lm.Name+" ("+
+			textfmt.FormatSize(lm.Size)+")? It can be downloaded again.", "Remove", true)
+		m.confirmRun = func() tea.Cmd {
+			return func() tea.Msg {
+				if err := models.Remove(lm); err != nil {
+					return settingsNotice(textfmt.CleanError(err))
+				}
+				return settingsNotice("Removed " + lm.Name)
+			}
+		}
+		return m, nil
+	case models.Progress(lm).Running:
+		models.CancelDownload(lm)
+		m.notice = "Stopped downloading " + lm.Name + "; Enter resumes it"
+		return m, nil
+	}
+	if err := m.ensureLocalProvider(lm); err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, nil
+	}
+	running := m.downloading()
+	models.Download(m.ctx, lm)
+	m.notice = "Downloading " + lm.Name + " from Hugging Face"
+	if running {
+		return m, nil // a tick is already going
+	}
+	return m, localTickCmd()
+}
+
+// ensureLocalProvider adds the Local provider, answering with lm, unless
+// there is one.
+func (m settingsModel) ensureLocalProvider(lm local.Model) error {
+	for _, p := range m.providers() {
+		if p.Kind == agent.ProviderLocal {
+			return nil
+		}
+	}
+	_, err := m.mgr.Agents.Db.CreateProvider(agent.AgentProvider{Name: "Local",
+		Kind: agent.ProviderLocal, Model: lm.ID})
+	return err
+}
+
+// nextLocalModel moves local provider p to the next downloaded model.
+func (m settingsModel) nextLocalModel(p agent.AgentProvider) settingsModel {
+	var have []local.Model
+	for _, lm := range local.Catalog {
+		if m.mgr.Local != nil && m.mgr.Local.Installed(lm) {
+			have = append(have, lm)
+		}
+	}
+	if len(have) == 0 {
+		m.notice = "Download a model under local models first"
+		return m
+	}
+	cur := p.Model
+	p.Model = have[0].ID
+	for i, lm := range have {
+		if lm.ID == cur {
+			p.Model = have[(i+1)%len(have)].ID
+		}
+	}
+	if err := m.mgr.Agents.Db.UpdateProvider(p); err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m
+	}
+	m.mgr.Agents.Reload()
+	return m
 }
 
 // nextTaskProvider gives task to the provider after the one doing it.
@@ -256,16 +369,27 @@ func (m settingsModel) providerLines(width, height int) []string {
 	labels := [...]string{"  Name", "  URL", "  Key from", "  Model"}
 	labelW := textfmt.DisplayWidth("Summarise with")
 	for _, r := range rows {
-		if r.p != nil && r.field == provHeader {
+		switch {
+		case r.p != nil && r.field == provHeader:
 			labelW = max(labelW, textfmt.DisplayWidth(r.p.Name))
+		case r.model != nil:
+			labelW = max(labelW, textfmt.DisplayWidth(r.model.Name))
 		}
 	}
 	var lines []string
 	for i := window(m.sel, height); i < len(rows) && len(lines) < height; i++ {
 		r := rows[i]
 		selected := i == m.sel
+		if r.model != nil && (i == 0 || rows[i-1].model == nil) {
+			lines = append(lines, "", m.st.modalRule("local models", width))
+			if len(lines) >= height {
+				break
+			}
+		}
 		var label, value string
 		switch {
+		case r.model != nil:
+			label, value = r.model.Name, m.localModelValue(*r.model)
 		case r.task != "":
 			for _, t := range aiTasks {
 				if t.task == r.task {
@@ -274,7 +398,7 @@ func (m settingsModel) providerLines(width, height int) []string {
 			}
 			value = m.st.subtle.Render("no provider")
 			if p, err := m.mgr.AI.Provider(r.task); err == nil {
-				value = p.Name + " " + m.st.subtle.Render(p.Model)
+				value = p.Name + " " + m.st.subtle.Render(providerModelName(p))
 			}
 		case r.p == nil:
 			label = m.st.subtle.Render("+ Add provider…")
@@ -283,11 +407,14 @@ func (m settingsModel) providerLines(width, height int) []string {
 			if r.p.ID == m.openProvider {
 				marker = "▾ "
 			}
-			label, value = marker+r.p.Name, m.st.subtle.Render(r.p.Model)
+			label, value = marker+r.p.Name, m.st.subtle.Render(providerModelName(*r.p))
 		case r.field == provDelete:
 			label = styleError.Render("  Delete provider…")
 		default:
 			label, value = labels[r.field], providerField(*r.p, r.field)
+			if r.field == provModel {
+				value = providerModelName(*r.p)
+			}
 			if r.field == provEnv && value == "" {
 				value = "no key"
 			} else if r.field == provEnv {
@@ -303,4 +430,30 @@ func (m settingsModel) providerLines(width, height int) []string {
 		lines = append(lines, m.st.formRow(label, value, labelW, selected, focused, width))
 	}
 	return lines
+}
+
+// providerModelName is p's model as shown: a local model by its name.
+func providerModelName(p agent.AgentProvider) string {
+	if lm, ok := local.Find(p.Model); ok && p.Kind == agent.ProviderLocal {
+		return lm.Name
+	}
+	return p.Model
+}
+
+// localModelValue is a local model's row value: its download size, context,
+// license and whether it is downloaded, downloading or failed to.
+func (m settingsModel) localModelValue(lm local.Model) string {
+	info := m.st.subtle.Render(fmt.Sprintf("%s · %dk context · %s ·", textfmt.FormatSize(lm.Size),
+		lm.Context/1024, lm.License))
+	pr := m.mgr.Local.Progress(lm)
+	switch {
+	case m.mgr.Local.Installed(lm):
+		return info + " " + m.st.accent.Render("downloaded")
+	case pr.Running:
+		return info + " " + fmt.Sprintf("%d%% of %s", pr.Done*100/max(1, pr.Total),
+			textfmt.FormatSize(pr.Total))
+	case pr.Err != nil:
+		return info + " " + styleError.Render(textfmt.CleanError(pr.Err))
+	}
+	return info + " " + m.st.accent.Render("get")
 }

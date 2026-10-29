@@ -8,6 +8,7 @@ import (
 
 	"wiregram/internal/agent"
 	"wiregram/internal/ai"
+	"wiregram/internal/ai/local"
 	"wiregram/internal/backend"
 	"wiregram/internal/store"
 )
@@ -33,8 +34,9 @@ const (
 // AITasks runs the user's own requests to a model: summaries and rewrites.
 // Bots are the agent runtime's.
 type AITasks struct {
-	Db    *agent.AgentDB
-	Store *store.DB
+	Db     *agent.AgentDB
+	Store  *store.DB
+	Models *local.Engine // nil where local models are not available
 }
 
 // Chunk is a piece of a streamed reply. The last one has Done set, and Err
@@ -89,7 +91,10 @@ func (t *AITasks) start(ctx context.Context, task string,
 	var engine ai.Engine
 	if err == nil {
 		s.Via = p.Name + " · " + p.Model
-		engine, err = engineFor(p)
+		if m, ok := local.Find(p.Model); ok && p.Kind == agent.ProviderLocal {
+			s.Via = p.Name + " · " + m.Name
+		}
+		engine, err = engineFor(p, t.Models)
 	}
 	go func() {
 		defer cancel()

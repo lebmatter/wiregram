@@ -18,6 +18,8 @@ Directories are created `0700` and `wiregram.db` is `0600`. Wiregram writes no J
 
 Downloaded media lives under `os.UserCacheDir()/wiregram/media` (typically
 `~/.cache/wiregram/media`) and is pruned after 7 days unseen.
+[Local models](/features/ai#local-models) download to `os.UserCacheDir()/wiregram/models`
+and stay until you remove them in **Settings → AI…** (or Reset).
 
 ::: tip Upgrading from an old version
 Older versions wrote `config.json`, `account.json`, `session/session.json` and

@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
+	github.com/goccy/go-llama v0.6.0
 	github.com/gotd/td v0.162.0
 	github.com/yuin/gopher-lua v1.1.1
 	go.mau.fi/whatsmeow v0.0.0-20260929112325-8b41cfe6d9c4
@@ -44,6 +45,7 @@ require (
 	github.com/go-faster/jx v1.2.0 // indirect
 	github.com/go-faster/xor v1.0.0 // indirect
 	github.com/go-faster/yaml v0.4.6 // indirect
+	github.com/goccy/llamawasm2go v0.5.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gotd/ige v0.3.0 // indirect
 	github.com/gotd/log v0.1.0 // indirect

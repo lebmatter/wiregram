@@ -11,7 +11,9 @@ import (
 
 	"wiregram/internal/account"
 	"wiregram/internal/agent"
+	"wiregram/internal/ai/local"
 	"wiregram/internal/backend"
+	"wiregram/internal/config"
 	"wiregram/internal/plugin"
 	"wiregram/internal/textfmt"
 )
@@ -37,8 +39,12 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wiregram: bots disabled — %s\n", textfmt.CleanError(err))
 	} else {
+		if dir, err := config.ModelsDir(); err == nil {
+			m.Local = local.New(dir)
+			defer m.Local.Close()
+		}
 		m.Agents = account.NewAgentRuntime(ctx, db, m)
-		m.AI = &account.AITasks{Db: db, Store: m.Store}
+		m.AI = &account.AITasks{Db: db, Store: m.Store, Models: m.Local}
 		m.Agents.Start()
 		defer m.Agents.Stop()
 	}

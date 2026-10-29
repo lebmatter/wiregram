@@ -74,7 +74,8 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Esc</kbd>, <kbd>←</kbd>/<kbd>h</kbd> | Back to the accounts, then to where Settings was opened, or quit when there is nowhere to go back to |
 
 In **AI…**, <kbd>Enter</kbd> on **Summarise with** or **Rewrite with** gives the task to
-the next provider; on a provider it opens it, edits one of its rows in place
+the next provider; on a local model it downloads it, stops its download or asks to remove
+it; on a provider it opens it, edits one of its rows in place
 (<kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels), or runs **+ Add provider…** or
 **Delete provider…**.
 

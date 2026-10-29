@@ -972,7 +972,7 @@ func (rt *agentRuntime) attachPhoto(b backend.Backend, msg backend.Message, mess
 
 func (rt *agentRuntime) complete(ag *runningAgent, messages []ai.Message) (string, error) {
 	prov := ag.provider
-	engine, err := engineFor(prov)
+	engine, err := engineFor(prov, rt.mgr.Local)
 	if err != nil {
 		return "", err
 	}

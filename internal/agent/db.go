@@ -19,15 +19,19 @@ const PrimaryAccountKey = "primary"
 type AgentProvider struct {
 	ID        int64
 	Name      string
-	Kind      string // how its models are reached: ProviderOpenAI
+	Kind      string // how its models are reached: ProviderOpenAI or ProviderLocal
 	BaseURL   string
 	APIKeyEnv string
 	Model     string
 }
 
-// ProviderOpenAI is a server with an OpenAI-compatible API, remote or on
-// this machine.
-const ProviderOpenAI = "openai"
+// The kinds of provider. ProviderOpenAI is a server with an OpenAI-compatible
+// API, remote or on this machine; ProviderLocal runs downloaded models
+// in-process, its Model a local catalog ID and its BaseURL empty.
+const (
+	ProviderOpenAI = "openai"
+	ProviderLocal  = "local"
+)
 
 // AgentRecord is a Chat Agent, a bot in the UI. It belongs to one account and
 // answers its incoming DMs, all of them or only the chats in agent_chats; no

@@ -29,12 +29,16 @@ replace the app's. `skills/wiregram/SKILL.md` teaches agents to use them. The UI
 ## Build
 
 ```sh
-make                                   # CGO_ENABLED=0 go build, -X main.version=$(git describe)
+make                                   # CGO_ENABLED=0 GOAMD64=v2 go build, -X main.version=…
 ```
+
+amd64 builds need `GOAMD64=v2`: without it go-llama has no SIMD and a local model takes
+minutes per reply, so the local engine refuses to run (`slowBuild`). The first build
+compiles go-llama's generated engine and takes several minutes.
 
 To embed app credentials (users then skip the API-ID prompt):
 ```sh
-CGO_ENABLED=0 go build -buildvcs=false \
+CGO_ENABLED=0 GOAMD64=v2 go build -buildvcs=false \
   -ldflags "-X wiregram/internal/config.buildAPIID=${TG_API_ID} -X wiregram/internal/config.buildAPIHash=${TG_API_HASH}" \
   -o wiregram ./cmd/wiregram
 ```
@@ -71,7 +75,9 @@ These are project constraints, not suggestions:
   golang.org/x/image for scaling and WebP decoding of inline images, and
   for the email backend github.com/emersion/go-imap/v2 (pinned beta, with
   its go-message and go-sasl) and golang.org/x/oauth2 for Google sign-in,
-  and github.com/yuin/gopher-lua (pure Go Lua 5.1) for plugins.
+  and github.com/yuin/gopher-lua (pure Go Lua 5.1) for plugins, and
+  github.com/goccy/go-llama (llama.cpp translated to pure Go, with its
+  github.com/goccy/llamawasm2go engine) for local models.
   Standard library for everything else — no logging or CLI libraries.
 - **No cgo.** Must build with `CGO_ENABLED=0`.
 - **No TUI frameworks** other than charm.land/bubbletea/v2 and its
@@ -345,6 +351,14 @@ These are project constraints, not suggestions:
   (`internal/tui/inbox.go`) opens its private chats as Unread-style cards over the bot's
   connection (`BotBackend`); a chat opened there runs on that connection with its own
   subscription (`botEvents`), so the composer and approved suggestions send as the bot.
+- Local models (`internal/ai/local`): a fixed `Catalog` of small GGUF models, each pinned
+  to a Hugging Face commit and SHA-256, downloaded on request to
+  `os.UserCacheDir()/wiregram/models` (`config.ModelsDir`) with resume, and run in-process
+  by one `local.Engine` (`AccountManager.Local`) that loads one model at a time and frees it
+  after five idle minutes. Settings' AI pane lists them under a `local models` rule with
+  size, context, license and state; the first download adds a provider of kind `local`
+  (`agent.ProviderLocal`), whose Model row cycles through the downloaded models.
+  Downloads belong to the engine, not the screen, so they go on after Settings closes.
 - The user's own AI tasks (`account.AITasks`, `internal/account/aitasks.go`) run on the
   bots' providers: Summarise chat and Summarise thread in the actions modal, and `s` on an
   Unread card, stream a summary into a modal over the pane (`summaryModal`,
@@ -412,6 +426,7 @@ internal/
   config/            settings loading
   ai/                the provider-neutral model layer: the Engine interface and the
                      OpenAI-compatible engine (remote APIs, Ollama, llama-server), streaming
+  ai/local/          go-llama engine for downloaded models, their catalog and downloads
   backend/           the Backend interface and shared types (ChatEntry, Message,
                      events, capabilities, emoji catalog, upload classification,
                      the mpv command)

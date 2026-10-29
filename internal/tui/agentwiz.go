@@ -21,6 +21,8 @@ var providerPresets = []providerPreset{
 	{"openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "openai/gpt-4o-mini"},
 	{"openai", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o-mini"},
 	{"ollama", "Ollama (this machine)", "http://localhost:11434/v1", "", "llama3.2"},
+	// llama-server answers with the model it was started with, whatever is asked.
+	{"llama-server", "llama.cpp server (this machine)", "http://localhost:8080/v1", "", "default"},
 }
 
 func presetFor(a wizardAnswers) providerPreset {
