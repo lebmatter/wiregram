@@ -50,6 +50,7 @@ export default defineConfig({
           { text: 'Email', link: '/features/email' },
           { text: 'Themes', link: '/features/themes' },
           { text: 'AI Powered Chat Bots', link: '/features/chat-bots' },
+          { text: 'Summaries & Rewrites', link: '/features/ai' },
           { text: 'Plugins', link: '/features/plugins' },
           { text: 'Games', link: '/features/games' },
           { text: 'CLI', link: '/features/cli' },

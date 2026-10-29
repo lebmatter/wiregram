@@ -33,7 +33,8 @@ a bot sent.
 
 ## AI providers
 
-Providers are kept in **Settings → AI providers…**. The right pane lists each provider
+Providers are kept in **Settings → AI…**, under the rows that pick which provider
+[summarises and rewrites](/features/ai). The right pane lists each provider
 with its default model; <kbd>Enter</kbd> on one opens it (`▸`/`▾`) to show its rows:
 Name, URL, Key from (the environment variable) and Model. <kbd>Enter</kbd> edits a row in
 place, <kbd>Enter</kbd> again saves and <kbd>Esc</kbd> cancels. **Delete provider…** asks
@@ -65,7 +66,7 @@ wiregram
 Each expanded account in the chat sidebar (except email) ends with a **bots** section
 under its chats: one **✦ NAME @handle** row per bot with the number of chats it answers
 (or `all DMs`), then **+ new bot…**. Without a provider, an alert over the screen asks you to add one in
-Settings → AI providers first (any key or click closes it); otherwise a
+Settings → AI first (any key or click closes it); otherwise a
 short scripted wizard opens. Every step is a fixed choice or a typed value;
 <kbd>Esc</kbd> goes back a question.
 

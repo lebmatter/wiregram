@@ -47,6 +47,7 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Enter</kbd> | Open the chat; a mention opens selected, in its thread on Mattermost |
 | <kbd>t</kbd> | Open the newest reply's thread (Mattermost) |
 | <kbd>m</kbd> | Mark the chat read (Unread) |
+| <kbd>s</kbd> | [Summarise](/features/ai#summarising-a-chat) the card's messages (Unread) |
 | <kbd>Ctrl+F</kbd> | Search |
 | <kbd>r</kbd> | Reload |
 | <kbd>Esc</kbd> | Back |
@@ -72,7 +73,8 @@ an empty composer (or right-click it) to open its actions.
 | <kbd>Space</kbd> | Change the selected setting |
 | <kbd>Esc</kbd>, <kbd>←</kbd>/<kbd>h</kbd> | Back to the accounts, then to where Settings was opened, or quit when there is nowhere to go back to |
 
-In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows in place
+In **AI…**, <kbd>Enter</kbd> on **Summarise with** or **Rewrite with** gives the task to
+the next provider; on a provider it opens it, edits one of its rows in place
 (<kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels), or runs **+ Add provider…** or
 **Delete provider…**.
 
@@ -88,6 +90,7 @@ In **AI providers…**, <kbd>Enter</kbd> opens a provider, edits one of its rows
 | <kbd>Alt+T</kbd> | Open the selected message's thread beside the chat |
 | <kbd>Alt+G</kbd> | Challenge the chat to a [game](/features/games) (DMs and groups; or click <kbd>game+</kbd> at the end of the input) |
 | <kbd>Alt+H</kbd> | Toggle private mode (hide history) |
+| <kbd>Alt+R</kbd> | [Rewrite](/features/ai#rewriting-a-draft) the draft in the input |
 | <kbd>Alt+L</kbd> | Lock the chat (also locks when the terminal loses focus) |
 | <kbd>Alt+D</kbd> | Delete chat (you only) |
 | <kbd>Ctrl+Alt+D</kbd> | Delete chat (both sides) |

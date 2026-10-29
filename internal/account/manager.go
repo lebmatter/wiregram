@@ -120,6 +120,7 @@ type AccountManager struct {
 	Store    *store.DB
 	Accounts []*Account // Owned exclusively by the UI after discovery.
 	Agents   *agentRuntime
+	AI       *AITasks // nil when the agent database could not be opened
 	Plugins  *plugin.Manager
 	debug    *log.Logger // --debug's log, or nil
 	// changed is closed and replaced on every change, so every waiting screen

@@ -21,7 +21,7 @@ actions modal. A left button in the chat acts when let go: dragging instead sele
 pane's text in reverse and copies it with `tea.SetClipboard` and the desktop's tool (`systemCopy`: wl-copy, xclip, xsel,
 pbcopy) since VTE terminals ignore OSC 52 (`textDrag`,
 `internal/tui/selection.go`). The login and connecting
-screens leave the mouse to the terminal. Besides the TUI, `wiregram game` plays a game without a chat, and `wiregram accounts|chats|stream|send|dry-run|reset`
+screens leave the mouse to the terminal. Besides the TUI, `wiregram game` plays a game without a chat, and `wiregram accounts|chats|stream|send|dry-run|summarize|reset`
 (`cmd/wiregram/cli.go`) print JSON Lines for scripts and AI agents, naming accounts by backend
 and handle (`Account.Handle`); WhatsApp is refused there since a second connection would
 replace the app's. `skills/wiregram/SKILL.md` teaches agents to use them. The UI is BubbleTea v2 with lipgloss and bubbles; gotd/td provides MTProto. The entry point is `cmd/wiregram`; all other code lives in packages under `internal/`.
@@ -124,7 +124,7 @@ These are project constraints, not suggestions:
   selected, label, status, a chip per bot), the actions indented under them, the widget
   cards with a one-cell gutter, and a filled key strip (`keyStrip`) for its footer; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
-  Themes, Chat, Plugins, AI providers, Reset, Home, Quit), the selected account's settings on the right, each a row chosen
+  Themes, Chat, Plugins, AI, Reset, Home, Quit), the selected account's settings on the right, each a row chosen
   with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and bots
@@ -305,7 +305,8 @@ These are project constraints, not suggestions:
   (`all_chats`) or picks some (`agent_chats`), and the two exclude each other. The
   database enforces it (unique indexes and triggers, schema v5), and `SetAgentChats`
   saves a bot's choice in one transaction, naming the other bot when it conflicts.
-  Providers live in Settings' AI providers… (`internal/tui/providers.go`). New bot… creates
+  Providers live in Settings' AI… (`internal/tui/providers.go`), under a row per task
+  that picks the provider doing it (`account.TaskSetting`). New bot… creates
   one through the scripted wizard (`internal/tui/agentwiz.go`), then opens the bot pane
   (`internal/tui/agentpane.go`) in the chat's place: a `● live`/`● paused` chip (`p` or a
   click switches it), rows with a `›` caret and dim values (Delete bot… and Unregister…
@@ -344,6 +345,15 @@ These are project constraints, not suggestions:
   (`internal/tui/inbox.go`) opens its private chats as Unread-style cards over the bot's
   connection (`BotBackend`); a chat opened there runs on that connection with its own
   subscription (`botEvents`), so the composer and approved suggestions send as the bot.
+- The user's own AI tasks (`account.AITasks`, `internal/account/aitasks.go`) run on the
+  bots' providers: Summarise chat and Summarise thread in the actions modal, and `s` on an
+  Unread card, stream a summary into a modal over the pane (`summaryModal`,
+  `internal/tui/summary.go`: `c` copy, `r` again); Alt+R rewrites the composer's draft in
+  a style from a small picker, streamed into the card over the composer where a bot's
+  suggestion goes (`rewriteDraft`, `internal/tui/rewrite.go`: Use ^Y, Discard ^X).
+  Streams reach the root as `aiChunk`s through `listenAI`, numbered by `aiSeq` so a
+  closed task's are dropped and it is cancelled. Model text goes through `aiText` before
+  it is drawn.
 - Wizards (`internal/tui/wizard.go`) take fixed options or typed values only, never free
   chat with a model. Adding an account (network, server URL), an AI provider or a bot,
   and the sign-in prompts are form modals centred over

@@ -116,6 +116,9 @@ type chatViewModel struct {
 	// both current.
 	agentSent  map[string]string
 	suggestion string
+	// rewrite is the draft rewritten by a model, in the suggestion's place
+	// while it is up.
+	rewrite *rewriteDraft
 	// bot is set while the chat runs on a registered bot's own connection:
 	// its outgoing messages are the bot's, shown as ✦ NAME.
 	bot *inboxBot
@@ -973,6 +976,14 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 
 	m.notice = ""
 
+	if m.rewrite != nil && m.subMode == chatSubNone {
+		switch msg.String() {
+		case "ctrl+y":
+			return m.rewriteAct("use"), nil
+		case "ctrl+x", "esc":
+			return m.rewriteAct("discard"), nil
+		}
+	}
 	if m.suggestion != "" && m.subMode == chatSubNone && m.input.Value() == "" {
 		act := map[string]string{"ctrl+y": "approve", "ctrl+e": "edit", "ctrl+x": "discard"}[msg.String()]
 		if act != "" {
@@ -1068,6 +1079,10 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		if m.gameAllowed() {
 			return m, func() tea.Msg { return gameChallengeReq{} }
 		}
+	case "alt+r", "alt+R":
+		if strings.TrimSpace(m.input.Value()) != "" {
+			return m, func() tea.Msg { return chatRewriteReq{} }
+		}
 	case "alt+h", "alt+H":
 		m.privateMode = !m.privateMode
 		if m.privateMode {
@@ -1145,7 +1160,7 @@ func (m chatViewModel) openMenu() (chatViewModel, tea.Cmd) {
 }
 
 func (m chatViewModel) openMenuOn(sel backend.Message) (chatViewModel, tea.Cmd) {
-	m.menu = newMsgMenu(m.st, m.b, m.caps, sel, m.subMode)
+	m.menu = newMsgMenu(m.st, m.b, m.caps, sel, m.inThread(sel), m.subMode)
 	m.subMode = chatSubMenu
 	if !m.menu.reactions {
 		return m, nil
@@ -1274,6 +1289,13 @@ func (m chatViewModel) runMenuAction(c msgMenuChoice) (chatViewModel, tea.Cmd) {
 		return m, m.doPin(sel, idx, sel.Pinned)
 	case actDeleteForMe, actDeleteForAll:
 		return m.askDelete(c.kind == actDeleteForAll), nil
+	case actSummarize:
+		req := summaryRequest{entry: m.entry, msgs: m.summaryMessages()}
+		return m, func() tea.Msg { return req }
+	case actSummarizeThread:
+		root := m.threadRootOf(sel)
+		req := summaryRequest{entry: m.entry, msgs: m.threadMessages(root.ID), thread: true}
+		return m, func() tea.Msg { return req }
 	}
 	return m, nil
 }
@@ -1570,7 +1592,10 @@ func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	if m.gameButtonAt(msg.x, msg.y) && !msg.right {
 		return m, func() tea.Msg { return gameChallengeReq{} }
 	}
-	if act, ok := m.suggestionAt(msg.x, msg.y); ok && !msg.right {
+	if act, ok := m.cardAt(msg.x, msg.y); ok && !msg.right {
+		if m.rewrite != nil {
+			return m.rewriteAct(act), nil
+		}
 		return m, func() tea.Msg { return chatSuggestion{act} }
 	}
 	last := m.lastClick
@@ -1887,42 +1912,63 @@ func (m chatViewModel) composer(width int, focused bool) []string {
 	}
 	box := m.st.areaBox("message "+chatName(m.entry), m.replyBar(), m.input, width, border,
 		m.composerButtons())
-	if m.suggestion != "" && m.subMode == chatSubNone {
-		box = append(m.suggestionCard(width), box...)
+	if card := m.cardView(width); card != nil {
+		box = append(card, box...)
 	}
 	return box
 }
 
-// suggestionMaxLines caps the agent's reply in its card; Edit shows it all.
-const suggestionMaxLines = 6
+// cardMaxLines caps the text of the card over the composer; Edit shows it all.
+const cardMaxLines = 6
 
-// suggestionButtons are the card's buttons and their offsets in its last row.
-var suggestionButtons = []struct {
-	label, act string
-	at         int
-}{{"[Approve ^Y]", "approve", 0}, {"[Edit ^E]", "edit", 14}, {"[Discard ^X]", "discard", 25}}
+// cardButton is one of the buttons on the last row of the card over the
+// composer, two cells apart.
+type cardButton struct{ label, act string }
 
-// suggestionCard is the agent's waiting reply over the composer, with its
-// Approve, Edit and Discard buttons.
-func (m chatViewModel) suggestionCard(width int) []string {
-	text := strings.Split(lipgloss.NewStyle().Width(max(1, width-4)).Render(m.suggestion), "\n")
-	if len(text) > suggestionMaxLines {
-		text = append(text[:suggestionMaxLines-1], m.st.dim.Render("…"))
-	}
-	buttons := ""
-	for i, b := range suggestionButtons {
-		style := m.st.subtle
-		if i == 0 {
-			style = m.st.agent.Bold(true)
-		}
-		buttons += strings.Repeat(" ", b.at-textfmt.DisplayWidth(buttons)) + style.Render(b.label)
-	}
-	lines := append(text, buttons)
-	return strings.Split(renderBox(agentIcon+" Bot suggests", lines, width, len(lines)+2,
-		lipgloss.Color(m.st.theme.agent)), "\n")
+var suggestionButtons = []cardButton{
+	{"[Approve ^Y]", "approve"}, {"[Edit ^E]", "edit"}, {"[Discard ^X]", "discard"},
 }
 
-// suggestionAt is the card button at column x and row y of the chat pane.
+// composerCard is the card over the composer: a rewrite of the draft while
+// one is up, else the bot's waiting reply.
+func (m chatViewModel) composerCard() (title, text string, buttons []cardButton,
+	border color.Color, ok bool) {
+	if m.subMode != chatSubNone {
+		return "", "", nil, nil, false
+	}
+	if r := m.rewrite; r != nil {
+		return "✎ Rewrite", r.shown(m.st), r.buttons(), m.st.accentColor, true
+	}
+	return agentIcon + " Bot suggests", m.suggestion, suggestionButtons,
+		lipgloss.Color(m.st.theme.agent), m.suggestion != ""
+}
+
+// cardView draws the card over the composer, its first button in bold.
+func (m chatViewModel) cardView(width int) []string {
+	title, body, buttons, border, ok := m.composerCard()
+	if !ok {
+		return nil
+	}
+	text := strings.Split(lipgloss.NewStyle().Width(max(1, width-4)).Render(body), "\n")
+	if len(text) > cardMaxLines {
+		text = append(text[:cardMaxLines-1], m.st.dim.Render("…"))
+	}
+	row := ""
+	for i, b := range buttons {
+		style := m.st.subtle
+		if i == 0 {
+			style = lipgloss.NewStyle().Foreground(border).Bold(true)
+		}
+		if i > 0 {
+			row += "  "
+		}
+		row += style.Render(b.label)
+	}
+	lines := append(text, row)
+	return strings.Split(renderBox(title, lines, width, len(lines)+2, border), "\n")
+}
+
+// cardAt is the card button at column x and row y of the chat pane.
 // uploadButton is the upload+ chip at the end of the composers that opens
 // the upload modal, where the backend can upload.
 func (m chatViewModel) uploadButton() string {
@@ -2025,22 +2071,26 @@ func (m chatViewModel) uploadButtonAt(x, y int) (hit, thread bool) {
 	return false, false
 }
 
-func (m chatViewModel) suggestionAt(x, y int) (string, bool) {
-	if m.suggestion == "" || m.subMode != chatSubNone {
+func (m chatViewModel) cardAt(x, y int) (string, bool) {
+	_, _, buttons, _, ok := m.composerCard()
+	if !ok {
 		return "", false
 	}
 	inner, bodyHeight := m.width-4, m.height-2
 	composer := m.composer(inner, m.focused)
-	card := m.suggestionCard(inner)
+	card := m.cardView(inner)
 	// Under the chat box's top edge; the buttons are the card's last inner row.
 	if y != 1+bodyHeight-len(composer)+len(card)-2 {
 		return "", false
 	}
 	col := x - 4 // the chat box's and the card's edges and padding
-	for _, b := range suggestionButtons {
-		if col >= b.at && col < b.at+textfmt.DisplayWidth(b.label) {
+	at := 0
+	for _, b := range buttons {
+		w := textfmt.DisplayWidth(b.label)
+		if col >= at && col < at+w {
 			return b.act, true
 		}
+		at += w + 2
 	}
 	return "", false
 }
@@ -2160,8 +2210,13 @@ func (m chatViewModel) helpKeys() []helpKey {
 	if sel, ok := m.selectedMsg(); ok && m.inThread(sel) {
 		keys = append(keys, helpKey{"M-t", "open thread"})
 	}
-	if m.suggestion != "" {
+	switch {
+	case m.rewrite != nil:
+		keys = []helpKey{{"^Y", "use"}, {"^X", "discard"}, keys[0]}
+	case m.suggestion != "":
 		keys = []helpKey{{"^Y", "approve"}, {"^E", "edit"}, {"^X", "discard"}, keys[0]}
+	case strings.TrimSpace(m.input.Value()) != "":
+		keys = append(keys, helpKey{"M-r", "rewrite"})
 	}
 	if m.embedded {
 		keys = append(keys, helpKey{"tab", "chats"})

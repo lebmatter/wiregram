@@ -62,7 +62,7 @@ Switch them and set them up in Settings > Plugins. Your own go in
 ~/.config/wiregram/plugins/NAME.lua.
 
 AI powered chat bots answer an account's incoming private messages as you,
-through an OpenAI-compatible provider added in Settings > AI providers. Every account
+through an OpenAI-compatible provider added in Settings > AI. Every account
 but email can have several: under its chats sits a bots section with a
 NAME @handle row for each, which opens the bot's settings in place of the
 chat (a bot registered on Mattermost or Telegram also gets an Inbox row: its
@@ -74,6 +74,13 @@ no chat has two bots. The @handle is unique on the account and names the bot
 if it is registered on the network later. A violet ✦ marks accounts with a
 bot, the private chats one answers while on, chats with a reply waiting for
 approval, and the messages a bot sent. Messages go to the provider.
+
+The same providers summarise and rewrite for you, each task with the
+provider Settings > AI gives it. Summarise chat (and Summarise thread) in a
+message's actions, or s on an Unread card, streams a summary of the unread
+messages, else the newest loaded ones, into a modal: c copies it, r writes
+it again. Alt+R rewrites the draft in the input. The chat's messages go to
+that provider.
 
 The mouse wheel scrolls the list under the pointer, or the thread pane.
 Clicking a chat,
@@ -118,6 +125,10 @@ Commands (for scripts and AI coding tools; output is one JSON object per line):
       Print the reply the bot answering the chat would give to each message
       ID, or to the newest incoming message, without sending it. Works
       while the bot is paused.
+  wiregram summarize [-n COUNT] BACKEND ACCOUNT RECIPIENT
+      Print a summary of the chat's unread messages, or of its recent ones,
+      or of its newest COUNT, written by the provider Settings > AI sets
+      for summaries.
   wiregram game [-name NAME] [INVITE]
       Play a game without a chat. With no INVITE, pick a game and host
       it: the invite link is shown and copied, for the other player to
@@ -182,6 +193,7 @@ Keyboard shortcuts:
                       its thread on Mattermost
     t                 Open the newest reply's thread (Mattermost)
     m                 Mark the chat read (Unread)
+    s                 Summarise the card's messages (Unread)
     Ctrl+F            Search
     r                 Reload
     Esc               Back
@@ -211,9 +223,11 @@ Keyboard shortcuts:
                       the name) or <nick> (names padded to one column), or
                       Keep chats in memory: a reopened chat draws at once,
                       then refreshes from the server (on by default)
-    AI providers…     Enter opens a provider's name, URL, key variable and
-                      model, each edited in place, or deletes it (not while
-                      a bot uses it); Add provider… asks step by step
+    AI…               Enter on Summarise with or Rewrite with gives the task
+                      to the next provider; on a provider it opens its name,
+                      URL, key variable and model, each edited in place, or
+                      deletes it (not while a bot uses it); Add provider…
+                      asks step by step
     Reset…            Sign out of every account and delete all local data
                       (settings, plugins, bots, cached mail and media),
                       then start over as a fresh installation
@@ -236,6 +250,10 @@ Keyboard shortcuts:
     Alt+G             Challenge the chat to a game (DMs and groups; or click
                       game+ at the end of the input). Needs cloudflared
     Alt+H             Toggle private mode (hide history)
+    Alt+R             Rewrite the draft: pick a style (shorter, clearer,
+                      formal, friendly, fix grammar, translate to English)
+                      and the rewrite streams into a card over the input;
+                      Ctrl+Y puts it in the input, Ctrl+X or Esc drops it
     Alt+D             Delete chat (you only)
     Ctrl+Alt+D        Delete chat (both sides)
     Ctrl+Y            Approve the bot's suggested reply (empty input)

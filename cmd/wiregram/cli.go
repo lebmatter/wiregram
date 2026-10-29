@@ -25,13 +25,14 @@ import (
 
 // commands are the subcommands that run without the TUI.
 var commands = map[string]func(ctx context.Context, args []string) error{
-	"reset":    cmdReset,
-	"accounts": cmdAccounts,
-	"chats":    cmdChats,
-	"stream":   cmdStream,
-	"send":     cmdSend,
-	"dry-run":  cmdDryRun,
-	"game":     cmdGame,
+	"reset":     cmdReset,
+	"accounts":  cmdAccounts,
+	"chats":     cmdChats,
+	"stream":    cmdStream,
+	"send":      cmdSend,
+	"dry-run":   cmdDryRun,
+	"summarize": cmdSummarize,
+	"game":      cmdGame,
 }
 
 // connectTimeout bounds how long a command waits for an account to come online.
@@ -708,6 +709,74 @@ func cmdDryRun(ctx context.Context, args []string) error {
 		if err := out.Encode(line); err != nil {
 			return fmt.Errorf("write reply: %w", err)
 		}
+	}
+	return nil
+}
+
+// cmdSummarize prints a summary of the chat's unread messages, or of its
+// recent ones, written by the provider set for summaries.
+func cmdSummarize(ctx context.Context, args []string) error {
+	flags := flag.NewFlagSet("summarize", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	n := flags.Int("n", 0, "")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 3 || *n < 0 {
+		return fmt.Errorf("usage: wiregram summarize [-n COUNT] BACKEND ACCOUNT RECIPIENT")
+	}
+	s, err := openSession()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	a, err := findAccount(s.mgr, flags.Arg(0), flags.Arg(1))
+	if err != nil {
+		return err
+	}
+	db, err := agent.OpenAgentDB(s.db.SQL(), s.dir)
+	if err != nil {
+		return err
+	}
+	b, err := connect(ctx, s.mgr, a)
+	if err != nil {
+		return err
+	}
+	entries, _, err := b.Dialogs(ctx, false)
+	if err != nil {
+		return fmt.Errorf("load chats: %w", err)
+	}
+	ch, err := findChat(ctx, b, entries, flags.Arg(2))
+	if err != nil {
+		return err
+	}
+	history, err := b.History(ctx, ch)
+	if err != nil {
+		return fmt.Errorf("load messages: %w", err)
+	}
+	count := *n
+	if count == 0 {
+		count = ch.Unread
+	}
+	if count > 0 {
+		history = history[max(0, len(history)-count):]
+	}
+	tasks := &account.AITasks{Db: db, Store: s.db}
+	stream := tasks.Summarize(ctx, ch, history)
+	var summary strings.Builder
+	for c := range stream.C {
+		summary.WriteString(c.Text)
+		if c.Err != nil {
+			return c.Err
+		}
+	}
+	_, title := chatKind(ch)
+	line := struct {
+		Chat      string `json:"chat"`
+		ChatTitle string `json:"chat_title"`
+		Messages  int    `json:"messages"`
+		Via       string `json:"via"`
+		Summary   string `json:"summary"`
+	}{ch.ID.Id, title, len(history), stream.Via, strings.TrimSpace(summary.String())}
+	if err := json.NewEncoder(os.Stdout).Encode(line); err != nil {
+		return fmt.Errorf("write summary: %w", err)
 	}
 	return nil
 }

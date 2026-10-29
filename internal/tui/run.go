@@ -38,6 +38,7 @@ func RunAccounts(ctx context.Context, m *account.AccountManager) error {
 		fmt.Fprintf(os.Stderr, "wiregram: bots disabled — %s\n", textfmt.CleanError(err))
 	} else {
 		m.Agents = account.NewAgentRuntime(ctx, db, m)
+		m.AI = &account.AITasks{Db: db, Store: m.Store}
 		m.Agents.Start()
 		defer m.Agents.Stop()
 	}

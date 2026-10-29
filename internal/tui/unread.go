@@ -252,6 +252,12 @@ func (m unreadModel) threadReply(c unreadCard) (backend.Message, bool) {
 	return backend.Message{}, false
 }
 
+// canSummarize reports whether s summarises card: a card of unread
+// messages, not of mentions or search hits.
+func (m unreadModel) canSummarize(card unreadCard) bool {
+	return !m.mentions && m.query == "" && len(card.msgs) > 0
+}
+
 // canMark reports whether m marks the card's chat read: unread chats of the
 // user's own account.
 func (m unreadModel) canMark(c unreadCard) bool {
@@ -309,6 +315,11 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 		case "m":
 			if m.selected < len(m.cards) && m.canMark(m.cards[m.selected]) {
 				return m.markRead()
+			}
+		case "s":
+			if m.selected < len(m.cards) && m.canSummarize(m.cards[m.selected]) {
+				card := m.cards[m.selected]
+				return m, func() tea.Msg { return summaryRequest{entry: card.entry, msgs: card.msgs} }
 			}
 		}
 		return m.scrolled(), nil
@@ -518,6 +529,9 @@ func (m unreadModel) cardLines(i, width int) []string {
 		if m.canMark(c) {
 			keys = append(keys, helpKey{"m", "mark read"})
 		}
+		if m.canSummarize(c) {
+			keys = append(keys, helpKey{"s", "summarise"})
+		}
 		var parts []string
 		for _, k := range keys {
 			parts = append(parts, m.st.accent.Render(k.key)+" "+m.st.subtle.Render(k.desc))
@@ -659,6 +673,9 @@ func (m unreadModel) helpKeys() []helpKey {
 		}
 		if m.canMark(c) {
 			keys = append(keys, helpKey{"m", "mark read"})
+		}
+		if m.canSummarize(c) {
+			keys = append(keys, helpKey{"s", "summarise"})
 		}
 	}
 	return append(keys, helpKey{"^F", "search"}, helpKey{"r", "reload"}, helpKey{"esc", "back"})

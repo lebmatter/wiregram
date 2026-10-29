@@ -11,6 +11,7 @@ wiregram stream                                     # incoming messages, every a
 wiregram stream mattermost alice bob                # one account, or one chat
 wiregram send mattermost alice bob "On my way"      # or pipe the message on stdin
 wiregram dry-run mattermost alice bob               # the bot's reply, never sent
+wiregram summarize mattermost alice town-square    # a summary of what is unread
 wiregram reset                                      # sign out everywhere, delete all data
 ```
 
@@ -116,6 +117,21 @@ wiregram dry-run -message p9x2… -message q7d1… mattermost alice bob
 
 `agent` is the name of the bot that answered. It refuses group chats, chats no bot of the
 account answers, your own messages, and media messages when the bot understands text only.
+
+## summarize
+
+```sh
+wiregram summarize [-n COUNT] BACKEND ACCOUNT RECIPIENT
+```
+
+Prints a [summary](/features/ai) of the chat's unread messages, or of its recent ones
+when none are unread, or of its newest `COUNT` with `-n`. The provider is the one
+**Settings → AI…** gives summaries. `-n` goes before the positional arguments.
+
+```json
+{"chat":"4hd9…","chat_title":"Town Square","messages":14,"via":"OpenRouter · openai/gpt-4o-mini",
+ "summary":"- Ana moved Thursday's meeting to 7pm.\n- You were asked to bring the next book."}
+```
 
 ## reset
 

@@ -17,7 +17,7 @@ import (
 )
 
 // settingsActions follow the accounts in the left pane, under a separator.
-var settingsActions = []string{"+ Add account…", "Themes…", "Chat…", "Plugins…", "AI providers…", "Reset…", "Home",
+var settingsActions = []string{"+ Add account…", "Themes…", "Chat…", "Plugins…", "AI…", "Reset…", "Home",
 	"Quit"}
 
 const (
@@ -132,7 +132,7 @@ func (m settingsModel) onChat() bool { return m.left == len(m.accounts)+actionCh
 // onPlugins reports whether the Plugins row is chosen, whose pane lists plugins.
 func (m settingsModel) onPlugins() bool { return m.left == len(m.accounts)+actionPlugins }
 
-// onProviders reports whether the AI providers row is chosen.
+// onProviders reports whether the AI row is chosen.
 func (m settingsModel) onProviders() bool { return m.left == len(m.accounts)+actionProviders }
 
 // onReset reports whether the Reset row is chosen.
@@ -589,7 +589,7 @@ func (m settingsModel) frame() string {
 	} else if m.onPlugins() {
 		title = "Plugins"
 	} else if m.onProviders() {
-		title = "AI providers"
+		title = "AI"
 	}
 	var body string
 	switch {

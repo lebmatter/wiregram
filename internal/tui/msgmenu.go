@@ -26,6 +26,8 @@ const (
 	actPin
 	actDeleteForMe
 	actDeleteForAll
+	actSummarize
+	actSummarizeThread
 )
 
 type msgAction struct {
@@ -60,8 +62,9 @@ type msgMenuChoice struct {
 
 const msgMenuWidth = 50
 
+// threaded is set when sel is in a thread, which can then be summarised.
 func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel backend.Message,
-	prev chatSubMode) msgMenuModel {
+	threaded bool, prev chatSubMode) msgMenuModel {
 	var acts []msgAction
 	add := func(ok bool, kind msgActionKind, label string) {
 		if ok {
@@ -86,6 +89,8 @@ func newMsgMenu(st *styles, b backend.Backend, caps backend.Capabilities, sel ba
 		time.Since(sel.Timestamp) <= caps.RevokeWindow
 	add(caps.DeleteForMe, actDeleteForMe, "Delete for me")
 	add(revocable, actDeleteForAll, "Delete for everyone")
+	add(true, actSummarize, "Summarise chat")
+	add(threaded, actSummarizeThread, "Summarise thread")
 	m := msgMenuModel{
 		st:      st,
 		b:       b,

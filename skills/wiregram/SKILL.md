@@ -77,6 +77,20 @@ wiregram dry-run -message p9x2… -message q7d1… mattermost alice bob
   own messages, and media messages for text-only bots.
 - `-message` goes before the positional arguments.
 
+## Summaries
+
+`summarize` prints a summary of a chat, written by the AI provider the user
+set for summaries in the app (Settings > AI). It covers the unread messages,
+else the recent ones, or the newest COUNT with `-n`. The chat's messages go to
+that provider.
+
+```sh
+wiregram summarize mattermost alice town-square
+wiregram summarize -n 50 mattermost alice town-square
+# {"chat":"4hd9…","chat_title":"Town Square","messages":14,
+#  "via":"OpenRouter · openai/gpt-4o-mini","summary":"- Ana moved …"}
+```
+
 ## Message lines
 
 `stream` prints one line per incoming message (never the user's own) until it

@@ -102,6 +102,12 @@ type tuiModel struct {
 	game       *gameModel
 	gamePicker *gamePickerModel
 	gameSeq    int
+	// summary streams a chat's summary over the pane; rewritePicker
+	// chooses how to rewrite the composer's draft. aiSeq numbers AI tasks,
+	// so a piece of one that has gone is told apart.
+	summary       *summaryModal
+	rewritePicker *rewritePicker
+	aiSeq         int
 }
 
 type tuiDialogsLoaded struct {
@@ -518,6 +524,18 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case chatSuggestion:
 		return m.suggestionAct(msg.act)
 
+	case summaryRequest:
+		return m.startSummary(msg)
+
+	case chatRewriteReq:
+		if m.chatOpen {
+			m.rewritePicker = &rewritePicker{st: m.st}
+		}
+		return m, nil
+
+	case aiChunk:
+		return m.aiArrived(msg)
+
 	case agentApproveDone:
 		if m.chatOpen {
 			m.chat.notice = "Bot's reply sent"
@@ -599,7 +617,13 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m.handleClick(msg.Mouse())
 
 	case tea.MouseWheelMsg:
-		if m.welcome != nil || m.alert != nil || m.profile != nil {
+		if m.welcome != nil || m.alert != nil || m.profile != nil || m.rewritePicker != nil {
+			return m, nil
+		}
+		if s := m.summary; s != nil {
+			if k, ok := wheelKey(msg); ok {
+				return m.summaryKey(k)
+			}
 			return m, nil
 		}
 		m.chat = m.chat.clearSelection()
@@ -1000,6 +1024,26 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.summary != nil {
+		if x, y, w, h := m.summaryRect(); !right && (mouse.X < x || mouse.X >= x+w ||
+			mouse.Y < y || mouse.Y >= y+h) {
+			return m.closeSummary(), nil
+		}
+		return m, nil
+	}
+	if p := m.rewritePicker; p != nil {
+		x, y, w, h := m.rewritePickerRect()
+		if right {
+			return m, nil
+		}
+		if mouse.X < x || mouse.X >= x+w || mouse.Y < y || mouse.Y >= y+h {
+			m.rewritePicker = nil
+		} else if style, ok := p.click(mouse.Y - y); ok {
+			m.rewritePicker = nil
+			return m.startRewrite(style)
+		}
+		return m, nil
+	}
 	if p := m.gamePicker; p != nil {
 		x, y, w, h := m.gamePickerRect()
 		if right {
@@ -1164,6 +1208,19 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	if m.chatOpen && (msg.String() == "alt+l" || msg.String() == "alt+L") {
 		m.chat.locked = true
+		return m, nil
+	}
+	if m.summary != nil {
+		return m.summaryKey(msg)
+	}
+	if p := m.rewritePicker; p != nil {
+		style, done := p.key(msg.String())
+		if done {
+			m.rewritePicker = nil
+		}
+		if style >= 0 {
+			return m.startRewrite(style)
+		}
 		return m, nil
 	}
 	if m.wiz != nil {
@@ -1450,6 +1507,12 @@ func (m tuiModel) footer() string {
 	if m.gamePicker != nil {
 		return m.st.footer(m.gamePicker.helpKeys(), "", m.width)
 	}
+	if m.summary != nil {
+		return m.st.footer([]helpKey{{"↑↓", "scroll"}, {"esc", "close"}}, m.notice, m.width)
+	}
+	if m.rewritePicker != nil {
+		return m.st.footer(rewritePickerKeys, "", m.width)
+	}
 	if g := m.game; g != nil && m.focus == focusGame && m.gameShown() {
 		keys := g.helpKeys()
 		if g.confirm != nil {
@@ -1598,6 +1661,14 @@ func (m tuiModel) render() string {
 	if m.gamePicker != nil {
 		x, y, _, _ := m.gamePickerRect()
 		body = m.st.fadeUnder(body, m.gamePicker.View(), x, y)
+	}
+	if m.rewritePicker != nil {
+		x, y, _, _ := m.rewritePickerRect()
+		body = m.st.fadeUnder(body, m.rewritePicker.View(), x, y)
+	}
+	if m.summary != nil {
+		x, y, _, _ := m.summaryRect()
+		body = m.st.fadeUnder(body, m.summary.View(m.paneWidth(), bodyHeight), x, y)
 	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		body = m.st.fadeUnder(body, c.View(), x, y)
@@ -1876,7 +1947,7 @@ func (m tuiModel) agentRow(id int64) (tuiModel, tea.Cmd) {
 	}
 	if len(providers) == 0 {
 		m.alert = newAlertModal(m.st, "No AI provider",
-			"Add an AI provider in Settings > AI providers first, then create the bot here.")
+			"Add an AI provider in Settings > AI first, then create the bot here.")
 		return m, nil
 	}
 	taken := make(map[string]string)

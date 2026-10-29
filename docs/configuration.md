@@ -38,8 +38,10 @@ Accounts are listed on the left, followed by:
   [Reopening a chat](/features/chats#reopening-a-chat). Saved as the `chat_cache`
   setting.
 - **Plugins…**: switch [plugins](/features/plugins) on and off and edit their settings.
-- **AI providers…**: add, edit and delete the providers
-  [AI powered chat bots](/features/chat-bots#ai-providers) use.
+- **AI…**: which provider [summarises and rewrites](/features/ai), then add, edit and
+  delete the providers those tasks and [AI powered chat bots](/features/chat-bots#ai-providers)
+  use. The task choices are saved as the `ai.task.summarize` and `ai.task.rewrite`
+  settings.
 - **Reset…**: sign out of every account and delete all local data, then start over as
   a fresh installation.
 - **Home**: back to the account chooser.

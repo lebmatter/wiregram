@@ -12,7 +12,7 @@ import (
 	"wiregram/internal/agent"
 )
 
-// The provider and agent wizards are form modals: Settings' AI providers adds
+// The provider and agent wizards are form modals: Settings' AI adds
 // providers, and an account's New bot… row creates a bot (a Chat Agent).
 
 type providerPreset struct{ value, name, url, env, model string }

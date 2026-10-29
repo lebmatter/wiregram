@@ -34,7 +34,7 @@ func providerError(p agent.AgentProvider, err error) error {
 		return err
 	}
 	if p.APIKeyEnv == "" {
-		return fmt.Errorf("%s needs an API key; set its Key from in Settings > AI providers", p.Name)
+		return fmt.Errorf("%s needs an API key; set its Key from in Settings > AI", p.Name)
 	}
 	return fmt.Errorf("%s rejected the API key in $%s; check it is a valid %s key",
 		p.Name, p.APIKeyEnv, p.Name)

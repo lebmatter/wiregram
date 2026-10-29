@@ -294,7 +294,7 @@ func (m agentPaneModel) apply(r agentRow) (agentPaneModel, tea.Cmd) {
 	case fieldProvider:
 		if len(m.providers) == 0 {
 			alert := agentBotAlert{title: "No AI provider",
-				text: "Add an AI provider in Settings > AI providers first."}
+				text: "Add an AI provider in Settings > AI first."}
 			return m, func() tea.Msg { return alert }
 		}
 		old, next := m.provider(), m.providers[0]

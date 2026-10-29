@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 
+	"wiregram/internal/account"
 	"wiregram/internal/agent"
 	"wiregram/internal/textfmt"
 )
@@ -13,7 +15,7 @@ import (
 // settingsNotice is a line for the footer after work done outside Update.
 type settingsNotice string
 
-// Fields of an opened provider in Settings' AI providers pane.
+// Fields of an opened provider in Settings' AI pane.
 const (
 	provHeader = iota - 1
 	provName
@@ -23,11 +25,19 @@ const (
 	provDelete
 )
 
-// providerRow is one row of the AI providers pane: a provider, one of the
-// fields of the opened provider, or Add provider… (p nil).
+// providerRow is one row of Settings' AI pane: a task and the provider that
+// does it, a provider, one of the fields of the opened provider, or Add
+// provider… (p nil, no task).
 type providerRow struct {
+	task  string
 	p     *agent.AgentProvider
 	field int
+}
+
+// aiTasks are the AI pane's task rows and their labels.
+var aiTasks = []struct{ task, label string }{
+	{account.TaskSummarize, "Summarise with"},
+	{account.TaskRewrite, "Rewrite with"},
 }
 
 func (m settingsModel) providers() []agent.AgentProvider {
@@ -46,6 +56,9 @@ func (m settingsModel) providerRows() []providerRow {
 		return nil
 	}
 	var rows []providerRow
+	for _, t := range aiTasks {
+		rows = append(rows, providerRow{task: t.task})
+	}
 	for _, p := range m.providers() {
 		rows = append(rows, providerRow{p: &p, field: provHeader})
 		if p.ID == m.openProvider {
@@ -78,6 +91,8 @@ func (m settingsModel) providersKey(k string) (tea.Model, tea.Cmd) {
 // asks before deleting it, or adds a provider through the wizard.
 func (m settingsModel) applyProvider(r providerRow) (tea.Model, tea.Cmd) {
 	switch {
+	case r.task != "":
+		return m.nextTaskProvider(r.task), nil
 	case r.p == nil:
 		wiz := newWizard(m.st, "add AI provider", providerSteps(), nil)
 		m.wiz = &wiz
@@ -103,6 +118,28 @@ func (m settingsModel) applyProvider(r providerRow) (tea.Model, tea.Cmd) {
 	in.SetValue(providerField(*r.p, r.field))
 	m.edit, m.editing = in, true
 	return m, m.edit.Focus()
+}
+
+// nextTaskProvider gives task to the provider after the one doing it.
+func (m settingsModel) nextTaskProvider(task string) settingsModel {
+	all := m.providers()
+	if len(all) == 0 {
+		m.notice = "Add a provider first"
+		return m
+	}
+	next := all[0]
+	if cur, err := m.mgr.AI.Provider(task); err == nil {
+		for i, p := range all {
+			if p.ID == cur.ID {
+				next = all[(i+1)%len(all)]
+			}
+		}
+	}
+	value := strconv.FormatInt(next.ID, 10)
+	if err := m.mgr.Store.SetSetting(account.TaskSetting(task), value); err != nil {
+		m.notice = textfmt.CleanError(err)
+	}
+	return m
 }
 
 func (m settingsModel) askDeleteProvider(p agent.AgentProvider) settingsModel {
@@ -217,7 +254,7 @@ func (m settingsModel) providerLines(width, height int) []string {
 	rows := m.providerRows()
 	focused := m.focus == paneItems
 	labels := [...]string{"  Name", "  URL", "  Key from", "  Model"}
-	labelW := textfmt.DisplayWidth("  Key from")
+	labelW := textfmt.DisplayWidth("Summarise with")
 	for _, r := range rows {
 		if r.p != nil && r.field == provHeader {
 			labelW = max(labelW, textfmt.DisplayWidth(r.p.Name))
@@ -229,6 +266,16 @@ func (m settingsModel) providerLines(width, height int) []string {
 		selected := i == m.sel
 		var label, value string
 		switch {
+		case r.task != "":
+			for _, t := range aiTasks {
+				if t.task == r.task {
+					label = t.label
+				}
+			}
+			value = m.st.subtle.Render("no provider")
+			if p, err := m.mgr.AI.Provider(r.task); err == nil {
+				value = p.Name + " " + m.st.subtle.Render(p.Model)
+			}
 		case r.p == nil:
 			label = m.st.subtle.Render("+ Add provider…")
 		case r.field == provHeader:
