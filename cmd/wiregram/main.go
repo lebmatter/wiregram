@@ -83,8 +83,9 @@ Local provider, so nothing leaves this machine.
 The same providers summarise and rewrite for you, each task with the
 provider Settings > AI gives it. Summarise chat (and Summarise thread) in a
 message's actions, or s on an Unread card, streams a summary of the unread
-messages, else the newest loaded ones, into a modal: c copies it, r writes
-it again. Alt+R rewrites the draft in the input. The chat's messages go to
+messages, else the newest loaded ones (with up to 20 earlier messages of any
+thread they reply in, as context), into a modal, names and what is asked of
+you in bold: c copies it, r writes it again. Alt+R rewrites the draft in the input. The chat's messages go to
 that provider.
 
 The mouse wheel scrolls the list under the pointer, or the thread pane.

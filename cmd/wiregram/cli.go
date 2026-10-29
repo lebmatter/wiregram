@@ -752,10 +752,11 @@ func cmdSummarize(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	history, err := b.History(ctx, ch)
+	loaded, err := b.History(ctx, ch)
 	if err != nil {
 		return fmt.Errorf("load messages: %w", err)
 	}
+	history := loaded
 	count := *n
 	if count == 0 {
 		count = ch.Unread
@@ -768,7 +769,7 @@ func cmdSummarize(ctx context.Context, args []string) error {
 		tasks.Models = local.New(dir)
 		defer tasks.Models.Close()
 	}
-	stream := tasks.Summarize(ctx, ch, history)
+	stream := tasks.Summarize(ctx, b, ch, history, loaded)
 	var summary strings.Builder
 	for c := range stream.C {
 		summary.WriteString(c.Text)

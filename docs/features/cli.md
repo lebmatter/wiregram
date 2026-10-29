@@ -126,7 +126,8 @@ wiregram summarize [-n COUNT] BACKEND ACCOUNT RECIPIENT
 
 Prints a [summary](/features/ai) of the chat's unread messages, or of its recent ones
 when none are unread, or of its newest `COUNT` with `-n`. The provider is the one
-**Settings → AI…** gives summaries. `-n` goes before the positional arguments.
+**Settings → AI…** gives summaries. People's names and what is asked of you are marked
+with `**…**`. `-n` goes before the positional arguments.
 
 ```json
 {"chat":"4hd9…","chat_title":"Town Square","messages":14,"via":"OpenRouter · openai/gpt-4o-mini",

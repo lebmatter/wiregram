@@ -81,8 +81,9 @@ wiregram dry-run -message p9x2… -message q7d1… mattermost alice bob
 
 `summarize` prints a summary of a chat, written by the AI provider the user
 set for summaries in the app (Settings > AI). It covers the unread messages,
-else the recent ones, or the newest COUNT with `-n`. The chat's messages go to
-that provider.
+else the recent ones, or the newest COUNT with `-n`, with up to 20 earlier
+messages of any thread they reply in as context. Names and what is asked of the
+user are marked `**…**`. The chat's messages go to that provider.
 
 ```sh
 wiregram summarize mattermost alice town-square

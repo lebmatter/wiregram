@@ -1290,11 +1290,13 @@ func (m chatViewModel) runMenuAction(c msgMenuChoice) (chatViewModel, tea.Cmd) {
 	case actDeleteForMe, actDeleteForAll:
 		return m.askDelete(c.kind == actDeleteForAll), nil
 	case actSummarize:
-		req := summaryRequest{entry: m.entry, msgs: m.summaryMessages()}
+		req := summaryRequest{b: m.b, entry: m.entry, msgs: m.summaryMessages(),
+			known: m.messages}
 		return m, func() tea.Msg { return req }
 	case actSummarizeThread:
 		root := m.threadRootOf(sel)
-		req := summaryRequest{entry: m.entry, msgs: m.threadMessages(root.ID), thread: true}
+		req := summaryRequest{b: m.b, entry: m.entry, msgs: m.threadMessages(root.ID),
+			known: m.messages, thread: true}
 		return m, func() tea.Msg { return req }
 	}
 	return m, nil

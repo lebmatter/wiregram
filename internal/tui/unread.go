@@ -319,7 +319,8 @@ func (m unreadModel) Update(msg tea.Msg) (unreadModel, tea.Cmd) {
 		case "s":
 			if m.selected < len(m.cards) && m.canSummarize(m.cards[m.selected]) {
 				card := m.cards[m.selected]
-				return m, func() tea.Msg { return summaryRequest{entry: card.entry, msgs: card.msgs} }
+				req := summaryRequest{b: m.b, entry: card.entry, msgs: card.msgs, known: card.msgs}
+				return m, func() tea.Msg { return req }
 			}
 		}
 		return m.scrolled(), nil

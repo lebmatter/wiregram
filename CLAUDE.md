@@ -362,7 +362,10 @@ These are project constraints, not suggestions:
 - The user's own AI tasks (`account.AITasks`, `internal/account/aitasks.go`) run on the
   bots' providers: Summarise chat and Summarise thread in the actions modal, and `s` on an
   Unread card, stream a summary into a modal over the pane (`summaryModal`,
-  `internal/tui/summary.go`: `c` copy, `r` again); Alt+R rewrites the composer's draft in
+  `internal/tui/summary.go`: `c` copy, `r` again), whose `**marked**` names and asks the
+  prompt asks for and `styles.highlights` draws in the bold accent, word by word. Replies
+  in threads bring up to 20 earlier messages of each thread, root kept
+  (`threadContext`: `ThreadFetcher`, else the loaded reply chains), as read context; Alt+R rewrites the composer's draft in
   a style from a small picker, streamed into the card over the composer where a bot's
   suggestion goes (`rewriteDraft`, `internal/tui/rewrite.go`: Use ^Y, Discard ^X).
   Streams reach the root as `aiChunk`s through `listenAI`, numbered by `aiSeq` so a

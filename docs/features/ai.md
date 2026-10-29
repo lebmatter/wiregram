@@ -59,12 +59,16 @@ details wrong, so prefer the 1.5B to 3B ones for summaries.
 - <kbd>s</kbd> on an [Unread](/features/unread-mentions) card summarises its messages.
 
 The summary is a few bullet points: topics, decisions, open questions and anything asked
-of you. It streams into a modal over the chat:
+of you, with people's names and the main things asked of you in bold accent. When the
+messages are replies in a thread, the model also reads up to 20 earlier messages of that
+thread (its first message and the newest replies) to understand them, and summarises only
+the new ones. Mattermost threads are fetched from the server; elsewhere the reply chains
+come from the messages loaded in the chat. It streams into a modal over the chat:
 
 | Key | Action |
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd>, wheel | Scroll |
-| <kbd>c</kbd> | Copy the summary |
+| <kbd>c</kbd> | Copy the summary, as plain text |
 | <kbd>r</kbd> | Write it again |
 | <kbd>Esc</kbd>, click outside | Close, stopping it if it is still being written |
 

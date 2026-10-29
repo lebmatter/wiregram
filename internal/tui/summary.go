@@ -55,10 +55,43 @@ func aiText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// summaryRequest asks the root to summarise msgs, oldest first, of entry.
+// highlights draws the **marked** parts of a summary, names and what is
+// asked of the user, in the bold accent. Each word is styled alone, so
+// wrapping never splits a styled run; an unclosed mark, mid-stream, styles
+// to the end.
+func (s *styles) highlights(text string) string {
+	style := s.accent.Bold(true)
+	var b strings.Builder
+	for i, part := range strings.Split(text, "**") {
+		if i%2 == 0 {
+			b.WriteString(part)
+			continue
+		}
+		for j, line := range strings.Split(part, "\n") {
+			if j > 0 {
+				b.WriteString("\n")
+			}
+			for k, word := range strings.Split(line, " ") {
+				if k > 0 {
+					b.WriteString(" ")
+				}
+				if word != "" {
+					b.WriteString(style.Render(word))
+				}
+			}
+		}
+	}
+	return b.String()
+}
+
+// summaryRequest asks the root to summarise msgs, oldest first, of entry on
+// b. known are the chat's loaded messages, where the threads msgs reply in
+// are found on backends that do not fetch threads.
 type summaryRequest struct {
+	b      backend.Backend
 	entry  backend.ChatEntry
 	msgs   []backend.Message
+	known  []backend.Message
 	thread bool
 }
 
@@ -108,7 +141,7 @@ func (s *summaryModal) lines(w int) []string {
 	case s.text == "" && s.err == nil:
 		out = []string{s.st.subtle.Render("Summarising…")}
 	case s.text != "":
-		text := aiText(s.text)
+		text := s.st.highlights(aiText(s.text))
 		if !s.done {
 			text += "▍"
 		}
@@ -180,7 +213,7 @@ func (m tuiModel) startSummary(req summaryRequest) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	m.aiSeq++
-	stream := m.mgr.AI.Summarize(m.ctx, req.entry, req.msgs)
+	stream := m.mgr.AI.Summarize(m.ctx, req.b, req.entry, req.msgs, req.known)
 	m.summary = &summaryModal{st: m.st, req: req, id: m.aiSeq, stream: stream, follow: true}
 	return m, listenAI(m.aiSeq, stream)
 }
@@ -210,7 +243,7 @@ func (m tuiModel) summaryKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		s.scroll(10, width, m.bodyHeight())
 	case "c":
 		if s.done && s.text != "" {
-			text := aiText(s.text)
+			text := strings.ReplaceAll(aiText(s.text), "**", "")
 			m.notice = "summary copied"
 			return m, tea.Batch(tea.SetClipboard(text), systemCopy(text))
 		}
