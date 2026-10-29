@@ -40,6 +40,8 @@ models**, each with its download size, context and license:
 | Llama 3.2 3B Instruct | 2.0 GB | Llama 3.2 |
 | Gemma 3 1B IT | 806 MB | Gemma |
 | SmolLM2 1.7B Instruct | 1.1 GB | Apache-2.0 |
+| LFM2.5 350M | 229 MB | LFM Open 1.0 |
+| LFM2.5 1.2B Instruct | 731 MB | LFM Open 1.0 |
 
 <kbd>Enter</kbd> on **get** downloads one into `~/.cache/wiregram/models`. The download
 goes on while you use Wiregram; <kbd>Enter</kbd> again stops it, and the next

@@ -66,6 +66,20 @@ var Catalog = []Model{
 		SHA256:  "decd2598bc2c8ed08c19adc3c8fdd461ee19ed5708679d1c54ef54a5a30d4f33",
 		Context: 8192, License: "Apache-2.0",
 	},
+	{
+		ID: "lfm2.5-350m", Name: "LFM2.5 350M",
+		Repo: "LiquidAI/LFM2.5-350M-GGUF", Commit: "657e078c94084481950a2d555a941481f715536b",
+		File: "LFM2.5-350M-Q4_K_M.gguf", Size: 229312224,
+		SHA256:  "7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4",
+		Context: 128000, License: "LFM Open 1.0",
+	},
+	{
+		ID: "lfm2.5-1.2b", Name: "LFM2.5 1.2B Instruct",
+		Repo: "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", Commit: "8ed288026e23958ad9dfa92d53ed773a8eee7125",
+		File: "LFM2.5-1.2B-Instruct-Q4_K_M.gguf", Size: 730895168,
+		SHA256:  "b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5",
+		Context: 128000, License: "LFM Open 1.0",
+	},
 }
 
 // Find is the catalog entry named id.
