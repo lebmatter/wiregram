@@ -1,13 +1,8 @@
 package account
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,33 +11,16 @@ import (
 	"time"
 
 	"wiregram/internal/agent"
+	"wiregram/internal/ai"
 	"wiregram/internal/backend"
 	"wiregram/internal/game"
 	"wiregram/internal/textfmt"
 )
 
-// aiMessage is one OpenAI-compatible chat message. Content is a string, or a
-// list of parts when an image is attached.
-type aiMessage struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
-}
-
-type aiPart struct {
-	Type     string     `json:"type"`
-	Text     string     `json:"text,omitempty"`
-	ImageURL *aiURLPart `json:"image_url,omitempty"`
-}
-
-type aiURLPart struct {
-	URL string `json:"url"`
-}
-
 const (
 	agentDebounce          = 2 * time.Second
 	agentWorkerIdle        = 5 * time.Minute
 	agentMaxKnowledgeBytes = 64 << 10
-	agentMaxResponseBytes  = 1 << 20
 	agentMaxImageBytes     = 5 << 20
 	agentMaxTokens         = 1024
 	agentContext           = 20
@@ -885,7 +863,7 @@ func (rt *agentRuntime) send(b backend.Backend, entry backend.ChatEntry, key Con
 // buildMessages is the conversation for the model. In the user's own chat
 // (self) the user is the one asking, so the rules for strangers do not apply.
 func (rt *agentRuntime) buildMessages(ag *runningAgent, history []agent.AgentLoggedMessage,
-	self bool) ([]aiMessage, error) {
+	self bool) ([]ai.Message, error) {
 	var system strings.Builder
 	instructions := strings.TrimSpace(ag.record.Prompt)
 	switch {
@@ -915,15 +893,15 @@ func (rt *agentRuntime) buildMessages(ag *runningAgent, history []agent.AgentLog
 			"rather than guessing. Reply with the message text alone.")
 	}
 
-	messages := make([]aiMessage, 0, len(history)+1)
-	messages = append(messages, aiMessage{Role: "system", Content: system.String()})
+	messages := make([]ai.Message, 0, len(history)+1)
+	messages = append(messages, ai.Message{Role: ai.RoleSystem, Text: system.String()})
 	for _, h := range history {
-		role, text := "user", h.Text
+		role, text := ai.RoleUser, h.Text
 		if h.Outgoing || h.IsAgentReply {
 			// An echo or a thread from the server still carries the prefix.
-			role, text = "assistant", ag.record.Unprefixed(text)
+			role, text = ai.RoleAssistant, ag.record.Unprefixed(text)
 		}
-		messages = append(messages, aiMessage{Role: role, Content: text})
+		messages = append(messages, ai.Message{Role: role, Text: text})
 	}
 	return messages, nil
 }
@@ -949,9 +927,9 @@ func (rt *agentRuntime) loadKnowledge(agentID int64) (string, error) {
 	return out.String(), nil
 }
 
-// attachPhoto adds the triggering photo to the last user message as an image
-// part. Only the newest photo is sent; earlier ones stay as text tags.
-func (rt *agentRuntime) attachPhoto(b backend.Backend, msg backend.Message, messages []aiMessage) error {
+// attachPhoto adds the triggering photo to the last user message. Only the
+// newest photo is sent; earlier ones stay as text tags.
+func (rt *agentRuntime) attachPhoto(b backend.Backend, msg backend.Message, messages []ai.Message) error {
 	if !strings.Contains(msg.MediaLabel, "[photo]") {
 		return nil
 	}
@@ -988,93 +966,26 @@ func (rt *agentRuntime) attachPhoto(b backend.Backend, msg backend.Message, mess
 		return nil
 	}
 	last := &messages[len(messages)-1]
-	text, _ := last.Content.(string)
-	last.Content = []aiPart{
-		{Type: "text", Text: text},
-		{Type: "image_url", ImageURL: &aiURLPart{URL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}},
-	}
+	last.Images = append(last.Images, ai.Image{MIME: mime, Data: data})
 	return nil
 }
 
-func (rt *agentRuntime) complete(ag *runningAgent, messages []aiMessage) (string, error) {
+func (rt *agentRuntime) complete(ag *runningAgent, messages []ai.Message) (string, error) {
 	prov := ag.provider
-	if err := agent.ValidateProviderURL(prov.BaseURL); err != nil {
+	engine, err := engineFor(prov)
+	if err != nil {
 		return "", err
-	}
-	var key string
-	if prov.APIKeyEnv != "" {
-		key = strings.TrimSpace(os.Getenv(prov.APIKeyEnv))
-		if key == "" {
-			return "", fmt.Errorf("set %s to use provider %s", prov.APIKeyEnv, prov.Name)
-		}
 	}
 	model := ag.record.Model
 	if model == "" {
 		model = prov.Model
 	}
-	body, err := json.Marshal(struct {
-		Model     string      `json:"model"`
-		Messages  []aiMessage `json:"messages"`
-		MaxTokens int         `json:"max_tokens"`
-	}{model, messages, agentMaxTokens})
+	reply, err := engine.Chat(rt.ctx, ai.Request{Model: model, Messages: messages,
+		MaxTokens: agentMaxTokens})
 	if err != nil {
-		return "", fmt.Errorf("encode request: %w", err)
+		return "", providerError(prov, err)
 	}
-
-	ctx, cancel := context.WithTimeout(rt.ctx, agentTimeout)
-	defer cancel()
-	url := strings.TrimRight(prov.BaseURL, "/") + "/chat/completions"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if key != "" {
-		request.Header.Set("Authorization", "Bearer "+key)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return "", fmt.Errorf("provider did not respond within %s", agentTimeout)
-		}
-		return "", fmt.Errorf("reach provider: %w", err)
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, agentMaxResponseBytes))
-	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
-	}
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		if prov.APIKeyEnv == "" {
-			return "", fmt.Errorf("%s needs an API key; set its Key from in Settings > AI providers",
-				prov.Name)
-		}
-		return "", fmt.Errorf("%s rejected the API key in $%s; check it is a valid %s key",
-			prov.Name, prov.APIKeyEnv, prov.Name)
-	}
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return "", fmt.Errorf("provider returned unreadable data (%s)", response.Status)
-	}
-	if parsed.Error.Message != "" {
-		return "", fmt.Errorf("provider: %s", textfmt.Plain(parsed.Error.Message))
-	}
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("provider returned %s", response.Status)
-	}
-	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
-		return "", fmt.Errorf("provider returned an empty reply")
-	}
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+	return reply.Text, nil
 }
 
 // Problem is the agent's last failure, or "" when its last reply worked.

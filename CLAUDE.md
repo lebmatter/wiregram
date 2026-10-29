@@ -400,6 +400,8 @@ internal/
   store/             wiregram.db: settings and per-account data (identity,
                      Telegram session, Matrix sync token)
   config/            settings loading
+  ai/                the provider-neutral model layer: the Engine interface and the
+                     OpenAI-compatible engine (remote APIs, Ollama, llama-server), streaming
   backend/           the Backend interface and shared types (ChatEntry, Message,
                      events, capabilities, emoji catalog, upload classification,
                      the mpv command)

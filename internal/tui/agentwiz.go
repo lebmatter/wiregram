@@ -121,7 +121,7 @@ func providerURL(a wizardAnswers) string {
 }
 
 func providerFromAnswers(a wizardAnswers) agent.AgentProvider {
-	return agent.AgentProvider{Name: a["name"], BaseURL: providerURL(a),
+	return agent.AgentProvider{Name: a["name"], Kind: agent.ProviderOpenAI, BaseURL: providerURL(a),
 		APIKeyEnv: a["env"], Model: a["model"]}
 }
 

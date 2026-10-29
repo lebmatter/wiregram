@@ -10,7 +10,7 @@ import (
 	"wiregram/internal/backend"
 )
 
-const currentDBVersion = 9
+const currentDBVersion = 10
 
 // PrimaryAccountKey names the account whose session lives in the config
 // directory itself rather than under accounts/.
@@ -19,10 +19,15 @@ const PrimaryAccountKey = "primary"
 type AgentProvider struct {
 	ID        int64
 	Name      string
+	Kind      string // how its models are reached: ProviderOpenAI
 	BaseURL   string
 	APIKeyEnv string
 	Model     string
 }
+
+// ProviderOpenAI is a server with an OpenAI-compatible API, remote or on
+// this machine.
+const ProviderOpenAI = "openai"
 
 // AgentRecord is a Chat Agent, a bot in the UI. It belongs to one account and
 // answers its incoming DMs, all of them or only the chats in agent_chats; no
@@ -181,6 +186,10 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 			_, err := tx.Exec(schemaV9)
 			return err
 		},
+		func(tx *sql.Tx) error {
+			_, err := tx.Exec(schemaV10)
+			return err
+		},
 	}
 	for v := version; v < currentDBVersion; v++ {
 		tx, err := d.db.Begin()
@@ -201,6 +210,11 @@ func (d *AgentDB) migrate(oldPrimaryKey string) error {
 	}
 	return nil
 }
+
+// schemaV10 names how each provider's models are reached.
+const schemaV10 = `
+ALTER TABLE providers ADD COLUMN kind TEXT NOT NULL DEFAULT 'openai';
+`
 
 // schemaV9 gives every agent the prefix its replies start with.
 const schemaV9 = `
@@ -419,7 +433,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_messages_retention
 // Provider CRUD.
 
 func (d *AgentDB) ListProviders() ([]AgentProvider, error) {
-	rows, err := d.db.Query(`SELECT id, name, base_url, api_key_env, model FROM providers ORDER BY name`)
+	rows, err := d.db.Query(`SELECT id, name, kind, base_url, api_key_env, model FROM providers
+		ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list providers: %w", err)
 	}
@@ -427,7 +442,7 @@ func (d *AgentDB) ListProviders() ([]AgentProvider, error) {
 	var out []AgentProvider
 	for rows.Next() {
 		var p AgentProvider
-		if err := rows.Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKeyEnv, &p.Model); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKeyEnv, &p.Model); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		out = append(out, p)
@@ -437,8 +452,8 @@ func (d *AgentDB) ListProviders() ([]AgentProvider, error) {
 
 func (d *AgentDB) CreateProvider(p AgentProvider) (int64, error) {
 	res, err := d.db.Exec(
-		`INSERT INTO providers (name, base_url, api_key_env, model) VALUES (?, ?, ?, ?)`,
-		p.Name, p.BaseURL, p.APIKeyEnv, p.Model,
+		`INSERT INTO providers (name, kind, base_url, api_key_env, model) VALUES (?, ?, ?, ?, ?)`,
+		p.Name, p.Kind, p.BaseURL, p.APIKeyEnv, p.Model,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create provider: %w", err)
@@ -468,8 +483,8 @@ func (d *AgentDB) DeleteProvider(id int64) error {
 func (d *AgentDB) GetProvider(id int64) (AgentProvider, error) {
 	var p AgentProvider
 	err := d.db.QueryRow(
-		`SELECT id, name, base_url, api_key_env, model FROM providers WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKeyEnv, &p.Model)
+		`SELECT id, name, kind, base_url, api_key_env, model FROM providers WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKeyEnv, &p.Model)
 	if err != nil {
 		return p, fmt.Errorf("get provider: %w", err)
 	}
