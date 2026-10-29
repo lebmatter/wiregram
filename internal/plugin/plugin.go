@@ -43,12 +43,18 @@ type Setting struct {
 }
 
 // Host gives plugins that declared the "messages" permission the user's
-// accounts and their unread chats.
+// accounts and their unread chats, and those that declared "aitasks" the
+// user's AI tasks. It never hands a plugin a provider or its key.
 type Host interface {
 	Accounts() []HostAccount
 	// Unread lists the account's chats with unread messages, each with up to
 	// n of its newest unread messages.
 	Unread(ctx context.Context, key string, n int) ([]UnreadChat, error)
+	// AIReady reports whether an AI provider is set up to run AI tasks.
+	AIReady() bool
+	// Catchup streams to onText a summary of the online accounts' unread
+	// messages, grouped by chat, and returns when it is done.
+	Catchup(ctx context.Context, onText func(string)) error
 }
 
 // HostAccount is one online account, as wiregram.accounts() returns it.
@@ -107,7 +113,7 @@ type Modal struct {
 
 // Plugin is one loaded script with its own Lua VM. mu serialises every call
 // into the VM; vmu guards the setting values, which Settings changes while an
-// update may hold mu.
+// update may hold mu, and the AI tasks the open modal started.
 type Plugin struct {
 	Name     string
 	Title    string
@@ -119,6 +125,7 @@ type Plugin struct {
 	client   *http.Client
 	hosts    []string
 	messages bool // declared the "messages" permission
+	aitasks  bool // declared the "aitasks" permission
 	startOn  bool
 	loading  bool
 	// background is set while update or click runs, the only calls that may
@@ -137,6 +144,7 @@ type Plugin struct {
 	enabled bool
 	values  map[string]string
 	changes uint64
+	tasks   []context.CancelFunc
 }
 
 // Manager holds every loaded plugin, built-in ones first, and why any others
@@ -210,6 +218,7 @@ func (m *Manager) Plugins() []*Plugin { return m.plugins }
 
 func (m *Manager) Close() {
 	for _, p := range m.plugins {
+		p.CloseModal()
 		p.mu.Lock()
 		p.L.Close()
 		p.mu.Unlock()
@@ -308,6 +317,20 @@ func (p *Plugin) Changes() uint64 {
 // ReadsMessages reports whether the plugin declared the "messages" permission.
 func (p *Plugin) ReadsMessages() bool { return p.messages }
 
+// UsesAITasks reports whether the plugin declared the "aitasks" permission.
+func (p *Plugin) UsesAITasks() bool { return p.aitasks }
+
+// CloseModal stops the AI tasks the plugin's modal started, once it closes.
+func (p *Plugin) CloseModal() {
+	p.vmu.Lock()
+	tasks := p.tasks
+	p.tasks = nil
+	p.vmu.Unlock()
+	for _, cancel := range tasks {
+		cancel()
+	}
+}
+
 // HasWidget reports whether the plugin draws a widget.
 func (p *Plugin) HasWidget() bool { return p.widget != nil }
 
@@ -369,6 +392,7 @@ func (p *Plugin) Click(ctx context.Context) (*Modal, error) {
 	if p.widget.click == nil {
 		return nil, nil
 	}
+	p.CloseModal() // the new click's modal replaces the open one
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)

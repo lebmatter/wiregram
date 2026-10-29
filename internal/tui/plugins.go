@@ -165,6 +165,9 @@ func (m settingsModel) pluginLines(width, height int) []string {
 			if r.p.ReadsMessages() {
 				value += m.st.dim.Render(" · reads messages")
 			}
+			if r.p.UsesAITasks() {
+				value += m.st.dim.Render(" · uses AI tasks")
+			}
 			lines = append(lines, m.st.formRow(r.p.Title, value, labelW, selected,
 				focused, width))
 			continue

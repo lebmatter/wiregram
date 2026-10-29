@@ -17,7 +17,7 @@ click outside closes it. Its key line, like the quit modal's, offers `esc close`
 
 | Plugin | What it shows | Reaches | Starts |
 |--------|---------------|---------|--------|
-| **Unread** | Per online account, unread messages in DMs and, apart from them, in groups and channels. Click the card for their newest messages | Your accounts (the `messages` permission) | on |
+| **Unread** | Per online account, unread messages in DMs and, apart from them, in groups and channels. Click the card for a [catch-up summary](/features/ai#catching-up) of them, chat by chat, when an AI provider is set up, else for their newest messages | Your accounts and AI tasks (the `messages` and `aitasks` permissions) | on |
 | **Weather** | Current conditions for one city, with a small animated sky. Click the card for today's forecast hour by hour. Settings: city, units, refresh | Open-Meteo | on |
 | **Calendar** | The next events of a Google Calendar, from its secret iCal address. Click the card for the upcoming and recent events by day. Settings: secret iCal URL, upcoming and recent days, refresh | calendar.google.com | off |
 | **Hacker News** | The top front-page stories | The Algolia HN API | off |
@@ -75,6 +75,11 @@ wiregram.widget { height = 2, render = render }
   can list your accounts and read their unread messages. Settings → Plugins marks
   it `reads messages`. Such a plugin could send what it reads to the hosts it declared,
   so check both before installing one.
+- **AI tasks by permission.** A plugin that declares `"aitasks"` may ask whether an AI
+  provider is set up and, with `"messages"` too, run a catch-up summary on it. It gets
+  only yes or no and the summary's text: never the provider, its address or its key.
+  Settings → Plugins marks it `uses AI tasks`. The summary sends your unread messages
+  to the provider that does the Catch up task.
 - **Plain text out.** Rendered lines are stripped of control characters, so a plugin
   can't send terminal escapes; the only styling is the [markup](#markup) below. The card
   clips them to its width.
@@ -86,12 +91,14 @@ wiregram.widget { height = 2, render = render }
 ::: v-pre
 | Call | Notes |
 |------|-------|
-| `wiregram.plugin{title=, hosts={…}, permissions={…}, on=}` | Load time only. `title` names the plugin in Settings and on its card. `hosts` is the allowlist for `http.get`. `permissions` may hold `"messages"`, for the two calls below. `on = true` starts a built-in on. |
+| `wiregram.plugin{title=, hosts={…}, permissions={…}, on=}` | Load time only. `title` names the plugin in Settings and on its card. `hosts` is the allowlist for `http.get`. `permissions` may hold `"messages"` and `"aitasks"`, for the calls below. `on = true` starts a built-in on. |
 | `wiregram.settings{{key=, label=, type="string"\|"choice", default=, options={…}, secret=}, …}` | Load time only. Settings lists them in this order and masks a `secret` string. Returns a read-only table of live values, e.g. `cfg.city`. |
 | `wiregram.widget{height=4, refresh=60, update=fn, render=fn, click=fn}` | Load time only. See [Widgets](#widgets). |
 | `wiregram.modal{title=, width=60, height=12, render=fn}` | From `click` only. See [Modals](#modals). |
 | `wiregram.accounts()` | Needs `messages`. The online accounts that have private chats (not email): `{key=, tag="TG1", label=, backend=}`. |
 | `wiregram.unread(key, n)` | Needs `messages`; from `update` or `click` only. The account's chats with unread messages, `{title=, dm=, count=, last=, messages={…}}`, where `dm` is true for a private chat, each with up to `n` (0–50, default 0) of its newest unread messages, oldest first: `{sender=, text=, time=, clock=}`. `clock` is the local time today, else the date. Returns `nil, err` when the account is offline or the fetch fails. |
+| `wiregram.aitasks.available()` | Needs `aitasks`. `true` when an AI provider is set up, so AI tasks can run, else `false`. It reads the database: call it from `update` or `click`, not `render`. |
+| `wiregram.aitasks.catchup()` | Needs `aitasks` and `messages`; from `click` only. Starts a [catch-up summary](/features/ai#catching-up) of the online accounts' unread messages and returns `{poll=fn}`. `poll()` returns the text so far, whether it is done and, when it failed, an error. The text is a `## NAME (TAG)` line per chat followed by `- ` bullets, with `**` around names and asks. It runs on after `click` returns and stops when the modal closes. |
 | `wiregram.kv.get(k)` / `.set(k, v)` / `.delete(k)` / `.keys()` | String values in `wiregram.db`: keys up to 256 bytes, values up to 64 KB, 1 MB in all. `set` and `delete` return `true`, or `nil, err`. |
 | `wiregram.http.get(url)` | Returns the body, or `nil, err`. HTTPS to declared hosts only (redirects included), 10 s, 1 MB, status 200. Not available at load time. |
 | `wiregram.json.decode(s)` | Returns a table, or `nil, err`. |
@@ -173,6 +180,31 @@ end
 
 wiregram.widget { height = 2, render = render, click = click }
 ```
+
+### Streaming an AI task
+
+```lua
+wiregram.plugin { title = "Catch up", permissions = { "messages", "aitasks" } }
+
+local function click()
+  if not wiregram.aitasks.available() then error("add an AI provider in Settings", 0) end
+  local task = wiregram.aitasks.catchup()
+  wiregram.modal { title = "Catch up", width = 70, height = 20, render = function(w)
+    local text, done, err = task.poll()
+    local lines = {}
+    for line in (text .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = wiregram.escape(line) end
+    if err then lines[#lines + 1] = "failed: " .. wiregram.escape(err) end
+    if not done then lines[#lines + 1] = "…" end
+    return lines
+  end }
+end
+
+wiregram.widget { height = 1, render = function() return { "Click to catch up" } end,
+  click = click }
+```
+
+The built-in Unread plugin lays the summary out with headings and bold names, and lays it
+out again only when more text came, since `render` runs every frame.
 
 ### Fetching data
 

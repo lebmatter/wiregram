@@ -148,10 +148,15 @@ These are project constraints, not suggestions:
   lines) centred over the chooser, faded behind it, over a key line (`widgetModalKeys`:
   close, and settings, which opens the plugin's row in Settings' Plugins). A plugin that declares the
   `messages` permission may call `wiregram.accounts()` and `wiregram.unread()`, served by
-  `pluginHost` (`internal/tui/pluginhost.go`) through `plugin.Host`.
+  `pluginHost` (`internal/tui/pluginhost.go`) through `plugin.Host`; one that declares
+  `aitasks` may call `wiregram.aitasks.available()` (whether a provider is set up, a bare
+  yes or no: plugins never see a provider or its key) and, with `messages`,
+  `wiregram.aitasks.catchup()` from a click, which streams into the modal through `poll`
+  and stops when the modal closes (`Plugin.CloseModal`).
   Settings' Plugins… row switches them and edits their settings
   (`internal/tui/plugins.go`). The built-ins are Unread (unread messages per account, DMs
-  apart from the rest; a click shows their newest messages), Weather (Open-Meteo; a click shows today hour by
+  apart from the rest; a click shows the catch-up summary when a provider is set up, else
+  their newest messages), Weather (Open-Meteo; a click shows today hour by
   hour), Calendar (a Google Calendar's secret iCal URL, a `secret` setting Settings
   masks; a click lists upcoming and recent events) and Hacker News (the Algolia HN API).
 - Each expanded account but email has an unread chip (`u`, `internal/tui/unread.go`): a column
@@ -359,8 +364,10 @@ These are project constraints, not suggestions:
   size, context, license and state; the first download adds a provider of kind `local`
   (`agent.ProviderLocal`), whose Model row cycles through the downloaded models.
   Downloads belong to the engine, not the screen, so they go on after Settings closes.
-- The user's own AI tasks (`account.AITasks`, `internal/account/aitasks.go`) run on the
-  bots' providers: Summarise chat and Summarise thread in the actions modal, and `s` on an
+- The user's own AI tasks (`account.AITasks`, `internal/account/aitasks.go`; called AI
+  tasks in the UI and docs) run on the bots' providers: Catch up (`TaskCatchup`,
+  `AITasks.Catchup`) summarises every online account's unread chats grouped by chat, a
+  `## name (TAG)` line per chat, for plugins; Summarise chat and Summarise thread in the actions modal, and `s` on an
   Unread card, stream a summary into a modal over the pane (`summaryModal`,
   `internal/tui/summary.go`: `c` copy, `r` again), whose `**marked**` names and asks the
   prompt asks for and `styles.highlights` draws in the bold accent, word by word. Replies

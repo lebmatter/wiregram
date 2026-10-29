@@ -126,6 +126,7 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if md := m.widgets.modal; md != nil {
 			x, y, w, h := m.widgetModalRect()
 			if msg.X < x || msg.X >= x+w || msg.Y < y || msg.Y >= y+h {
+				md.p.CloseModal()
 				m.widgets.modal = nil
 			} else if k, ok := widgetModalKeyAt(msg.X - x - 2); ok && msg.Y == y+h-2 {
 				return m.widgetModalKey(md, k)
@@ -409,6 +410,7 @@ func (m accountListModel) quitRect() (x, y, w, h int) {
 // widgetModalKey closes the widget's modal, or with s leaves for the plugin's
 // settings.
 func (m accountListModel) widgetModalKey(md *widgetModal, k string) (tea.Model, tea.Cmd) {
+	md.p.CloseModal()
 	m.widgets.modal = nil
 	if k == "s" {
 		m.result = &accountChoice{settings: true, plugin: md.p.Name}

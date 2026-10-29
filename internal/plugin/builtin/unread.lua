@@ -1,9 +1,10 @@
 -- Unread: the unread messages of every online account, in private chats and
--- elsewhere. A click opens their newest messages.
+-- elsewhere. A click opens a catch-up summary of them, by chat, when an AI
+-- provider is set up, else their newest messages.
 
 wiregram.plugin {
   title = "Unread",
-  permissions = { "messages" },
+  permissions = { "messages", "aitasks" },
   on = true,
 }
 
@@ -162,7 +163,78 @@ end
 
 local modalWidth = 80
 
+-- words splits a line of the summary into words, each marked bold when it
+-- sits between the model's **double asterisks**.
+local function words(line)
+  local out, bold = {}, false
+  for seg in (line .. "**"):gmatch("(.-)%*%*") do
+    for word in seg:gmatch("%S+") do out[#out + 1] = { text = word, bold = bold } end
+    bold = not bold
+  end
+  return out
+end
+
+-- styled appends one line of the summary to out, laid out n cells wide: "## "
+-- lines are chat headings, bullets wrap under their text, and bold words are
+-- marked up one by one, so a line break never splits markup.
+local function styled(line, n, out)
+  local heading = line:match("^##%s*(.*)")
+  if heading then
+    if #out > 0 then out[#out + 1] = "" end
+    out[#out + 1] = "*" .. wiregram.escape(cut((heading:gsub("%*", "")), n)) .. "*"
+    return
+  end
+  local first, rest = "  ", "  "
+  local bullet = line:match("^%s*[-*]%s+(.*)") or line:match("^%s*•%s*(.*)")
+  if bullet then line, first, rest = bullet, "  • ", "    " end
+  local text, tw, empty = first, width(first), true
+  for _, w in ipairs(words(line)) do
+    local ww = width(w.text)
+    if not empty and tw + 1 + ww > n then
+      out[#out + 1] = text
+      text, tw, empty = rest, width(rest), true
+    end
+    if not empty then text, tw = text .. " ", tw + 1 end
+    local s = wiregram.escape(w.text)
+    if w.bold then s = "*" .. s .. "*" end
+    text, tw, empty = text .. s, tw + ww, false
+  end
+  if not empty then out[#out + 1] = text end
+end
+
+-- summaryLines lays the catch-up summary so far out w cells wide.
+local function summaryLines(text, done, err, w)
+  local out = {}
+  for line in (text .. "\n"):gmatch("(.-)\n") do
+    if line:match("%S") then styled(line, w, out) end
+  end
+  if err then
+    if #out > 0 then out[#out + 1] = "" end
+    out[#out + 1] = "Couldn't catch up: " .. wiregram.escape(err)
+  elseif not done then
+    out[#out + 1] = #out == 0 and "Reading unread messages…" or "…"
+  end
+  return out
+end
+
+-- catchup opens a modal the summary streams into, laid out again only when
+-- more of it came or the width changed, since render runs every frame.
+local function catchup()
+  local task = wiregram.aitasks.catchup()
+  local shown = {}
+  wiregram.modal { title = "Catch up", width = modalWidth, height = 30,
+    render = function(w)
+      local text, done, err = task.poll()
+      if shown.w ~= w or shown.n ~= #text or shown.done ~= done then
+        shown = { w = w, n = #text, done = done,
+          lines = summaryLines(text, done, err, w) }
+      end
+      return shown.lines
+    end }
+end
+
 local function click()
+  if wiregram.aitasks.available() then return catchup() end
   detail = {}
   for _, a in ipairs(wiregram.accounts()) do
     local chats, err = wiregram.unread(a.key, perChat)

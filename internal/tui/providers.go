@@ -61,6 +61,7 @@ func (m settingsModel) downloading() bool {
 // aiTasks are the AI pane's task rows and their labels.
 var aiTasks = []struct{ task, label string }{
 	{account.TaskSummarize, "Summarise with"},
+	{account.TaskCatchup, "Catch up with"},
 	{account.TaskRewrite, "Rewrite with"},
 }
 

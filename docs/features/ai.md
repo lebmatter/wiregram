@@ -1,14 +1,15 @@
 # Summaries & Rewrites
 
-Wiregram can ask an AI model to summarise a chat or to rewrite what you are typing. It
+Wiregram can ask an AI model to summarise a chat, to catch you up on everything unread or
+to rewrite what you are typing. These are its **AI tasks**. They
 uses the same providers as [AI powered chat bots](/features/chat-bots#ai-providers): a
 [local model](#local-models) run inside Wiregram, or any OpenAI-compatible API, such as
 OpenRouter, OpenAI, Ollama or llama.cpp's `llama-server`. Replies stream in as the model
 writes them.
 
 ::: warning Your messages go to the provider
-A summary sends the chat's messages, and a rewrite your draft, to the provider that does
-the task. A local model, or a provider on this machine (Ollama, `llama-server`), keeps
+A summary sends the chat's messages, a catch-up your unread messages, and a rewrite your
+draft, to the provider that does the task. A local model, or a provider on this machine (Ollama, `llama-server`), keeps
 them on it.
 :::
 
@@ -17,6 +18,7 @@ them on it.
 **Settings → AI…** starts with a row per task:
 
 - **Summarise with**
+- **Catch up with**
 - **Rewrite with**
 
 <kbd>Enter</kbd> on one gives the task to the next provider in the list. Until you pick one,
@@ -74,6 +76,20 @@ come from the messages loaded in the chat. It streams into a modal over the chat
 
 A long chat is summarised in parts first, then the parts together.
 [`wiregram summarize`](/features/cli#summarize) does the same from the command line.
+
+## Catching up
+
+When an AI provider is set up, a click on the [Unread plugin](/features/plugins#built-in-plugins)'s
+card on the account chooser opens a catch-up summary instead of the newest messages. It
+reads up to 30 of the newest unread messages of every chat with unread messages, on every
+online account, and writes a short summary per chat under the chat's name and account
+tag: private chats first, then the rest, newest first. People's names and anything asked
+of you are in bold accent. It streams into the modal; closing the modal stops it. Without
+a provider, the card opens the newest unread messages as before.
+
+[Plugins](/features/plugins#lua-api) that declare the `aitasks` permission can run it too.
+They can ask whether a provider is set up, and get a yes or no, never the provider or its
+key.
 
 ## Rewriting a draft
 

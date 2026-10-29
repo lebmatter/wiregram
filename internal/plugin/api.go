@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -51,6 +53,12 @@ func (p *Plugin) registerAPI() {
 	jsonTable := L.NewTable()
 	L.SetFuncs(jsonTable, map[string]lua.LGFunction{"decode": luaJSONDecode})
 	api.RawSetString("json", jsonTable)
+	aiTable := L.NewTable()
+	L.SetFuncs(aiTable, map[string]lua.LGFunction{
+		"available": p.luaAIAvailable,
+		"catchup":   p.luaCatchup,
+	})
+	api.RawSetString("aitasks", aiTable)
 	L.SetGlobal("wiregram", api)
 }
 
@@ -61,8 +69,8 @@ func (p *Plugin) requireLoading(L *lua.LState, fn string) {
 }
 
 // wiregram.plugin{title=, hosts={…}, permissions={…}, on=}: the name Settings
-// shows, the hosts http.get may reach, what else it may read ("messages") and
-// whether a built-in starts on.
+// shows, the hosts http.get may reach, what else it may use ("messages",
+// "aitasks") and whether a built-in starts on.
 func (p *Plugin) luaPlugin(L *lua.LState) int {
 	p.requireLoading(L, "plugin")
 	t := L.CheckTable(1)
@@ -82,6 +90,8 @@ func (p *Plugin) luaPlugin(L *lua.LState) int {
 			switch lua.LVAsString(v) {
 			case "messages":
 				p.messages = true
+			case "aitasks":
+				p.aitasks = true
 			default:
 				L.ArgError(1, "unknown permission "+lua.LVAsString(v))
 			}
@@ -151,6 +161,73 @@ func (p *Plugin) luaUnread(L *lua.LState) int {
 		t.RawSetString("messages", msgs)
 		out.Append(t)
 	}
+	L.Push(out)
+	return 1
+}
+
+func (p *Plugin) requireAITasks(L *lua.LState, fn string) {
+	switch {
+	case !p.aitasks:
+		L.RaiseError("wiregram.%s needs permissions = { \"aitasks\" } in wiregram.plugin", fn)
+	case p.host == nil:
+		L.RaiseError("wiregram.%s is not available here", fn)
+	}
+}
+
+// wiregram.aitasks.available() reports whether an AI provider is set up, so
+// AI tasks can run; it says nothing about the provider.
+func (p *Plugin) luaAIAvailable(L *lua.LState) int {
+	p.requireAITasks(L, "aitasks.available")
+	L.Push(lua.LBool(p.host.AIReady()))
+	return 1
+}
+
+// aiTask is a streaming AI task a plugin started, read with its poll.
+type aiTask struct {
+	mu   sync.Mutex
+	text strings.Builder
+	done bool
+	err  error
+}
+
+// wiregram.aitasks.catchup() starts summarising the online accounts' unread
+// messages, grouped by chat, and returns {poll=fn}: poll() gives the text so
+// far, whether it is done, and the error when it failed. It runs on after
+// click returns, until it is done or the modal closes.
+func (p *Plugin) luaCatchup(L *lua.LState) int {
+	p.requireAITasks(L, "aitasks.catchup")
+	p.requireMessages(L, "aitasks.catchup")
+	if !p.clicking {
+		L.RaiseError("wiregram.aitasks.catchup can only be called from a widget's click")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.vmu.Lock()
+	p.tasks = append(p.tasks, cancel)
+	p.vmu.Unlock()
+	t := &aiTask{}
+	go func() {
+		defer cancel()
+		err := p.host.Catchup(ctx, func(s string) {
+			t.mu.Lock()
+			t.text.WriteString(s)
+			t.mu.Unlock()
+		})
+		t.mu.Lock()
+		t.done, t.err = true, err
+		t.mu.Unlock()
+	}()
+	out := L.NewTable()
+	out.RawSetString("poll", L.NewFunction(func(L *lua.LState) int {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		L.Push(lua.LString(t.text.String()))
+		L.Push(lua.LBool(t.done))
+		if t.err != nil {
+			L.Push(lua.LString(t.err.Error()))
+			return 3
+		}
+		return 2
+	}))
 	L.Push(out)
 	return 1
 }
