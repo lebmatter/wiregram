@@ -93,8 +93,8 @@ Questions and pickers open as modals over the screen, with everything behind the
   opened from a chat (<kbd>Ctrl+F</kbd>) also lists that chat's matching messages.
 - **Message actions** open with <kbd>Enter</kbd> on an empty composer or a right click.
   See [Chats](/features/chats#message-actions).
-- **Account connected.** A new account opens with a card listing the keys to get around
-  and search; any key or click closes it.
+- **Account connected.** A new account opens with a card saying wiregram works with the
+  mouse (click, right click, wheel and hover); any key or click closes it.
 
 ## Chat lock
 

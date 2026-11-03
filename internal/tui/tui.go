@@ -2088,7 +2088,7 @@ func tuiSelectChat(ctx context.Context, mgr *account.AccountManager, active *acc
 	m := newTuiModel(ctx, mgr, active, b, events, histories, entries, archiveUnread)
 	m.agentsCtx = agentsCtx
 	if welcome {
-		w := newWelcomeModal(m.st, b, m.twoPane())
+		w := newWelcomeModal(m.st, b)
 		m.welcome = &w
 	}
 	result, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()

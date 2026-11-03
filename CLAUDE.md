@@ -424,7 +424,8 @@ These are project constraints, not suggestions:
   sign-in form with the account's notice as a sentence (`sentence`); any key closes it
   and returns to the chooser.
 - A newly added account opens with an `Account connected` modal (`internal/tui/welcome.go`)
-  over its screen, faded behind it: navigation and search keys; any key or click closes it.
+  over its screen, faded behind it, saying wiregram works with the mouse (`welcomeMouse`:
+  click, right click, wheel, hover) and that keys work too; any key or click closes it.
 - Bots answer incoming DMs only (`BackendEvent.DM`); they never act in
   groups or channels and never start a chat. The exception is the user's chat with
   themselves (`Event.Self`, `Filter.Self`): one bot per account may tick it in the chat

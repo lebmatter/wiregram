@@ -10,53 +10,43 @@ import (
 )
 
 // welcomeModal greets an account the first time it opens after being added,
-// with the keys to get around. Any key or click closes it.
+// saying the mouse gets around. Any key or click closes it.
 type welcomeModal struct {
 	st    *styles
 	label string
-	keys  []helpKey
 }
 
-const welcomeModalWidth = 44
+const welcomeModalWidth = 48
 
-func newWelcomeModal(st *styles, b backend.Backend, twoPane bool) welcomeModal {
-	keys := []helpKey{
-		{"↑↓ k j", "select"},
-		{"enter", "open"},
-		{"esc", "back"},
-	}
-	if twoPane {
-		keys = append(keys, helpKey{"tab", "list ↔ chat"})
-	}
-	keys = append(keys, helpKey{"u", "unread"})
-	if _, ok := b.(backend.MentionFetcher); ok {
-		keys = append(keys, helpKey{"m", "mentions"})
-	}
-	keys = append(keys, helpKey{"a", "accounts"},
-		helpKey{"", ""},
-		helpKey{"^F", "search"},
-		helpKey{"ctrl+f", "search in chat"})
-	return welcomeModal{st: st, label: textfmt.Plain(b.AccountLabel()), keys: keys}
+// welcomeMouse is what the mouse does, as the card lists it.
+var welcomeMouse = []helpKey{
+	{"click", "open a chat, card or menu row"},
+	{"right click", "see what you can do with it"},
+	{"wheel", "scroll the chat"},
+	{"hover", "see what a click will act on"},
+}
+
+func newWelcomeModal(st *styles, b backend.Backend) welcomeModal {
+	return welcomeModal{st: st, label: textfmt.Plain(b.AccountLabel())}
 }
 
 func (m welcomeModal) size() (int, int) {
-	return welcomeModalWidth, 8 + len(m.keys) // borders, account, blanks, rules, keys
+	// Borders, account, blank, rule, the gestures, blank, the keys' note, key rule and keys.
+	return welcomeModalWidth, 9 + len(welcomeMouse)
 }
 
 func (m welcomeModal) View() string {
 	w, h := m.size()
 	glyph := lipgloss.NewStyle().Foreground(colorGreen).Render("●")
 	inner := w - 4
-	body := []string{glyph + " " + m.label, "", m.st.modalRule("navigate", inner)}
-	for _, k := range m.keys {
-		if k.key == "" {
-			body = append(body, "", m.st.modalRule("search", inner))
-			continue
-		}
-		pad := strings.Repeat(" ", max(1, 9-textfmt.DisplayWidth(k.key)))
-		body = append(body, "   "+m.st.accent.Render(k.key)+pad+k.desc)
+	body := []string{glyph + " " + m.label, "",
+		m.st.modalRule("wiregram works with the mouse", inner)}
+	for _, g := range welcomeMouse {
+		pad := strings.Repeat(" ", max(1, 13-textfmt.DisplayWidth(g.key)))
+		body = append(body, " "+m.st.accent.Render(g.key)+pad+g.desc)
 	}
-	body = append(body, m.st.modalKeys([]helpKey{{"any key", "start"}}, "", inner)...)
+	body = append(body, "", m.st.dim.Render(" keys work too: wiregram -h lists them"))
+	body = append(body, m.st.modalKeys([]helpKey{{"click", "start"}}, "", inner)...)
 	return m.st.modalBox("account connected", body, w, h)
 }
 

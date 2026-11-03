@@ -62,8 +62,10 @@ is needed, then the network's sign-in questions. See the setup guide for each:
 [Matrix](/setup-guides/matrix), [Mattermost](/setup-guides/mattermost),
 [Email](/setup-guides/email).
 
-A newly added account opens with an **Account connected** card listing the keys to get
-around and search. Any key or click closes it.
+A newly added account opens with an **Account connected** card saying wiregram works with
+the mouse: a click opens a chat, card or menu row, a right click shows what you can do with
+what is under it, the wheel scrolls the chat and hovering shows what a click will act on.
+Every key works too. Any key or click closes it.
 
 ## Removing an account
 
