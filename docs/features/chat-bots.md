@@ -99,8 +99,8 @@ some, a new bot starts with none and its chat picker opens right away.
 
 <kbd>Enter</kbd> on a bot's row opens the bot's settings in place of the chat. On top, a
 chip reads **● live** or **● paused**; <kbd>p</kbd> (or a click on it) pauses or resumes
-the bot, as does the Status row. <kbd>↑</kbd>/<kbd>↓</kbd> choose a row and <kbd>Enter</kbd>
-changes it:
+the bot, as does the Status row. <kbd>↑</kbd>/<kbd>↓</kbd> (or a click) choose a row and
+<kbd>Enter</kbd> (or a click on the selected row) changes it:
 
 | Row | Value |
 |-----|-------|

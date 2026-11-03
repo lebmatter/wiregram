@@ -44,7 +44,9 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   the selection back into view. Over any other list it moves the selection, as
   <kbd>↑</kbd>/<kbd>↓</kbd> would, without moving focus.
 - A **click** on a chat, account, card, menu row or picker entry opens it, as
-  <kbd>Enter</kbd> would.
+  <kbd>Enter</kbd> would. In **Settings** and a **bot's pane**, where <kbd>Enter</kbd>
+  changes a setting, a click only selects the row; a second click on it (or a double
+  click) changes it.
 - **Hovering** underlines, in the accent, what a click at the pointer would act on: a
   key, a sender's name or an `@name`, a reaction, the replies chip, an attachment's tag,
   a game invite, or a button such as **upload+**. Rows of lists show their selection

@@ -1157,6 +1157,7 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if !m.paneOpen() {
 		return m, nil
 	}
+	paneFocused := m.focus == focusChat
 	m.focus = focusChat
 	x := m.chatX(mouse.X)
 	switch {
@@ -1183,9 +1184,13 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		// The status chip pauses or resumes the bot.
 		m.agentPane, cmd = m.agentPane.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
 	case m.agentOpen:
+		// A click selects a row; a click on the row already selected acts on it.
 		if i, ok := m.agentPane.rowAt(mouse.Y); ok && !m.agentPane.editing {
-			m.agentPane.sel = i
-			m.agentPane, cmd = m.agentPane.Update(keyPress(tea.KeyEnter))
+			if paneFocused && i == m.agentPane.sel {
+				m.agentPane, cmd = m.agentPane.Update(keyPress(tea.KeyEnter))
+			} else {
+				m.agentPane.sel = i
+			}
 		}
 	case !right && m.chatOpen:
 		// A click acts when let go, so a drag can select text instead.

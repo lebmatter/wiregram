@@ -502,7 +502,8 @@ func (m settingsModel) paneAt(x int) settingsPane {
 	return paneItems
 }
 
-// handleClick selects the clicked row and acts on it as Enter would.
+// handleClick selects the clicked row; a click on the row already selected
+// acts on it as Enter would, so one stray click never changes a setting.
 func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	h := m.bodyHeight() - 2
 	row := mouse.Y - 1 // under the box's top edge
@@ -544,11 +545,14 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 		if i >= m.leftRows() {
 			return m, nil
 		}
+		if m.focus == paneAccounts && i == m.left {
+			return m.accountsKey("enter")
+		}
 		if i != m.left {
 			m.sel = 0
 		}
 		m.focus, m.left = paneAccounts, i
-		return m.accountsKey("enter")
+		return m, nil
 	}
 	if m.onThemes() {
 		x := mouse.X - 2 // inside the box's left edge and padding
@@ -559,15 +563,21 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		if m.focus == paneItems && i == m.sel {
+			return m.themesKey("enter")
+		}
 		m.focus, m.sel = paneItems, i
-		return m.themesKey("enter")
+		return m, nil
 	}
 	i := window(m.sel, h-itemsTop) + row - itemsTop
 	if i < 0 || i >= m.rightRows() {
 		return m, nil
 	}
+	if m.focus == paneItems && i == m.sel {
+		return m.itemsKey("enter")
+	}
 	m.focus, m.sel = paneItems, i
-	return m.itemsKey("enter")
+	return m, nil
 }
 
 func (m settingsModel) footer() string {

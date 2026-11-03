@@ -1,7 +1,8 @@
 # Themes
 
 Wiregram has two themes. Pick one in **Settings → Themes…**: each shows as a sample card,
-the arrows move between them, and <kbd>Enter</kbd> applies it to every screen. The choice
+the arrows (or a click) move between them, and <kbd>Enter</kbd> (or a click on the chosen
+card) applies it to every screen. The choice
 is saved as the `theme` setting.
 
 | Theme | Accent | Look |

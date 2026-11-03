@@ -12,7 +12,8 @@ is the left and right click, the wheel and hover (`tea.MouseModeAllMotion`): eac
 the pointer and its `View` underlines what a click there would act on (`hover`, `hoverSpan`,
 `styles.hovered`, `internal/tui/hover.go`), found by probing the click's own hit tests. The wheel scrolls the chat (`scrollChat`, from a
 `chatAnchor` that ↑/↓ and jumps to a message clear) and the thread pane without moving the
-selection; over other lists it moves their selection as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter.
+selection; over other lists it moves their selection as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter, except in Settings and the bot pane, where
+Enter changes a setting: there a click selects and a click on the selected row acts.
 A click on a key label (`labelKey`, `keyAt`: the footers, `modalKeys` strips through
 `modalKeyAt`, the chooser's `keyStrip`, the selected Unread card's keys, the thread pane's
 `esc close`, the reply bar's `replyCancel`) acts as pressing it. A right click on a sidebar
@@ -141,7 +142,7 @@ These are project constraints, not suggestions:
   cards with a one-cell gutter, and a filled key strip (`keyStrip`) for its footer; its `Settings…` row and the sidebar's last row
   open Settings (`internal/tui/settings.go`): accounts on the left (then Add account,
   Themes, Chat, Plugins, AI, Reset, Home, Quit), the selected account's settings on the right, each a row chosen
-  with the arrows and changed with Enter — no per-setting shortcuts. Values sit in a column
+  with the arrows and changed with Enter or a second click — no per-setting shortcuts. Values sit in a column
   beside their labels (`formRow`), never at the far edge. Removing an account logs out on the server
   (`backend.LogoutBackend`) when online, then deletes its local data and bots
   (with their `agent_sent` rows): its `wiregram.db` rows, plus the directory of a WhatsApp account. Reset removes every account that way, then `main` deletes the config
