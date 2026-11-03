@@ -181,9 +181,13 @@ func (e *Engine) Chat(ctx context.Context, req ai.Request) (ai.Reply, error) {
 	}
 	stop := context.AfterFunc(ctx, func() { e.ctx.Interrupt() })
 	defer stop()
+	temperature := float32(0.7)
+	if req.Temperature > 0 {
+		temperature = req.Temperature
+	}
 	res, err := e.ctx.Stream(prompt, llama.Params{
 		NPredict:      min(req.MaxTokens, room),
-		Temperature:   0.7,
+		Temperature:   temperature,
 		TopK:          40,
 		TopP:          0.9,
 		MinP:          0.05,

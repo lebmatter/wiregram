@@ -38,6 +38,10 @@ type Request struct {
 	Model     string
 	Messages  []Message
 	MaxTokens int
+	// Temperature, when above zero, replaces the local engine's default. The
+	// OpenAI-compatible engine leaves it to the provider, since reasoning
+	// models refuse any but their own.
+	Temperature float32
 	// OnText receives each piece of the reply as it arrives, on the engine's
 	// goroutine; nil waits for the whole reply.
 	OnText func(string)

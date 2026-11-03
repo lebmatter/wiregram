@@ -144,7 +144,7 @@ func (h pluginHost) Catchup(ctx context.Context, onText func(string)) error {
 			e := unread[j]
 			chats = append(chats, account.CatchupChat{
 				Name: textfmt.Plain(chatName(e)) + " (" + tags[i] + ")",
-				DM:   e.IsDM, Unread: e.Unread, Messages: msgs[j]})
+				DM:   e.IsDM, Channel: e.IsChannel, Unread: e.Unread, Messages: msgs[j]})
 		}
 	}
 	s := h.mgr.AI.Catchup(ctx, chats)
