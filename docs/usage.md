@@ -45,6 +45,9 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   <kbd>↑</kbd>/<kbd>↓</kbd> would, without moving focus.
 - A **click** on a chat, account, card, menu row or picker entry opens it, as
   <kbd>Enter</kbd> would.
+- A **click on a key** does what pressing it would: in the footer, in a modal's key line,
+  under the selected Unread card, the thread pane's **esc close** and a reply's
+  **(esc cancels)**.
 - A **click on a message** selects it. A click on the **blank part of its row**, beside the
   text, also opens its thread beside the chat in wide terminals; on a message without
   replies the thread starts empty, so you can start one.

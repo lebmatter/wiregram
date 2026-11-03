@@ -119,8 +119,21 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseLeft {
 			break
 		}
+		if msg.Y == m.height-1 {
+			// A click on a key does what pressing it would.
+			keys, notice := m.stripKeys()
+			if k, ok := m.st.stripKeyAt(keys, notice, m.width, msg.X); ok {
+				return m.Update(k)
+			}
+			return m, nil
+		}
 		if m.quitting != nil {
-			x, y, _, _ := m.quitRect()
+			x, y, w, h := m.quitRect()
+			if msg.Y == y+h-2 {
+				if k, ok := labelKey(keyAt(m.quitting.stripKeys(), msg.X-x-2, 2, w-4)); ok {
+					return m.Update(k)
+				}
+			}
 			return m.quitAnswered(m.quitting.click(msg.X, msg.Y, x, y))
 		}
 		if md := m.widgets.modal; md != nil {
@@ -275,7 +288,14 @@ func (m accountListModel) itemAt(y int) (int, bool) {
 	return r - 1, r-1 <= m.maxIndex()
 }
 
-func (m accountListModel) View() tea.View {
+// stripKeys is the keys and notice on the key strip at the bottom.
+func (m accountListModel) stripKeys() ([]helpKey, string) {
+	switch {
+	case m.quitting != nil:
+		return m.quitting.helpKeys(), ""
+	case m.widgets.modal != nil:
+		return append([]helpKey{{"↑↓", "scroll"}}, widgetModalKeys...), ""
+	}
 	notice := ""
 	if m.selected < len(m.accounts) {
 		notice = m.accounts[m.selected].Snapshot().Notice
@@ -283,17 +303,19 @@ func (m accountListModel) View() tea.View {
 	if p := m.mgr.Plugins; notice == "" && p != nil && len(p.Errors) > 0 {
 		notice = textfmt.CleanError(p.Errors[0])
 	}
+	return m.helpKeys(), notice
+}
+
+func (m accountListModel) View() tea.View {
 	body := m.frame()
-	keys := m.helpKeys()
 	if m.quitting != nil {
 		x, y, _, _ := m.quitRect()
 		body = m.st.fadeUnder(body, m.quitting.View(), x, y)
-		keys, notice = m.quitting.helpKeys(), ""
 	} else if md := m.widgets.modal; md != nil {
 		x, y, _, _ := m.widgetModalRect()
 		body = m.st.fadeUnder(body, md.box(m.st, m.width, m.bodyHeight()+1), x, y)
-		keys, notice = append([]helpKey{{"↑↓", "scroll"}}, widgetModalKeys...), ""
 	}
+	keys, notice := m.stripKeys()
 	content := body + "\n" + m.st.keyStrip(keys, notice, m.width)
 	v := tea.NewView(content)
 	v.AltScreen = true

@@ -174,17 +174,21 @@ func (s *summaryModal) add(c aiChunk, width, height int) {
 	}
 }
 
+// keys is the keys under the summary: copy and again once it is done.
+func (s *summaryModal) keys() []helpKey {
+	if !s.done {
+		return []helpKey{summaryKeys[0], summaryKeys[3]}
+	}
+	return summaryKeys
+}
+
 func (s *summaryModal) View(width, height int) string {
 	w, h := s.size(width, height)
 	lines := s.lines(w)
 	top := max(0, min(s.offset, len(lines)-s.rows(h)))
 	lines = lines[top:min(len(lines), top+s.rows(h))]
 	lines = fillLines(append([]string(nil), lines...), s.rows(h)+1)
-	keys := summaryKeys
-	if !s.done {
-		keys = []helpKey{summaryKeys[0], summaryKeys[3]}
-	}
-	lines = append(lines, s.st.modalKeys(keys, "", w-4)...)
+	lines = append(lines, s.st.modalKeys(s.keys(), "", w-4)...)
 	title := "summary · " + chatName(s.req.entry)
 	if s.req.thread {
 		title = "thread summary · " + chatName(s.req.entry)

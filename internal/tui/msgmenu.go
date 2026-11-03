@@ -256,13 +256,17 @@ func (m msgMenuModel) View(width int) string {
 		}
 		body = append(body, m.st.modalRow("", label, selected, inner))
 	}
+	body = append(body, m.st.modalKeys(m.stripKeys(), "", inner)...)
+	return m.st.modalBox(textfmt.Plain(m.title), body, w, h)
+}
+
+// stripKeys is the keys at the bottom of the modal.
+func (m msgMenuModel) stripKeys() []helpKey {
 	keys := []helpKey{{"↑↓", "select"}}
 	if m.reactions {
 		keys = append(keys, helpKey{"←→", "react"})
 	}
-	keys = append(keys, helpKey{"enter", "choose"}, helpKey{"esc", "close"})
-	body = append(body, m.st.modalKeys(keys, "", inner)...)
-	return m.st.modalBox(textfmt.Plain(m.title), body, w, h)
+	return append(keys, helpKey{"enter", "choose"}, helpKey{"esc", "close"})
 }
 
 // hit maps column x and row y of the box, counted from its top-left corner,

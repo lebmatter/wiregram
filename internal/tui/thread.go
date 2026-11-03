@@ -251,6 +251,16 @@ func (m chatViewModel) threadBox(width, height int, focused bool) string {
 	return renderTitledBox(left, right, body, width, height, m.st.border(focused))
 }
 
+// threadCloseAt reports whether column x and row y of the pane hit esc close
+// in the thread pane's top edge.
+func (m chatViewModel) threadCloseAt(x, y int) bool {
+	if m.subMode != chatSubThread || y != 0 {
+		return false
+	}
+	end := m.width - 2 // the label and a space each side end before ─╮
+	return x >= end-len(" esc close ") && x < end
+}
+
 func (m chatViewModel) threadComposer(inner int, focused bool) []string {
 	return m.st.areaBox("reply in thread", nil, m.threadInput, inner, m.st.border(focused),
 		m.uploadButton())

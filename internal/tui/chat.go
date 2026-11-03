@@ -1189,6 +1189,14 @@ func (m chatViewModel) modalSize() (int, int) {
 	return chatModalSize(m.width, m.height)
 }
 
+// modalKeys is the key strip of the modal open over the chat.
+func (m chatViewModel) modalKeys() []helpKey {
+	if m.subMode == chatSubMenu {
+		return m.menu.stripKeys()
+	}
+	return m.uploadHelp()
+}
+
 func (m chatViewModel) modalView() string {
 	switch m.subMode {
 	case chatSubUpload:
@@ -1589,6 +1597,14 @@ func (m chatViewModel) openMediaCmd(sel backend.Message, player string) tea.Cmd 
 func (m chatViewModel) handleClick(msg chatClick) (chatViewModel, tea.Cmd) {
 	switch m.subMode {
 	case chatSubMenu, chatSubUpload, chatSubConfirmChatDelete, chatSubConfirmMsgDelete:
+		return m, nil
+	}
+	if !msg.right && m.threadCloseAt(msg.x, msg.y) {
+		m.subMode, m.threadRoot = chatSubNone, ""
+		return m, nil
+	}
+	if !msg.right && m.replyCancelAt(msg.x, msg.y) {
+		m.replying = nil
 		return m, nil
 	}
 	if hit, thread := m.uploadButtonAt(msg.x, msg.y); hit && !msg.right {
@@ -2156,7 +2172,32 @@ func (m chatViewModel) replyBar() []string {
 	}
 	return []string{styleQuoteBar.Render("↪ ") + m.st.subtle.Render("Replying to ") +
 		backend.GenericMessageSender(*m.replying) + m.st.subtle.Render(": "+
-		textfmt.ShortExcerpt(backend.GenericMessageText(*m.replying))+"  (esc cancels)")}
+		textfmt.ShortExcerpt(backend.GenericMessageText(*m.replying))+"  "+replyCancel)}
+}
+
+// replyCancel ends the reply bar; a click on it cancels the reply as Esc would.
+const replyCancel = "(esc cancels)"
+
+// replyCancelAt reports whether column x and row y of the pane hit
+// replyCancel on the chat's composer.
+func (m chatViewModel) replyCancelAt(x, y int) bool {
+	width, split := m.threadSplit()
+	if m.replying == nil || x >= width ||
+		m.subMode != chatSubNone && (m.subMode != chatSubThread || !split) {
+		return false
+	}
+	composer := m.composer(width-4, false)
+	for i, line := range composer {
+		plain := ansi.Strip(line)
+		at := strings.Index(plain, replyCancel)
+		if at < 0 {
+			continue
+		}
+		start := 2 + textfmt.DisplayWidth(plain[:at]) // past the chat box's edge and padding
+		return y == m.height-1-len(composer)+i && x >= start &&
+			x < start+textfmt.DisplayWidth(replyCancel)
+	}
+	return false
 }
 
 func (s *styles) composerBox(title string, above []string, prompt string, input textinput.Model, width int, border color.Color) []string {

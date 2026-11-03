@@ -89,6 +89,72 @@ func (s *styles) footer(keys []helpKey, notice string, width int) string {
 	return left + strings.Repeat(" ", gap) + styleNotice.Render(notice)
 }
 
+// footerKeyAt is the key press of the key footer(keys, notice, width) draws
+// at column x.
+func (s *styles) footerKeyAt(keys []helpKey, notice string, width, x int) (tea.KeyPressMsg, bool) {
+	noticeWidth := textfmt.DisplayWidth(textfmt.Plain(notice))
+	if notice != "" && noticeWidth > width/2 {
+		return tea.KeyPressMsg{}, false
+	}
+	if notice != "" {
+		width -= noticeWidth + 2
+	}
+	return labelKey(keyAt(keys, x, 2, width))
+}
+
+// keyAt is the label of the "key desc" item drawn at column x of a line
+// width cells wide that sets them sep cells apart; items past the width are
+// not drawn.
+func keyAt(keys []helpKey, x, sep, width int) string {
+	at := 0
+	for _, k := range keys {
+		w := textfmt.DisplayWidth(k.key + " " + k.desc)
+		if at+w > width {
+			break
+		}
+		if x >= at && x < at+w {
+			return k.key
+		}
+		at += w + sep
+	}
+	return ""
+}
+
+// labelKey is the key press a help label names. Labels such as ↑↓ or type
+// name no single key.
+func labelKey(label string) (tea.KeyPressMsg, bool) {
+	switch strings.ToLower(label) {
+	case "esc":
+		return keyPress(tea.KeyEscape), true
+	case "enter":
+		return keyPress(tea.KeyEnter), true
+	case "tab":
+		return keyPress(tea.KeyTab), true
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}, true
+	case "⌫":
+		return keyPress(tea.KeyBackspace), true
+	}
+	var mod tea.KeyMod
+	rest := label
+	switch {
+	case strings.HasPrefix(label, "^"):
+		mod, rest = tea.ModCtrl, strings.ToLower(label[1:])
+	case strings.HasPrefix(label, "ctrl+"):
+		mod, rest = tea.ModCtrl, label[len("ctrl+"):]
+	case strings.HasPrefix(label, "M-"):
+		mod, rest = tea.ModAlt, label[2:]
+	}
+	r := []rune(rest)
+	switch {
+	case len(r) != 1:
+		return tea.KeyPressMsg{}, false
+	case mod != 0:
+		return tea.KeyPressMsg{Code: r[0], Mod: mod}, true
+	}
+	return tea.KeyPressMsg{Code: r[0], Text: rest}, true
+}
+
 func backendTag(backendType string) string {
 	switch backendType {
 	case "telegram":
@@ -136,6 +202,20 @@ func (s *styles) keyStrip(keys []helpKey, notice string, width int) string {
 			styleNotice.Render(notice)
 	}
 	return shadeLine(textfmt.ClipLine(line, width), s.barSGR, width)
+}
+
+// stripKeyAt is the key press of the key keyStrip(keys, notice, width) draws
+// at column x.
+func (s *styles) stripKeyAt(keys []helpKey, notice string, width, x int) (tea.KeyPressMsg, bool) {
+	notice = textfmt.Plain(notice)
+	room := width - 1
+	if notice != "" {
+		if textfmt.DisplayWidth(notice) > width/2 {
+			return tea.KeyPressMsg{}, false
+		}
+		room = width - textfmt.DisplayWidth(notice) - 3
+	}
+	return labelKey(keyAt(keys, x-1, 3, room))
 }
 
 // header is the wordmark line on the screens outside an account.

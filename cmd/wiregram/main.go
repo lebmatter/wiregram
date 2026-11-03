@@ -93,6 +93,8 @@ selected message (Up and Down bring it back into view), or moves the
 selection of the list under the pointer.
 Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
+key in the footer, in a modal's key line or under the selected card, the
+thread pane's esc close or a reply's (esc cancels) does what pressing it would. Clicking a
 message selects it. Clicking the blank part of its row, beside the text, in
 wide terminals also opens its thread beside the chat, an empty one to start a
 thread when it has no replies. Double-clicking its text or right-clicking it

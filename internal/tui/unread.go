@@ -216,6 +216,39 @@ func (m unreadModel) scrolled() unreadModel {
 	return m
 }
 
+// cardKeys is the keys the selected card lists under its messages.
+func (m unreadModel) cardKeys(c unreadCard) []helpKey {
+	keys := []helpKey{{"enter", "open"}}
+	if _, ok := m.threadReply(c); ok {
+		keys = append(keys, helpKey{"t", "open thread"})
+	}
+	if m.canMark(c) {
+		keys = append(keys, helpKey{"m", "mark read"})
+	}
+	if m.canSummarize(c) {
+		keys = append(keys, helpKey{"s", "summarise"})
+	}
+	return keys
+}
+
+// keyAt is the key press of the key the selected card lists at pane column x
+// and row y, so a click on it does what pressing it would.
+func (m unreadModel) keyAt(x, y int) (tea.KeyPressMsg, bool) {
+	i, ok := m.cardAt(y)
+	if !ok || i != m.selected {
+		return tea.KeyPressMsg{}, false
+	}
+	top := 1
+	for j := m.offset; j < i; j++ {
+		top += m.cardHeight(j)
+	}
+	if y != top+m.cardHeight(i)-2 { // the keys sit over the card's bottom edge
+		return tea.KeyPressMsg{}, false
+	}
+	// Past the pane's and the card's edges and padding.
+	return labelKey(keyAt(m.cardKeys(m.cards[i]), x-4, 3, m.cardInner()))
+}
+
 // cardAt maps a click at pane row y to a card.
 func (m unreadModel) cardAt(y int) (int, bool) {
 	if y < 1 {
@@ -523,18 +556,8 @@ func (m unreadModel) cardLines(i, width int) []string {
 		}
 	}
 	if full {
-		keys := []helpKey{{"enter", "open"}}
-		if _, ok := m.threadReply(c); ok {
-			keys = append(keys, helpKey{"t", "open thread"})
-		}
-		if m.canMark(c) {
-			keys = append(keys, helpKey{"m", "mark read"})
-		}
-		if m.canSummarize(c) {
-			keys = append(keys, helpKey{"s", "summarise"})
-		}
 		var parts []string
-		for _, k := range keys {
+		for _, k := range m.cardKeys(c) {
 			parts = append(parts, m.st.accent.Render(k.key)+" "+m.st.subtle.Render(k.desc))
 		}
 		lines = append(lines, m.st.dim.Render(strings.Repeat("╌", width)),

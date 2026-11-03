@@ -349,6 +349,14 @@ func (m *dmPicker) rows() int { return max(1, m.height-2-m.head()-2) }
 
 func (m *dmPicker) size() (int, int) { return m.width, m.height }
 
+// stripKeys is the keys at the bottom of the modal.
+func (m *dmPicker) stripKeys() []helpKey {
+	if m.allBy != "" && !m.selfOK {
+		return []helpKey{{"esc", "close"}}
+	}
+	return []helpKey{{"space", "tick"}, {"esc", "close"}}
+}
+
 func (m *dmPicker) View() string {
 	inner := m.width - 4
 	title := "chats " + textfmt.Plain(m.bot) + " answers"
@@ -358,7 +366,7 @@ func (m *dmPicker) View() string {
 			m.st.dim.Render(textfmt.ClipLine("A chat has one bot; change "+m.allBy+
 				"'s Chats first.", inner)),
 		}
-		body = append(body, m.st.modalKeys([]helpKey{{"esc", "close"}}, "", inner)...)
+		body = append(fillLines(body, m.height-4), m.st.modalKeys(m.stripKeys(), "", inner)...)
 		return m.st.modalBox(title, body, m.width, m.height)
 	}
 	radio := func(i int, on bool, label string) string {
@@ -397,13 +405,12 @@ func (m *dmPicker) View() string {
 		body = append(body, m.people(inner)...)
 	}
 	body = fillLines(body, m.height-4)
-	keys := []helpKey{{"space", "tick"}, {"esc", "close"}}
 	count := ""
 	if !m.all && m.allBy == "" {
 		_, _, chats := m.chosen()
 		count = m.st.subtle.Render(fmt.Sprintf("%d selected", len(chats)))
 	}
-	strip := m.st.modalKeys(keys, count, inner)
+	strip := m.st.modalKeys(m.stripKeys(), count, inner)
 	if m.notice != "" {
 		strip[0] = styleError.Render(textfmt.ClipLine(m.notice, inner))
 	}

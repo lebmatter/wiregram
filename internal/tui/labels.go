@@ -203,12 +203,16 @@ func (m *labelPicker) View() string {
 			i == m.sel, inner))
 	}
 	body = fillLines(body, m.height-4)
-	keys := []helpKey{{"space", "show/hide"}, {"esc", "close"}}
-	if m.move {
-		keys = []helpKey{{"↑↓", "select"}, {"enter", "move here"}, {"esc", "cancel"}}
-	}
-	body = append(body, m.st.modalKeys(keys, "", inner)...)
+	body = append(body, m.st.modalKeys(m.stripKeys(), "", inner)...)
 	return m.st.modalBox(title, body, m.width, m.height)
+}
+
+// stripKeys is the keys at the bottom of the modal.
+func (m *labelPicker) stripKeys() []helpKey {
+	if m.move {
+		return []helpKey{{"↑↓", "select"}, {"enter", "move here"}, {"esc", "cancel"}}
+	}
+	return []helpKey{{"space", "show/hide"}, {"esc", "close"}}
 }
 
 // click answers a left click at x, y of the box, counted from its top-left

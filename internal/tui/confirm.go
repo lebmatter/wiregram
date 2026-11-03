@@ -110,12 +110,16 @@ func (m *confirmModal) View() string {
 		}
 		body = append(body, m.st.modalRow("", label, i == m.row, w-4))
 	}
-	keys := []helpKey{{"any key", "close"}}
-	if !m.alert {
-		keys = []helpKey{{"y", strings.ToLower(m.action)}, {"esc", "cancel"}}
-	}
-	body = append(body, m.st.modalKeys(keys, "", w-4)...)
+	body = append(body, m.st.modalKeys(m.stripKeys(), "", w-4)...)
 	return m.st.modalBox(strings.ToLower(m.title), body, w, h)
+}
+
+// stripKeys is the keys under the modal's rows.
+func (m *confirmModal) stripKeys() []helpKey {
+	if m.alert {
+		return []helpKey{{"any key", "close"}}
+	}
+	return []helpKey{{"y", strings.ToLower(m.action)}, {"esc", "cancel"}}
 }
 
 // hit selects the row at row y of the box, counted from its top edge.

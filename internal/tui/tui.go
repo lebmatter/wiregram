@@ -604,6 +604,11 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.chat = m.chat.clearSelection()
+		if mouse := msg.Mouse(); mouse.Y >= m.bodyHeight() && mouse.Button == tea.MouseLeft {
+			if k, ok := m.footerKeyAt(mouse.X); ok {
+				return m.update(k)
+			}
+		}
 		if p := m.profile; p != nil && p.canChat() && msg.Mouse().Button == tea.MouseLeft {
 			if _, y, _, _ := m.profileRect(); msg.Mouse().Y == y+1+p.chatRow() {
 				m.profile = nil
@@ -1001,6 +1006,12 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		m.wiz = &wiz
 		return m, cmd
 	}
+	if k, ok := m.modalKeyAt(mouse.X, mouse.Y); ok {
+		if right {
+			return m, nil
+		}
+		return m.update(k)
+	}
 	if m.labels != nil {
 		if right {
 			return m, nil
@@ -1108,6 +1119,10 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	case m.mailOpen:
 		m.mail, cmd = m.mail.click(x, mouse.Y)
 	case m.unreadOpen:
+		if k, ok := m.unread.keyAt(x, mouse.Y); ok {
+			m.unread, cmd = m.unread.Update(k)
+			return m, cmd
+		}
 		if i, ok := m.unread.cardAt(mouse.Y); ok {
 			return m.openCard(m.unread.cards[i])
 		}
@@ -1135,6 +1150,50 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.Update(chatClick{x, mouse.Y, right})
 	}
 	return m, cmd
+}
+
+// modalKeyAt is the key press of the key the open modal's strip draws at
+// column x and row y, so a click on it does what pressing it would.
+func (m tuiModel) modalKeyAt(x, y int) (tea.KeyPressMsg, bool) {
+	var keys []helpKey
+	var left, top, w, h int
+	switch c, cx, cy, confirm := m.confirmShown(); {
+	case m.wiz != nil:
+		return tea.KeyPressMsg{}, false
+	case m.labels != nil:
+		left, top = m.labelsAt()
+		w, h = m.labels.size()
+		keys = m.labels.stripKeys()
+	case confirm:
+		left, top = cx, cy
+		w, h = c.size()
+		keys = c.stripKeys()
+	case m.summary != nil:
+		left, top, w, h = m.summaryRect()
+		keys = m.summary.keys()
+	case m.rewritePicker != nil:
+		left, top, w, h = m.rewritePickerRect()
+		keys = rewritePickerKeys
+	case m.gamePicker != nil:
+		left, top, w, h = m.gamePickerRect()
+		keys = m.gamePicker.helpKeys()
+	case m.searchOpen:
+		left, top, w, h = m.searchRect()
+		keys = m.search.stripKeys()
+	case m.chatModalShown():
+		left, top, w, h = m.chatModalRect()
+		keys = m.chat.modalKeys()
+	case m.agentOpen && m.agentPane.picker != nil:
+		left, top = m.pickerAt()
+		w, h = m.agentPane.picker.size()
+		keys = m.agentPane.picker.stripKeys()
+	default:
+		return tea.KeyPressMsg{}, false
+	}
+	if y != top+h-2 { // the last row inside the bottom edge
+		return tea.KeyPressMsg{}, false
+	}
+	return labelKey(keyAt(keys, x-left-2, 2, w-4))
 }
 
 // handleWheel scrolls whichever list is under the pointer, as its up and
@@ -1501,36 +1560,64 @@ func (m tuiModel) profileRect() (x, y, w, h int) {
 	return left + x, y, w, h
 }
 
+// footerBar is what the footer shows: a badge, then keys with the notice on
+// the right, or a line of its own.
+type footerBar struct {
+	badge  string
+	keys   []helpKey
+	notice string
+	line   string
+}
+
 func (m tuiModel) footer() string {
+	f := m.footerBar()
+	if f.line != "" {
+		return truncate(f.line, m.width)
+	}
+	return f.badge + m.st.footer(f.keys, f.notice, m.width-textfmt.DisplayWidth(f.badge))
+}
+
+// footerKeyAt is the key press of the footer key at column x, so a click on
+// a key does what pressing it would.
+func (m tuiModel) footerKeyAt(x int) (tea.KeyPressMsg, bool) {
+	f := m.footerBar()
+	if f.line != "" {
+		return tea.KeyPressMsg{}, false
+	}
+	badge := textfmt.DisplayWidth(f.badge)
+	return m.st.footerKeyAt(f.keys, f.notice, m.width-badge, x-badge)
+}
+
+func (m tuiModel) footerBar() footerBar {
 	if m.welcome != nil {
-		return m.st.footer(welcomeModalHelp, "", m.width)
+		return footerBar{keys: welcomeModalHelp}
 	}
 	if m.alert != nil {
-		return m.st.footer(m.alert.helpKeys(), "", m.width)
+		return footerBar{keys: m.alert.helpKeys()}
 	}
 	if m.profile != nil {
-		return m.st.footer(m.profile.helpKeys(), "", m.width)
+		return footerBar{keys: m.profile.helpKeys()}
 	}
 	if m.gamePicker != nil {
-		return m.st.footer(m.gamePicker.helpKeys(), "", m.width)
+		return footerBar{keys: m.gamePicker.helpKeys()}
 	}
 	if m.summary != nil {
-		return m.st.footer([]helpKey{{"↑↓", "scroll"}, {"esc", "close"}}, m.notice, m.width)
+		return footerBar{keys: []helpKey{{"↑↓", "scroll"}, {"esc", "close"}}, notice: m.notice}
 	}
 	if m.rewritePicker != nil {
-		return m.st.footer(rewritePickerKeys, "", m.width)
+		return footerBar{keys: rewritePickerKeys}
 	}
 	if g := m.game; g != nil && m.focus == focusGame && m.gameShown() {
 		keys := g.helpKeys()
 		if g.confirm != nil {
 			keys = g.confirm.helpKeys()
 		}
-		badge := m.st.badge.Render(" GAME ") + " "
-		return badge + m.st.footer(keys, m.chat.notice, m.width-textfmt.DisplayWidth(badge))
+		return footerBar{badge: m.st.badge.Render(" GAME ") + " ", keys: keys,
+			notice: m.chat.notice}
 	}
 	if m.chatOpen && !m.searchOpen && (m.focus == focusChat || m.chat.opening != nil) {
 		if line, ok := m.chat.footerLine(); ok {
-			return truncate(line, m.width)
+			return footerBar{line: line}
 		}
 	}
 	var keys []helpKey
@@ -1573,8 +1660,7 @@ func (m tuiModel) footer() string {
 		if m.chat.subMode == chatSubThread {
 			mode = " THREAD "
 		}
-		badge := m.st.badge.Render(mode) + " "
-		return badge + m.st.footer(keys, notice, m.width-textfmt.DisplayWidth(badge))
+		return footerBar{badge: m.st.badge.Render(mode) + " ", keys: keys, notice: notice}
 	case m.list.confirm != nil:
 		keys = m.list.confirm.modal.helpKeys()
 	default:
@@ -1602,7 +1688,7 @@ func (m tuiModel) footer() string {
 			notice = m.gameNotice()
 		}
 	}
-	return m.st.footer(keys, notice, m.width)
+	return footerBar{keys: keys, notice: notice}
 }
 
 func (m tuiModel) View() tea.View {

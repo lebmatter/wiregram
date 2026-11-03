@@ -503,8 +503,20 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 	if mouse.Button != tea.MouseLeft || m.busy {
 		return m, nil
 	}
+	if mouse.Y >= m.bodyHeight() {
+		// A click on a key does what pressing it would.
+		if k, ok := m.st.footerKeyAt(m.helpKeys(), m.footerNotice(), m.width, mouse.X); ok {
+			return m.Update(k)
+		}
+		return m, nil
+	}
 	if m.confirm != nil {
 		x, y := m.confirmPos()
+		if w, h := m.confirm.size(); mouse.Y == y+h-2 {
+			if k, ok := labelKey(keyAt(m.confirm.stripKeys(), mouse.X-x-2, 2, w-4)); ok {
+				return m.Update(k)
+			}
+		}
 		return m.confirmAnswered(m.confirm.click(mouse.X, mouse.Y, x, y))
 	}
 	if m.wiz != nil {
@@ -553,12 +565,14 @@ func (m settingsModel) handleClick(mouse tea.Mouse) (tea.Model, tea.Cmd) {
 }
 
 func (m settingsModel) footer() string {
-	notice := m.notice
-	switch {
-	case notice == "" && m.selected() != nil:
-		notice = m.selected().Snapshot().Notice
+	return m.st.footer(m.helpKeys(), m.footerNotice(), m.width)
+}
+
+func (m settingsModel) footerNotice() string {
+	if m.notice == "" && m.selected() != nil {
+		return m.selected().Snapshot().Notice
 	}
-	return m.st.footer(m.helpKeys(), notice, m.width)
+	return m.notice
 }
 
 func (m settingsModel) bodyHeight() int { return max(4, m.height-lipgloss.Height(m.footer())) }

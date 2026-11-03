@@ -639,12 +639,25 @@ func (m userSearchModel) View() string {
 		}
 	}
 	body = fillLines(body, searchHeader-1+m.rows())
-	title, action, esc := "search", "open", "close"
+	title := "search"
 	switch {
 	case m.forward != nil:
-		title, action = "forward to", "forward"
+		title = "forward to"
 	case m.mention != nil:
-		title, action, esc = "mention", "mention", "type @"
+		title = "mention"
+	}
+	body = append(body, m.st.modalKeys(m.stripKeys(), "", inner)...)
+	return m.st.modalBox(title, body, m.width, m.height)
+}
+
+// stripKeys is the keys at the bottom of the modal.
+func (m userSearchModel) stripKeys() []helpKey {
+	action, esc := "open", "close"
+	switch {
+	case m.forward != nil:
+		action = "forward"
+	case m.mention != nil:
+		action, esc = "mention", "type @"
 	}
 	switch {
 	case m.onGlobal:
@@ -652,9 +665,7 @@ func (m userSearchModel) View() string {
 	case m.inMsgs:
 		action = "go to"
 	}
-	keys := []helpKey{{"↑↓", "select"}, {"enter", action}, {"esc", esc}}
-	body = append(body, m.st.modalKeys(keys, "", inner)...)
-	return m.st.modalBox(title, body, m.width, m.height)
+	return []helpKey{{"↑↓", "select"}, {"enter", action}, {"esc", esc}}
 }
 
 // globalRow offers the search of every chat for the query.
