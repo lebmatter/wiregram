@@ -52,6 +52,9 @@ the box wraps and grows with the text. <kbd>Enter</kbd> sends it as a reply to t
 quoting it as <kbd>r</kbd> would, and <kbd>Esc</kbd> stops typing, keeping the text until
 the reader closes.
 
+A right click on a mail, or on the mail being read, opens a menu of these actions at the
+pointer.
+
 In the reader:
 
 | Key | Action |

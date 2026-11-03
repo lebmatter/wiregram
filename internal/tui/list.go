@@ -878,6 +878,45 @@ func (m chatListModel) body(width, height int, focused bool) []string {
 	return rows
 }
 
+// contextItems is what a right click on stop i offers: the keys a chat or
+// another account's row takes. Other rows have only Enter, so offer nothing.
+func (m chatListModel) contextItems(i int) (string, []contextItem) {
+	refs := m.refs()
+	if i < 0 || i >= len(refs) {
+		return "", nil
+	}
+	r := refs[i]
+	if sw, ok := r.msg.(chatListSwitch); ok {
+		return accountLabel(sw.to), []contextItem{item("Switch to account", "enter"),
+			item("Manage accounts", "a")}
+	}
+	if !r.chat {
+		return "", nil
+	}
+	e := m.entries[r.entry]
+	if m.mailbox {
+		return textfmt.Plain(e.Title), []contextItem{item("Open", "enter"),
+			item("Refresh", "r")}
+	}
+	items := []contextItem{item("Open", "enter"), item("Fold "+entrySectionName(e), "space"),
+		item("Refresh chats", "r")}
+	if m.caps.DeleteChat && e.IsDM {
+		del := item("Delete chat", "M-d")
+		del.danger = true
+		items = append(items, del)
+		if !e.IsSelf {
+			items = append(items, contextItem{label: "Delete for both",
+				key: tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl | tea.ModAlt}, danger: true})
+		}
+	}
+	return chatName(e), items
+}
+
+func entrySectionName(e backend.ChatEntry) string {
+	_, name := entrySection(e)
+	return name
+}
+
 func (m chatListModel) askDelete(entry backend.ChatEntry, revoke bool) *chatListConfirm {
 	return &chatListConfirm{entry: entry, revoke: revoke, modal: newConfirmModal(m.st,
 		"Delete chat", deleteChatQuestion(entry, revoke), "Delete", true)}

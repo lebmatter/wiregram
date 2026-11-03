@@ -98,7 +98,9 @@ thread pane's esc close or a reply's (esc cancels) does what pressing it would. 
 message selects it. Clicking the blank part of its row, beside the text, in
 wide terminals also opens its thread beside the chat, an empty one to start a
 thread when it has no replies. Double-clicking its text or right-clicking it
-opens its actions. Clicking a reaction
+opens its actions. Right-clicking a chat or account in the sidebar, an
+account in the account list, or a mail opens a menu of what its keys do
+there. Clicking a reaction
 under it adds yours or takes it back, and the reaction blinks. Clicking the
 sender's name or an @name in a message opens their profile (not on
 email), where Enter or a click on go to chat opens your private chat with

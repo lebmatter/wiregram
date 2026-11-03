@@ -13,7 +13,10 @@ is the left and right click and the wheel. The wheel scrolls the chat (`scrollCh
 selection; over other lists it moves their selection as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter.
 A click on a key label (`labelKey`, `keyAt`: the footers, `modalKeys` strips through
 `modalKeyAt`, the chooser's `keyStrip`, the selected Unread card's keys, the thread pane's
-`esc close`, the reply bar's `replyCancel`) acts as pressing it. A click on
+`esc close`, the reply bar's `replyCancel`) acts as pressing it. A right click on a sidebar
+chat or another account (`chatListModel.contextItems`), a chooser account, or a mail row or
+the mail read (`mailListModel.contextAt`) opens a `contextMenu` (`internal/tui/contextmenu.go`)
+at the pointer whose rows are the key presses that row takes. A click on
 a chat message's attachment (image card or `[tag]` row) opens it with `xdg-open`;
 a left click on a reaction in its meta row toggles the user's own (`reactionAt`, with a short
 blink); a left click on the sender's name or an `@name` (`mentionAt`, `Profiler.MentionedUser`)

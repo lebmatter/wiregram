@@ -107,7 +107,9 @@ type tuiModel struct {
 	// so a piece of one that has gone is told apart.
 	summary       *summaryModal
 	rewritePicker *rewritePicker
-	aiSeq         int
+	// menu is a right click's menu of the actions on the row clicked.
+	menu  *contextMenu
+	aiSeq int
 }
 
 type tuiDialogsLoaded struct {
@@ -998,6 +1000,16 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	if m.composing() {
 		return m, nil
 	}
+	if c := m.menu; c != nil {
+		chosen, done := c.click(mouse.X, mouse.Y)
+		if done {
+			m.menu = nil
+		}
+		if chosen != nil && !right {
+			return m.handleKey(chosen.key)
+		}
+		return m, nil
+	}
 	if m.wiz != nil {
 		if right {
 			return m, nil
@@ -1094,7 +1106,27 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		m.chat, cmd = m.chat.modalClick(mouse.X-x, mouse.Y-y, inside)
 		return m, cmd
 	}
-	if right && (m.overList(mouse.X) || m.unreadOpen || m.agentOpen || m.mailOpen) {
+	if right && m.overList(mouse.X) {
+		if i, ok := m.list.itemAt(mouse.X-2, mouse.Y-1); ok && m.loadErr == nil &&
+			mouse.Y >= 1 && mouse.Y <= m.list.height {
+			if title, items := m.list.contextItems(i); len(items) > 0 {
+				m.focus, m.list.selected = focusList, i
+				m.menu = newContextMenu(m.st, title, items, mouse.X, mouse.Y, m.width,
+					m.bodyHeight())
+			}
+		}
+		return m, nil
+	}
+	if right && m.mailOpen {
+		mail, title, items := m.mail.contextAt(m.chatX(mouse.X), mouse.Y)
+		if len(items) > 0 {
+			m.focus, m.mail = focusChat, mail
+			m.menu = newContextMenu(m.st, title, items, mouse.X, mouse.Y, m.width,
+				m.bodyHeight())
+		}
+		return m, nil
+	}
+	if right && (m.unreadOpen || m.agentOpen) {
 		return m, nil
 	}
 	if m.overList(mouse.X) {
@@ -1208,7 +1240,7 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	if _, _, _, ok := m.confirmShown(); ok || m.wiz != nil || m.labels != nil ||
-		m.gamePicker != nil {
+		m.gamePicker != nil || m.menu != nil {
 		return m.handleKey(k)
 	}
 	if left, _, _, ok := m.gameRect(); ok && mouse.X >= left {
@@ -1274,6 +1306,16 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	}
 	if m.chatOpen && (msg.String() == "alt+l" || msg.String() == "alt+L") {
 		m.chat.locked = true
+		return m, nil
+	}
+	if c := m.menu; c != nil {
+		chosen, done := c.key(msg.String())
+		if done {
+			m.menu = nil
+		}
+		if chosen != nil {
+			return m.handleKey(chosen.key)
+		}
 		return m, nil
 	}
 	if m.summary != nil {
@@ -1607,6 +1649,9 @@ func (m tuiModel) footerBar() footerBar {
 	if m.rewritePicker != nil {
 		return footerBar{keys: rewritePickerKeys}
 	}
+	if m.menu != nil {
+		return footerBar{keys: append([]helpKey{{"↑↓", "select"}}, contextMenuKeys...)}
+	}
 	if g := m.game; g != nil && m.focus == focusGame && m.gameShown() {
 		keys := g.helpKeys()
 		if g.confirm != nil {
@@ -1762,6 +1807,9 @@ func (m tuiModel) render() string {
 	if m.summary != nil {
 		x, y, _, _ := m.summaryRect()
 		body = m.st.fadeUnder(body, m.summary.View(m.paneWidth(), bodyHeight), x, y)
+	}
+	if c := m.menu; c != nil {
+		body = m.st.fadeUnder(body, c.View(), c.x, c.y)
 	}
 	if c, x, y, ok := m.confirmShown(); ok {
 		body = m.st.fadeUnder(body, c.View(), x, y)

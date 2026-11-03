@@ -712,6 +712,47 @@ func (m mailListModel) click(x, y int) (mailListModel, tea.Cmd) {
 	return m.read()
 }
 
+// contextAt answers a right click at x, y of the pane: it selects the row
+// there, or focuses the reader, as a click would, and lists the keys that
+// take, as menu rows. Visual mode picks rows with Space, so offers none.
+func (m mailListModel) contextAt(x, y int) (mailListModel, string, []contextItem) {
+	if m.composing || m.search != nil || m.replying || m.visual {
+		return m, "", nil
+	}
+	var items []contextItem
+	if m.reading != nil && (!m.split() || x >= m.listWidth()) {
+		m.readerFocus = m.split()
+		items = append(items, item("Quick reply", "enter"))
+		if _, ok := m.b.MediaSaveable(*m.reading); ok {
+			items = append(items, item("Open file", "o"), item("Save file", "s"))
+		}
+		return m, m.reading.Subject, append(items, m.contextActions()...)
+	}
+	_, owners := m.listLines(m.listWidth()-4, m.listHeight(), false)
+	i := y - 1 - m.listTop()
+	if i < 0 || i >= len(owners) || owners[i] < 0 {
+		return m, "", nil
+	}
+	m.sel, m.readerFocus = owners[i], false
+	r, _ := m.selectedRow()
+	items = append(items, item("Read", "enter"))
+	if len(m.threads[r.thread].Messages) > 1 {
+		items = append(items, item("Expand or collapse", "space"))
+	}
+	return m, m.shown(r).Subject, append(items, m.contextActions()...)
+}
+
+// contextActions is the mail actions as menu rows, as the help lists them.
+func (m mailListModel) contextActions() []contextItem {
+	items := []contextItem{item("Reply", "r"), item("Reply to all", "R"), item("Forward", "f")}
+	if m.mb.ArchiveFolder() != "" {
+		items = append(items, item("Archive", "a"))
+	}
+	trash := item("Move to Trash", "d")
+	trash.danger = true
+	return append(items, item("Move to…", "m"), item("Mark unread", "u"), trash)
+}
+
 // wheel scrolls the list or the reader under the pointer as ↑↓ would.
 func (m mailListModel) wheel(x int, k tea.KeyPressMsg) (mailListModel, tea.Cmd) {
 	if m.composing || m.search != nil {

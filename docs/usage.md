@@ -52,6 +52,11 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   text, also opens its thread beside the chat in wide terminals; on a message without
   replies the thread starts empty, so you can start one.
 - A **double click on its text** or a **right click** opens its actions.
+- A **right click** on a chat in the sidebar, another account there or in the account
+  list, or a mail or the mail being read opens a menu of what you can do with it, at the
+  pointer: open, fold its section or delete a private chat; switch or manage accounts;
+  open or reconnect an account; read, reply, forward, archive, move, mark unread or trash
+  a mail. Each does what its key would.
 - A **click on a reaction** under a message adds yours or takes it back, with a short blink.
 - A **click on a sender's name** or an **`@name`** in a message opens their profile:
   what the network shares about them. <kbd>Enter</kbd> or a click on **go to chat** opens

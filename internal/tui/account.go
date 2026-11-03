@@ -40,6 +40,7 @@ type accountListModel struct {
 	widgets  widgetsModel
 	online   string // the keys of the online accounts, to update widgets when it changes
 	quitting *confirmModal
+	menu     *contextMenu // a right click's menu of an account's actions
 	width    int
 	height   int
 }
@@ -116,6 +117,25 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseClickMsg:
+		if c := m.menu; c != nil {
+			chosen, done := c.click(msg.X, msg.Y)
+			if done {
+				m.menu = nil
+			}
+			if chosen != nil && msg.Button == tea.MouseLeft {
+				return m.Update(chosen.key)
+			}
+			return m, nil
+		}
+		if msg.Button == tea.MouseRight && m.quitting == nil && m.widgets.modal == nil {
+			if i, ok := m.itemAt(msg.Y); ok && i < len(m.accounts) {
+				m.selected = i
+				m.menu = newContextMenu(m.st, accountLabel(m.accounts[i]),
+					[]contextItem{item("Open", "enter"), item("Reconnect", "r")},
+					msg.X, msg.Y, m.width, m.height-1)
+			}
+			return m, nil
+		}
 		if msg.Button != tea.MouseLeft {
 			break
 		}
@@ -159,6 +179,16 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		if c := m.menu; c != nil {
+			chosen, done := c.key(msg.String())
+			if done {
+				m.menu = nil
+			}
+			if chosen != nil {
+				return m.Update(chosen.key)
+			}
+			return m, nil
+		}
 		if m.quitting != nil {
 			return m.quitAnswered(m.quitting.key(msg.String()))
 		}
@@ -291,6 +321,8 @@ func (m accountListModel) itemAt(y int) (int, bool) {
 // stripKeys is the keys and notice on the key strip at the bottom.
 func (m accountListModel) stripKeys() ([]helpKey, string) {
 	switch {
+	case m.menu != nil:
+		return append([]helpKey{{"↑↓", "select"}}, contextMenuKeys...), ""
 	case m.quitting != nil:
 		return m.quitting.helpKeys(), ""
 	case m.widgets.modal != nil:
@@ -314,6 +346,9 @@ func (m accountListModel) View() tea.View {
 	} else if md := m.widgets.modal; md != nil {
 		x, y, _, _ := m.widgetModalRect()
 		body = m.st.fadeUnder(body, md.box(m.st, m.width, m.bodyHeight()+1), x, y)
+	}
+	if c := m.menu; c != nil {
+		body = m.st.fadeUnder(body, c.View(), c.x, c.y)
 	}
 	keys, notice := m.stripKeys()
 	content := body + "\n" + m.st.keyStrip(keys, notice, m.width)
