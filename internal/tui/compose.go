@@ -295,9 +295,46 @@ func (c *mailComposer) view(width, height int) string {
 	case c.notice != "":
 		status = styleError.Render(textfmt.ClipLine(c.notice, inner/2))
 	}
-	keys := []helpKey{{"^S", "send"}, {"tab", "next"}, {"esc", "keep draft"}, {"^X", "discard"}}
-	lines = append(lines, c.st.modalKeys(keys, status, inner)...)
+	lines = append(lines, c.st.modalKeys(composeKeys, status, inner)...)
 	return c.st.modalBox(strings.ToLower(c.title), lines, width, height)
+}
+
+var composeKeys = []helpKey{{"^S", "send"}, {"tab", "next"}, {"esc", "keep draft"},
+	{"^X", "discard"}}
+
+// click answers a click at column x and row y of the composer's box,
+// width×height: a field's row focuses it with the cursor where it landed,
+// the message focuses its text, and a key under them is pressed as k.
+func (c *mailComposer) click(x, y, width, height int) (k tea.KeyPressMsg, press bool,
+	cmd tea.Cmd) {
+	if c.sending || x < 0 || x >= width {
+		return k, false, nil
+	}
+	if y == height-2 {
+		k, press = labelKey(keyAt(composeKeys, x-2, 2, width-4))
+		return k, press, nil
+	}
+	row := y - 1 // under the top edge
+	top := int(fieldAttach) + 1
+	if c.attachLine() != "" {
+		top++
+	}
+	switch {
+	case row >= 0 && row <= int(fieldAttach):
+		c.focus = composeField(row)
+		in := &c.inputs[c.focus]
+		// Past the edge and padding, the mark column and the label column.
+		col := x - 2 - modalMark - composeLabelWidth - 2
+		cmd = c.focusCmd()
+		if value := []rune(in.Value()); col >= 0 && len(value) < in.Width() {
+			in.SetCursor(min(col, len(value)))
+		}
+		return k, false, cmd
+	case row > top && row < height-4: // under the rule, over the keys' rule
+		c.focus = fieldBody
+		return k, false, c.focusCmd()
+	}
+	return k, false, nil
 }
 
 func (c *mailComposer) helpKeys() []helpKey {

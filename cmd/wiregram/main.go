@@ -38,7 +38,9 @@ embeds a Google OAuth client. An email account's chats are its folders:
 Inbox, Sent, Archive (where the server has one) and the Gmail labels (other
 servers' folders) picked with its labels chip (Space shows or hides one, Enter
 goes to it). A folder opens as a list of conversations, grouped by reply
-headers or subject. Mail is cached in wiregram.db for the window set in an
+headers or subject. The mail being read has a row of its actions over it,
+each clickable; in the composer a click goes to a field or the text, and
+its keys at the bottom (send, keep draft, discard) are clickable. Mail is cached in wiregram.db for the window set in an
 email account's Settings (90 days by default); mail on the server is never
 deleted by it.
 A new account opens with an Account connected card listing the keys to get

@@ -998,7 +998,13 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 		return m.handleKey(keyPress(tea.KeyEnter)) // any key unlocks
 	}
 	if m.composing() {
-		return m, nil
+		if right {
+			return m, nil
+		}
+		x, y, w, h := composeRect(m.width, m.bodyHeight())
+		var cmd tea.Cmd
+		m.mail, cmd = m.mail.composeClick(mouse.X-x, mouse.Y-y, w, h)
+		return m, cmd
 	}
 	if c := m.menu; c != nil {
 		chosen, done := c.click(mouse.X, mouse.Y)

@@ -624,6 +624,15 @@ func (m mailListModel) composeKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) 
 	return m, cmd
 }
 
+// composeClick answers a click at x, y of the composer's box, width×height.
+func (m mailListModel) composeClick(x, y, width, height int) (mailListModel, tea.Cmd) {
+	k, press, cmd := m.composer.click(x, y, width, height)
+	if press {
+		return m.composeKey(k)
+	}
+	return m, cmd
+}
+
 // replyKey types the quick reply; Enter sends it as a reply to the mail
 // being read, quoting it as r would.
 func (m mailListModel) replyKey(msg tea.KeyPressMsg) (mailListModel, tea.Cmd) {
@@ -697,7 +706,22 @@ func (m mailListModel) click(x, y int) (mailListModel, tea.Cmd) {
 	}
 	if m.reading != nil && (!m.split() || x >= m.listWidth()) {
 		m.readerFocus = m.split()
-		if y >= 1+m.readerHeight() && y < m.height-1 && !m.replying {
+		if y == 1 {
+			left := 0
+			if m.beside() {
+				left = m.listWidth()
+			}
+			// Past the reader's edge and padding.
+			k, ok := labelKey(keyAt(m.readerKeys(), x-left-2, 2, m.readerWidth()-4))
+			if ok {
+				// Typing the quick reply stops, as Esc would, keeping its text.
+				m.replying = false
+				m.quick.Blur()
+				return m.readerKey(k)
+			}
+			return m, nil
+		}
+		if y >= 1+readerBarRows+m.readerHeight() && y < m.height-1 && !m.replying {
 			m.replying = true
 			return m, m.quick.Focus()
 		}
@@ -813,12 +837,30 @@ func (m mailListModel) quickBox(width int, focused bool) []string {
 	return m.st.areaBox(title, nil, m.quick, width, border, "")
 }
 
-// readerHeight is how many rows of the mail show above the quick reply.
+// readerHeight is how many rows of the mail show between its actions and
+// the quick reply.
 func (m mailListModel) readerHeight() int {
 	if m.reading == nil {
 		return max(1, m.height-2)
 	}
-	return max(1, m.height-2-len(m.quickBox(m.readerWidth()-4, false)))
+	return max(1, m.height-2-readerBarRows-len(m.quickBox(m.readerWidth()-4, false)))
+}
+
+// readerBarRows is the reader's actions and the rule under them.
+const readerBarRows = 2
+
+// readerKeys is the actions over the mail being read; a click on one does
+// what its key does.
+func (m mailListModel) readerKeys() []helpKey {
+	keys := []helpKey{{"r", "reply"}, {"R", "all"}, {"f", "forward"}}
+	if m.mb.ArchiveFolder() != "" {
+		keys = append(keys, helpKey{"a", "archive"})
+	}
+	keys = append(keys, helpKey{"d", "trash"}, helpKey{"u", "unread"}, helpKey{"m", "move"})
+	if _, ok := m.b.MediaSaveable(*m.reading); ok {
+		keys = append(keys, helpKey{"o", "open file"}, helpKey{"s", "save file"})
+	}
+	return append(keys, helpKey{"esc", "close"})
 }
 
 // listTop is how many lines sit above the rows: the search field.
@@ -941,9 +983,11 @@ func (m mailListModel) view(focused bool) string {
 func (m mailListModel) readerView(width int, focused bool) string {
 	inner := width - 4
 	box := m.quickBox(inner, focused)
-	height := m.height - 2 - len(box)
-	body := append(fillLines(m.readerBody(inner, height), height), box...)
-	return renderBox("", body, width, m.height, m.st.border(focused))
+	height := m.height - 2 - readerBarRows - len(box)
+	body := []string{m.st.helpBar(m.readerKeys(), inner),
+		m.st.dim.Render(strings.Repeat("─", inner))}
+	body = append(body, fillLines(m.readerBody(inner, height), height)...)
+	return renderBox("", append(body, box...), width, m.height, m.st.border(focused))
 }
 
 // searchLines is the search field being typed, or the search shown.

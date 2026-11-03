@@ -52,8 +52,9 @@ the box wraps and grows with the text. <kbd>Enter</kbd> sends it as a reply to t
 quoting it as <kbd>r</kbd> would, and <kbd>Esc</kbd> stops typing, keeping the text until
 the reader closes.
 
-A right click on a mail, or on the mail being read, opens a menu of these actions at the
-pointer.
+Over the mail, a row of its actions (reply, all, forward, archive, trash, unread, move, open
+and save a file, close) does each with a click, as its key would. A right click on a mail,
+or on the mail being read, opens a menu of these actions at the pointer.
 
 In the reader:
 
@@ -100,7 +101,9 @@ more conversations or mails (`*` marks them, and the title counts them), then
 
 <kbd>c</kbd>, <kbd>r</kbd>, <kbd>R</kbd> and <kbd>f</kbd> open the composer, a large
 modal over the screen: **To**, **Cc**, **Subject** and **Attach** fields over the text. Replies quote the
-original below the cursor; replies to all copy the other recipients.
+original below the cursor; replies to all copy the other recipients. A click on a field
+moves the cursor there, a click on the text goes to it, and a click on a key at the bottom
+(send, next, keep draft, discard) does what pressing it would.
 
 | Key | Action |
 |-----|--------|
