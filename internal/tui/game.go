@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"time"
 
@@ -291,6 +292,62 @@ func (g *gameModel) key(k string) error {
 		return err
 	}
 	return g.refresh()
+}
+
+// click plays a click from the user on the board cell at column x and row y,
+// 1-based.
+func (g *gameModel) click(x, y int) error {
+	if g.state != gamePlaying {
+		return nil
+	}
+	if !g.host {
+		click := game.ClickMsg{X: x, Y: y}
+		return g.conn.Send(game.Envelope{T: game.TClick, P: game.Payload(click)})
+	}
+	if err := g.session.Click(1, x, y); err != nil {
+		return err
+	}
+	return g.refresh()
+}
+
+// cellAt maps column x and row y of the pane, width×height, to the board cell
+// drawn there, 1-based, laying out playView as view's centerLines does: each
+// line centred on its own, the block centred in the rows.
+func (g *gameModel) cellAt(x, y, width, height int) (int, int, bool) {
+	if g.state != gamePlaying {
+		return 0, 0, false
+	}
+	lines := strings.Split(g.playView(), "\n")
+	inner, rows := width-4, height-2
+	block := 0
+	for _, l := range lines {
+		block = max(block, ansi.StringWidth(l))
+	}
+	top := 0
+	if gap := rows - len(lines); gap > 0 {
+		top = gap - int(math.Round(float64(gap)/2))
+	}
+	i := y - 1 - top // under the pane's top edge
+	if i < 0 || i >= len(g.board) {
+		return 0, 0, false
+	}
+	w := ansi.StringWidth(lines[i])
+	left := 0
+	if inner > block {
+		left = inner - w - int(math.Round(float64(inner-w)/2))
+	}
+	col := x - 2 - left                           // past the pane's edge and padding
+	if col < 0 || col >= w || left+col >= inner { // the pane clips wider lines
+		return 0, 0, false
+	}
+	return col + 1, i + 1, true
+}
+
+// closeSpan is the columns of esc close or esc leave in the top edge of a
+// pane width wide; a click there presses Esc.
+func closeSpan(width int) (int, int) {
+	end := width - 2 // the label and a space each side end before ─╮
+	return end - len(" esc close "), end
 }
 
 func (g *gameModel) view(width, height int, focused bool) string {
@@ -758,6 +815,18 @@ func (g *gameModel) receive(msg gameEnvelope) (tea.Cmd, error) {
 			break
 		}
 		if err := g.session.Key(2, k.Key); err != nil {
+			return nil, err
+		}
+		if err := g.refresh(); err != nil {
+			return nil, err
+		}
+	case game.TClick:
+		var c game.ClickMsg
+		if !g.host || g.state != gamePlaying || json.Unmarshal(env.P, &c) != nil ||
+			c.X < 1 || c.X > game.MaxBoardW || c.Y < 1 || c.Y > game.MaxBoardH {
+			break
+		}
+		if err := g.session.Click(2, c.X, c.Y); err != nil {
 			return nil, err
 		}
 		if err := g.refresh(); err != nil {

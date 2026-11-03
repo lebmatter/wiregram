@@ -3,7 +3,7 @@
 game = {
   info = { id = "tictactoe", name = "Tic-tac-toe", version = 1,
            desc = "Three in a row", players = 2,
-           help = "arrows move · enter places your mark",
+           help = "click a square, or arrows and enter",
            min_w = 21, min_h = 11, tick_ms = 0,
            palette = { x = "#ff875f", o = "#5fafff", cursor = "accent", grid = "dim" },
            icon = " X │ O │   \n───┼───┼───\n   │ X │ O " },
@@ -61,6 +61,14 @@ function game.key(seat, key)
     check()
     turn = 3 - turn
   end
+end
+
+-- A square is 5 cells wide and 3 rows tall, with a rule after each.
+function game.click(seat, x, y)
+  local c, r = math.floor((x - 1) / 6), math.floor((y - 1) / 4)
+  if game.over() or (x - 1) % 6 == 5 or (y - 1) % 4 == 3 or c > 2 or r > 2 then return end
+  cursor[seat] = r * 3 + c + 1
+  game.key(seat, "enter")
 end
 
 function game.result(seat)

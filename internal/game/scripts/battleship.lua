@@ -5,7 +5,7 @@
 game = {
   info = { id = "battleship", name = "Battleship", version = 1,
            desc = "Hide a fleet, sink theirs", players = 2,
-           help = "arrows move · r rotates · enter places or fires · a places the rest",
+           help = "click or enter places or fires · arrows move · r rotates · a places the rest",
            min_w = 48, min_h = 14, tick_ms = 0,
            palette = { ship = "#9aa3ad", hit = "#ff5f5f", sunk = "#af5f5f", miss = "#5f87d7",
                        water = "dim", place = "accent", cursor = "accent", label = "dim" },
@@ -231,4 +231,22 @@ function game.view(seat, w, h)
     status = names[turn] .. "'s shot" .. (last[seat] ~= "" and " · " .. last[seat] or "")
   end
   return table.concat(rows, "\n"), status
+end
+
+-- A click on your grid places the next ship there; once both fleets are
+-- out, a click on theirs fires there. Each grid is a 2-cell label, then 2
+-- cells a square; theirs follows GAP.
+function game.click(seat, x, y)
+  local r, theirs = y - 2, 2 + 2 * N + #GAP + 3
+  if game.over() or r < 1 or r > N then return end
+  local c
+  if not placed(seat) and x >= 3 and x < 3 + 2 * N then
+    c = math.floor((x - 3) / 2) + 1
+  elseif placed(seat) and x >= theirs and x < theirs + 2 * N then
+    c = math.floor((x - theirs) / 2) + 1
+  else
+    return
+  end
+  cursor[seat] = { r, c }
+  game.key(seat, "enter")
 end

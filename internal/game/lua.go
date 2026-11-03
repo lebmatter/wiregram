@@ -90,6 +90,16 @@ func (s *Session) Key(seat int, key string) error {
 	return err
 }
 
+// Click passes a click from seat on the cell at column x and row y of its
+// board, 1-based, to the script. Scripts without game.click ignore clicks.
+func (s *Session) Click(seat, x, y int) error {
+	if _, ok := s.game.RawGetString("click").(*lua.LFunction); !ok {
+		return nil
+	}
+	_, err := s.call("click", 0, lua.LNumber(seat), lua.LNumber(x), lua.LNumber(y))
+	return err
+}
+
 func (s *Session) Tick() error {
 	_, err := s.call("tick", 0)
 	return err

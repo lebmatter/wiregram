@@ -1094,7 +1094,17 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 	}
 	if left, width, _, ok := m.gameRect(); ok && !m.searchOpen && !m.chatModalShown() &&
 		mouse.X >= left && mouse.X < left+width {
+		// A click gives the game the keys, and plays on the board as well.
 		m.focus = focusGame
+		x := mouse.X - left
+		if a, b := closeSpan(width); !right && mouse.Y == 0 && x >= a && x < b {
+			return m.gameKey(keyPress(tea.KeyEscape))
+		}
+		if cx, cy, ok := m.game.cellAt(x, mouse.Y, width, m.bodyHeight()); ok && !right {
+			if err := m.game.click(cx, cy); err != nil {
+				m = m.stopGame(err)
+			}
+		}
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -1282,7 +1292,8 @@ func (m tuiModel) hover() (hoverSpan, bool) {
 		return hoverSpan{y, a, b}, clickable(label)
 	}
 	if left, width, _, ok := m.gameRect(); ok && x >= left && x < left+width {
-		return hoverSpan{}, false
+		a, b := closeSpan(width)
+		return hoverSpan{y, left + a, left + b}, y == 0 && x >= left+a && x < left+b
 	}
 	if m.overList(x) || !m.paneOpen() {
 		return hoverSpan{}, false

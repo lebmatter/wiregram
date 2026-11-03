@@ -325,6 +325,8 @@ Keyboard shortcuts:
 
   Game (a pane beside the chat; a click on a 🎮 invite joins its game)
     Keys              Play: each game shows its own keys under the board
+    Click             Play on the board (the board games); esc leave in its
+                      top edge leaves
     Tab               Move between the sidebar, the chat and the game
     Esc               Leave the game (it asks first while one is being played)
 

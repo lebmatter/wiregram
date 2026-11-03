@@ -18,6 +18,7 @@ const (
 	THello = "hello" // guest → host: Token, Name
 	TStart = "start" // host → guest: Game, Names
 	TKey   = "key"   // guest → host: P is a KeyMsg
+	TClick = "click" // guest → host: P is a ClickMsg
 	TFrame = "frame" // host → guest: P is a FrameMsg
 	TSize  = "size"  // guest → host: P is a SizeMsg
 	TLeave = "leave"
@@ -36,6 +37,13 @@ const (
 // KeyMsg is a guest's key press, sent to the host.
 type KeyMsg struct {
 	Key string `json:"k"`
+}
+
+// ClickMsg is a guest's click on a cell of its board, 1-based from the
+// board's top-left, sent to the host.
+type ClickMsg struct {
+	X int `json:"x"`
+	Y int `json:"y"`
 }
 
 // SizeMsg is the area the guest has for the board, sent when the game starts

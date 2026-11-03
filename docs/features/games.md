@@ -29,7 +29,10 @@ own fleet, though the challenger's wiregram, which runs the game, holds both.
    started.
 
 Each game lists its keys under the board. <kbd>Tab</kbd> moves between the sidebar, the
-chat and the game, and a click on the pane gives it the keys. <kbd>Esc</kbd> leaves; while
+chat and the game, and a click on the pane gives it the keys. The board games take clicks
+too: a square in Tic-tac-toe, a column in Connect Four, a piece and then its square in
+Chess, and in Battleship your grid while placing and theirs when firing. A click on
+**esc leave** in the pane's top edge leaves. <kbd>Esc</kbd> leaves; while
 a game is being played it asks first, and the other player is told you left. Leaving the
 chat keeps the game going (the footer says where it is), so you can come back to it;
 leaving the account's screen ends it. One game runs at a time.
@@ -63,7 +66,8 @@ The challenger's wiregram runs the game for both players on a server that listen
 `127.0.0.1`, and starts a cloudflared [quick tunnel](https://try.cloudflare.com) to it:
 a random `trycloudflare.com` address with no Cloudflare account and no incoming
 connections, so no firewall or router needs opening. The player who joins connects to that
-address over HTTPS and sends only key presses; the board comes back as text. Wiregram stops
+address over HTTPS and sends only key presses and clicks on its board; the board comes back
+as text. Wiregram stops
 cloudflared when the game ends.
 
 Some things to know:
@@ -105,6 +109,8 @@ game = {
 
 function game.init(names) end              -- names[1] is seat 1 (the challenger)
 function game.key(seat, key) end           -- BubbleTea key: "up", "enter", "space", "a"…
+function game.click(seat, x, y) end        -- optional: a click on the board's cell at
+                                           -- column x, row y, from 1 at its top-left
 function game.tick() end                   -- every tick_ms; needed only when tick_ms > 0
 function game.view(seat, w, h)             -- w×h: the seat's room for the board
   return board, status                     -- board is lines joined by "\n"
@@ -119,6 +125,10 @@ end
 the room each player's pane has for the board, never less than `min_w`×`min_h` nor more
 than 120×60; it is called again when a pane changes size, so a board can grow with it.
 Chess grows its squares from 3×1 to 5×2 when they fit.
+
+`click` counts cells of the board as `view` last drew it for that seat, markup left out, so a
+script whose layout depends on `w`×`h` keeps what it drew (Chess keeps its square size).
+Clicks outside the board, and every click for a script without `game.click`, are dropped.
 
 ### Colours
 

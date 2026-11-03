@@ -4,7 +4,7 @@
 game = {
   info = { id = "chess", name = "Chess", version = 1,
            desc = "The full game, castling and all", players = 2,
-           help = "arrows move · enter picks a piece, then its square",
+           help = "click a piece, then its square (or arrows and enter)",
            min_w = 26, min_h = 11, tick_ms = 0,
            -- Mid-tone squares, so both white and black pieces stand out on them.
            palette = { light = "on #a68c64", dark = "on #80633f", cur = "on #9c8c20",
@@ -290,8 +290,12 @@ local function squareSize(w, h)
   return 2 * ch + 1, ch
 end
 
+-- shown is each seat's square size as last drawn, for game.click.
+local shown = {}
+
 function game.view(seat, w, h)
   local cw, ch = squareSize(w, h)
+  shown[seat] = { cw = cw, ch = ch }
   local pad, mid = string.rep(" ", (cw - 1) / 2), math.ceil(ch / 2)
   local live = not game.over()
   local from = picked[seat]
@@ -353,4 +357,18 @@ function game.view(seat, w, h)
   end
   if last and live then status = status .. " · " .. name(last[1]) .. "–" .. name(last[2]) end
   return table.concat(rows, "\n"), status
+end
+
+-- A click picks a piece or the square it moves to, as enter on that square
+-- would: the ranks start under the captured pieces, the files after the
+-- rank's label, and black sees the board turned round.
+function game.click(seat, x, y)
+  local s = shown[seat]
+  if not s or game.over() or promoting[seat] or x < 3 or y < 2 then return end
+  local ri, fi = math.floor((y - 2) / s.ch) + 1, math.floor((x - 3) / s.cw) + 1
+  if ri > 8 or fi > 8 then return end
+  local r, f = 9 - ri, fi
+  if seat == 2 then r, f = ri, 9 - fi end
+  cursor[seat] = sq(r, f)
+  game.key(seat, "enter")
 end

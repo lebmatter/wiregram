@@ -3,7 +3,7 @@
 game = {
   info = { id = "connectfour", name = "Connect Four", version = 1,
            desc = "Four in a row, dropped from the top", players = 2,
-           help = "←/→ or 1-7 pick a column · enter drops",
+           help = "click a column, or ←/→ or 1-7 and enter",
            min_w = 29, min_h = 9, tick_ms = 0,
            palette = { p1 = "#ff5f5f", p2 = "#ffd75f", frame = "blue", win = "accent",
                        num = "dim" },
@@ -85,6 +85,15 @@ function game.key(seat, key)
       and board[1][cursor[seat]] == 0 then
     drop(cursor[seat])
   end
+end
+
+-- A click anywhere in a column picks it and drops, as enter would: each
+-- column is 3 cells wide after a 1-cell bar.
+function game.click(seat, x, y)
+  local c = math.floor((x - 2) / 4) + 1
+  if game.over() or x < 2 or (x - 2) % 4 == 3 or c > COLS then return end
+  cursor[seat] = c
+  game.key(seat, "enter")
 end
 
 function game.result(seat)

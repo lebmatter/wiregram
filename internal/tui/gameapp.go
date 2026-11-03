@@ -99,6 +99,8 @@ func (m gameAppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyPressMsg:
 		return m.key(msg.String())
+	case tea.MouseClickMsg:
+		return m.click(msg.Mouse())
 
 	case gameTunnelOpened:
 		if g == nil || g.id != msg.id {
@@ -214,35 +216,104 @@ func (m gameAppModel) key(k string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// click acts on a left click as the keys would: an alert closes, the
+// confirmation answers, the picker picks, the board takes it, and a key in
+// the footer or the pane's esc is pressed.
+func (m gameAppModel) click(mouse tea.Mouse) (tea.Model, tea.Cmd) {
+	bodyHeight := max(1, m.height-1)
+	switch {
+	case mouse.Button != tea.MouseLeft:
+		return m, nil
+	case mouse.Y >= bodyHeight:
+		if k, ok := m.st.footerKeyAt(m.footerKeys(), "", m.width, mouse.X); ok {
+			return m.key(k.String())
+		}
+		return m, nil
+	case m.alert != nil:
+		return m.key("enter") // any key closes it
+	}
+	if c := m.modal(); c != nil {
+		w, h := c.size()
+		x, y := modalRect(m.width, bodyHeight, w, h)
+		switch yes, done := c.click(mouse.X, mouse.Y, x, y); {
+		case yes:
+			return m.key("y")
+		case done:
+			return m.key("esc")
+		}
+		return m, nil
+	}
+	if p := m.picker; p != nil {
+		w, h := p.size()
+		x, y := modalRect(m.width, bodyHeight, w, h)
+		if mouse.Y == y+h-2 {
+			if k, ok := labelKey(keyAt(p.helpKeys(), mouse.X-x-2, 2, w-4)); ok {
+				return m.key(k.String())
+			}
+		}
+		if p.click(mouse.X-x, mouse.Y-y) != nil {
+			return m.key("enter") // a second click on the chosen card
+		}
+		return m, nil
+	}
+	if g := m.game; g != nil {
+		if a, b := closeSpan(m.width); mouse.Y == 0 && mouse.X >= a && mouse.X < b {
+			return m.key("esc")
+		}
+		if x, y, ok := g.cellAt(mouse.X, mouse.Y, m.width, bodyHeight); ok {
+			if err := g.click(x, y); err != nil {
+				return m.stop(err), nil
+			}
+		}
+	}
+	return m, nil
+}
+
+// modal is the confirmation up over the screen: the alert, else the game's.
+func (m gameAppModel) modal() *confirmModal {
+	if m.alert != nil {
+		return m.alert
+	}
+	if m.game != nil {
+		return m.game.confirm
+	}
+	return nil
+}
+
+// footerKeys is what the footer lists.
+func (m gameAppModel) footerKeys() []helpKey {
+	switch {
+	case m.modal() != nil:
+		return m.modal().helpKeys()
+	case m.picker != nil:
+		return m.picker.helpKeys()
+	case m.game != nil && m.game.live():
+		return []helpKey{{"keys", "play"}, {"esc", "leave"}}
+	case m.game != nil:
+		return []helpKey{{"esc", "quit"}}
+	}
+	return nil
+}
+
 func (m gameAppModel) View() tea.View {
 	bodyHeight := max(1, m.height-1)
 	body := renderBox("", nil, m.width, bodyHeight, m.st.dimColor)
-	var keys []helpKey
-	var modal *confirmModal
 	switch {
 	case m.picker != nil:
 		w, h := m.picker.size()
 		x, y := modalRect(m.width, bodyHeight, w, h)
 		body = m.st.fadeUnder(body, m.picker.View(), x, y)
-		keys = m.picker.helpKeys()
 	case m.game != nil:
 		body = m.game.view(m.width, bodyHeight, true)
-		keys = []helpKey{{"esc", "quit"}}
-		if m.game.live() {
-			keys = []helpKey{{"keys", "play"}, {"esc", "leave"}}
-		}
-		modal = m.game.confirm
 	}
-	if m.alert != nil {
-		modal = m.alert
-	}
-	if modal != nil {
+	if modal := m.modal(); modal != nil {
 		w, h := modal.size()
 		x, y := modalRect(m.width, bodyHeight, w, h)
 		body = m.st.fadeUnder(body, modal.View(), x, y)
-		keys = modal.helpKeys()
 	}
-	v := tea.NewView(body + "\n" + m.st.footer(keys, "", m.width))
+	v := tea.NewView(body + "\n" + m.st.footer(m.footerKeys(), "", m.width))
 	v.AltScreen = true
+	// The mouse plays and presses keys; Shift+drag still selects text.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
