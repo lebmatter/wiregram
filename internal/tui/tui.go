@@ -1181,7 +1181,14 @@ func (m tuiModel) handleWheel(msg tea.MouseWheelMsg) (tuiModel, tea.Cmd) {
 		m.chat = m.chat.scrollThread(lines)
 	case m.chatOpen:
 		switch m.chat.subMode {
-		case chatSubNone, chatSubThread, chatSubMenu, chatSubUpload:
+		case chatSubNone, chatSubThread:
+			// The chat scrolls; the selection stays where the keys or a click left it.
+			lines := 3
+			if k.Code == tea.KeyDown {
+				lines = -lines
+			}
+			m.chat, cmd = m.chat.scrollChat(lines)
+		case chatSubMenu, chatSubUpload:
 			// Other submodes are prompts that any key would answer.
 			m.chat, cmd = m.chat.Update(k)
 		}

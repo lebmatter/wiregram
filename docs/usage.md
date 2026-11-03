@@ -39,8 +39,10 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
 
 ## Mouse
 
-- The **wheel** moves the selection of the list under the pointer, as <kbd>↑</kbd>/<kbd>↓</kbd>
-  would, without moving focus. Over the thread pane it scrolls the thread.
+- The **wheel** scrolls the chat and the thread pane, leaving the selected message where it
+  is; scrolling past the oldest message loads older ones, and <kbd>↑</kbd>/<kbd>↓</kbd> bring
+  the selection back into view. Over any other list it moves the selection, as
+  <kbd>↑</kbd>/<kbd>↓</kbd> would, without moving focus.
 - A **click** on a chat, account, card, menu row or picker entry opens it, as
   <kbd>Enter</kbd> would.
 - A **click on a message** selects it. A click on the **blank part of its row**, beside the

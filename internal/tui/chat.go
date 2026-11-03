@@ -97,6 +97,10 @@ type chatViewModel struct {
 	copiedAt time.Time
 	spin     spinner.Model
 
+	// scroll is where the wheel left the chat; nil follows the selection,
+	// which the keys move.
+	scroll *chatAnchor
+
 	threadRoot  string
 	lastClick   clickMark // the last plain click on a message, to tell a double click
 	drag        *textDrag // a left button held or a selection drawn, else nil
@@ -827,7 +831,7 @@ func (m chatViewModel) handleHistoryLoaded(msg chatHistoryLoaded) (chatViewModel
 	}
 	m.messages = mergePage(m.messages, msg.messages, m.seeded && m.intact)
 	m.seeded, m.loaded = false, true
-	m.selected = len(m.messages) - 1
+	m.selected, m.scroll = len(m.messages)-1, nil
 	m.unread, m.firstUnread = unreadIDs(m.messages, m.entry.Unread)
 	m.seen = make(map[string]bool, len(m.messages))
 	for i, msg := range m.messages {
@@ -867,7 +871,7 @@ func (m chatViewModel) seed(msgs []backend.Message, intact bool) chatViewModel {
 		return m
 	}
 	m.messages, m.seeded, m.intact = msgs, true, intact
-	m.selected = len(msgs) - 1
+	m.selected, m.scroll = len(msgs)-1, nil
 	for _, msg := range msgs {
 		m.seen[msg.ID] = true
 	}
@@ -1016,13 +1020,10 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 	case "ctrl+c":
 		return m, func() tea.Msg { return chatReturnToList{} }
 	case "up":
-		if m.privateMode {
-			m.privateMode = false
-		}
+		m.privateMode, m.scroll = false, nil
 		if m.selected > 0 {
 			m.selected--
 		} else if !m.historyExhausted && !m.loadingOlder && len(m.messages) > 0 {
-			// The wheel repeats up quickly; one page at a time.
 			m.loadingOlder = true
 			var cmd tea.Cmd
 			m, cmd = m.followThread()
@@ -1030,6 +1031,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 		}
 		return m.followThread()
 	case "down":
+		m.scroll = nil
 		if m.selected+1 < len(m.messages) {
 			m.selected++
 		}
@@ -1049,6 +1051,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			*m.histories = (*m.histories)[len(*m.histories)-500:]
 		}
 		m.input.SetValue("")
+		m.scroll = nil // the sent message shows at the bottom
 		return m, m.sendMessage(chatOutgoing{text: text, replyTo: replyTo})
 	case "ctrl+f":
 		return m, func() tea.Msg { return chatSearchReq{} }
@@ -1084,7 +1087,7 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			return m, func() tea.Msg { return chatRewriteReq{} }
 		}
 	case "alt+h", "alt+H":
-		m.privateMode = !m.privateMode
+		m.privateMode, m.scroll = !m.privateMode, nil
 		if m.privateMode {
 			m.selected = len(m.messages) - 1
 		}
@@ -1142,7 +1145,7 @@ func (m chatViewModel) insertMention(text string) chatViewModel {
 func (m chatViewModel) goTo(id string) (chatViewModel, tea.Cmd) {
 	for i, msg := range m.messages {
 		if msg.ID == id {
-			m.selected = i
+			m.selected, m.scroll = i, nil
 			return m.followThread()
 		}
 	}
@@ -1305,7 +1308,7 @@ func (m chatViewModel) runMenuAction(c msgMenuChoice) (chatViewModel, tea.Cmd) {
 func (m chatViewModel) goToQuote(sel backend.Message) (chatViewModel, tea.Cmd) {
 	for i, msg := range m.messages {
 		if msg.ID == sel.ReplyToID {
-			m.selected = i
+			m.selected, m.scroll = i, nil
 			return m.followThread()
 		}
 	}
@@ -1775,15 +1778,63 @@ func (m chatViewModel) messageAt(x, y int) (int, msgHit, bool) {
 // its top border, to the message drawn there (-1 for none), what the row
 // draws and the row itself.
 func (m chatViewModel) chatOwners(width int) ([]int, []rowKind, []string) {
+	inner, height := m.logSize(width)
+	w := m.window(inner, height)
+	return screenRows(w.owners, height, -1), screenRows(w.kinds, height, rowText),
+		screenRows(w.lines, height, "")
+}
+
+// logSize is the columns and rows of the message log in a chat box width
+// columns wide.
+func (m chatViewModel) logSize(width int) (int, int) {
 	_, split := m.threadSplit()
 	// The chat beside an open thread draws its composer unfocused.
-	inner, bodyHeight := width-4, m.height-2
-	height := bodyHeight - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
-	lines, owners, kinds := m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected,
-		m.changedMessages, m.images, m.quotes, m.openRoot(), m.firstUnread, m.unread, m.flashing(),
-		inner, height)
-	return screenRows(owners, height, -1), screenRows(kinds, height, rowText),
-		screenRows(lines, height, "")
+	inner := width - 4
+	return inner, m.height - 2 - len(m.composer(inner, m.focused && !split)) - len(m.uploads)
+}
+
+func (m chatViewModel) log(width, height int) *chatLog {
+	return m.st.newChatLog(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images,
+		m.quotes, m.openRoot(), m.firstUnread, m.unread, m.flashing(), width, height)
+}
+
+// window is the log's rows in width×height cells: from where the wheel left
+// it, else around the selection.
+func (m chatViewModel) window(width, height int) logWindow {
+	l := m.log(width, height)
+	if m.scroll != nil {
+		return l.scrolledWindow(*m.scroll, height)
+	}
+	w, _ := l.selectedWindow(height)
+	return w
+}
+
+// scrollChat scrolls the chat by delta rows, up when positive, leaving the
+// selection where it is; at the oldest row it loads older messages.
+func (m chatViewModel) scrollChat(delta int) (chatViewModel, tea.Cmd) {
+	if delta > 0 {
+		m.privateMode = false
+	}
+	if len(m.messages) == 0 {
+		return m, nil
+	}
+	width, _ := m.threadSplit()
+	inner, height := m.logSize(width)
+	height = max(1, height)
+	l := m.log(inner, height)
+	var a chatAnchor
+	if s := m.scroll; s != nil && (s.bottom || l.index(*s) >= 0) {
+		a = *s
+	} else {
+		_, a = l.selectedWindow(height)
+	}
+	a, top := l.scroll(a, delta, height)
+	m.scroll = &a
+	if top && delta > 0 && !m.historyExhausted && !m.loadingOlder {
+		m.loadingOlder = true
+		return m, m.loadOlderHistory()
+	}
+	return m, nil
 }
 
 // screenRows pads with blank or trims per-line values the way bottomLines
@@ -1888,9 +1939,11 @@ func (m chatViewModel) messageLines(width, height int) []string {
 	var lines []string
 	if m.privateMode && len(m.messages) > 0 {
 		last := len(m.messages) - 1
-		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil, nil, "", "", nil, reactionKey{}, width, height)
+		w, _ := m.st.newChatLog(m.b, m.messages[last:], m.entry, 0, m.changedMessages, nil,
+			nil, "", "", nil, reactionKey{}, width, height).selectedWindow(height)
+		lines = w.lines
 	} else {
-		lines, _, _ = m.st.genericSelectedLines(m.b, m.messages, m.entry, m.selected, m.changedMessages, m.images, m.quotes, m.openRoot(), m.firstUnread, m.unread, m.flashing(), width, height)
+		lines = m.window(width, height).lines
 	}
 	if len(m.messages) == 0 {
 		lines = centerLines(width, height, m.st.subtle.Render("No messages yet. Say hi!"))

@@ -39,124 +39,273 @@ func newestIncoming(msgs []backend.Message) string {
 	return ""
 }
 
-// Generic selected lines rendering.
-// genericSelectedLines also returns, for each line, the index of the message
-// it belongs to (-1 for none) and whether it draws that message's attachment,
-// so mouse clicks can find what they hit.
+// chatLog draws a chat's message blocks on demand, each at most once, and
+// picks the rows a window shows: around the selection, or from where the
+// wheel left it (chatAnchor). Each row also carries the index of the message
+// it belongs to (-1 for none) and what it draws, so mouse clicks can find
+// what they hit.
 // Day and unread dividers sit above the message they introduce; firstUnread
 // is the ID of the oldest message unread when the chat opened ("" for none)
 // and unread holds the IDs of all of them, drawn in bold.
 // openThread is the root of the thread open beside the chat, whose replies
 // chip is drawn solid.
-func (s *styles) genericSelectedLines(b backend.Backend, messages []backend.Message, entry backend.ChatEntry, selected int, changed map[string]bool, images map[string]*chatImage, quotes map[string]*backend.Message, openThread string, firstUnread string, unread map[string]bool, flash reactionKey, width, height int) ([]string, []int, []rowKind) {
-	lineWidth := min(width, textfmt.MaxChatLineWidth)
-	available := max(1, height)
-	byID := make(map[string]*backend.Message, len(messages))
-	threads := make(map[string]threadInfo)
+type chatLog struct {
+	s           *styles
+	b           backend.Backend
+	messages    []backend.Message
+	entry       backend.ChatEntry
+	selected    int
+	changed     map[string]bool
+	images      map[string]*chatImage
+	quotes      map[string]*backend.Message
+	openThread  string
+	firstUnread string
+	unread      map[string]bool
+	flash       reactionKey
+	lineWidth   int
+	imageRows   int
+	now         time.Time
+
+	byID     map[string]*backend.Message
+	threads  map[string]threadInfo
+	blocks   map[int][]string
+	kinds    map[int][]rowKind
+	dividers map[int]int // divider lines at the top of each block
+}
+
+// chatAnchor is where the wheel left a chat: its top row is row line of the
+// block of message id, or with bottom the chat shows its newest rows.
+type chatAnchor struct {
+	id     string
+	line   int
+	bottom bool
+}
+
+func (s *styles) newChatLog(b backend.Backend, messages []backend.Message,
+	entry backend.ChatEntry, selected int, changed map[string]bool,
+	images map[string]*chatImage, quotes map[string]*backend.Message, openThread string,
+	firstUnread string, unread map[string]bool, flash reactionKey, width, height int) *chatLog {
+	l := &chatLog{s: s, b: b, messages: messages, entry: entry, selected: selected,
+		changed: changed, images: images, quotes: quotes, openThread: openThread,
+		firstUnread: firstUnread, unread: unread, flash: flash,
+		lineWidth: min(width, textfmt.MaxChatLineWidth), imageRows: imageRows(height),
+		now: time.Now(), byID: make(map[string]*backend.Message, len(messages)),
+		threads: make(map[string]threadInfo), blocks: make(map[int][]string),
+		kinds: make(map[int][]rowKind), dividers: make(map[int]int)}
 	for i := range messages {
-		byID[messages[i].ID] = &messages[i]
+		l.byID[messages[i].ID] = &messages[i]
 		if id := messages[i].ReplyToID; id != "" {
-			t := threads[id]
+			t := l.threads[id]
 			t.count++
 			if messages[i].Timestamp.After(t.last) {
 				t.last = messages[i].Timestamp
 			}
-			threads[id] = t
+			l.threads[id] = t
 		}
 	}
-	messageLines := func(i int) ([]string, []rowKind) {
-		msg := messages[i]
-		quoted := byID[msg.ReplyToID]
-		if quoted == nil {
-			quoted = quotes[msg.ReplyToID]
-		}
-		if quoted == nil {
-			quoted = msg.Quote
-		}
-		t := threads[msg.ID]
-		t.open = msg.ID == openThread
-		return s.messageBlock(b, msg, entry, blockOpts{
-			quoted: quoted, thread: t, edited: changed[msg.ID], unread: unread[msg.ID],
-			selected: i == selected, cont: continues(messages, i),
-			samePointer: i > 0 && msg.ReplyToID != "" && messages[i-1].ReplyToID == msg.ReplyToID,
-			img:         images[msg.ID], flash: flash.on(msg.ID),
-		}, lineWidth, imageRows(height))
-	}
-	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
-		return []string{}, []int{}, []rowKind{}
-	}
-	now := time.Now()
-	dividers := make(map[int]int) // divider lines at the top of each block
-	blocks := make(map[int][]string)
-	blockKinds := make(map[int][]rowKind)
-	block := func(i int) []string {
-		if lines := blocks[i]; lines != nil {
-			return lines
-		}
-		lines, kinds := messageLines(i)
-		if bg := s.blockShade(messages[i], i == selected); bg != "" {
-			for j := range lines {
-				lines[j] = shadeLine(lines[j], bg, lineWidth)
-			}
-		}
-		var top []string
-		if startsDay(messages, i) {
-			top = append(top, s.dividerLine(dayLabel(messages[i].Timestamp, now), s.subtle,
-				lineWidth))
-		}
-		if firstUnread != "" && messages[i].ID == firstUnread {
-			top = append(top, s.dividerLine(fmt.Sprintf("unread · %d", len(unread)), s.accent,
-				lineWidth))
-		}
-		if len(top) == 0 && i > 0 && !continues(messages, i) {
-			top = append(top, "") // a gap before each new sender
-		}
-		dividers[i] = len(top)
-		lines = append(top, lines...)
-		blocks[i] = lines
-		blockKinds[i] = append(make([]rowKind, len(top)), kinds...)
+	return l
+}
+
+// block is message i's rows, with the dividers above it.
+func (l *chatLog) block(i int) []string {
+	if lines := l.blocks[i]; lines != nil {
 		return lines
 	}
-	selectedBlock := block(selected)
-	if len(selectedBlock) > available {
-		selectedBlock = selectedBlock[:available]
+	s, messages := l.s, l.messages
+	msg := messages[i]
+	quoted := l.byID[msg.ReplyToID]
+	if quoted == nil {
+		quoted = l.quotes[msg.ReplyToID]
 	}
-	start, end, used := selected, selected+1, len(selectedBlock)
-	for start > 0 {
-		previous := block(start - 1)
-		if used+len(previous) > available {
-			break
+	if quoted == nil {
+		quoted = msg.Quote
+	}
+	t := l.threads[msg.ID]
+	t.open = msg.ID == l.openThread
+	lines, kinds := s.messageBlock(l.b, msg, l.entry, blockOpts{
+		quoted: quoted, thread: t, edited: l.changed[msg.ID], unread: l.unread[msg.ID],
+		selected: i == l.selected, cont: continues(messages, i),
+		samePointer: i > 0 && msg.ReplyToID != "" && messages[i-1].ReplyToID == msg.ReplyToID,
+		img:         l.images[msg.ID], flash: l.flash.on(msg.ID),
+	}, l.lineWidth, l.imageRows)
+	if bg := s.blockShade(msg, i == l.selected); bg != "" {
+		for j := range lines {
+			lines[j] = shadeLine(lines[j], bg, l.lineWidth)
 		}
+	}
+	var top []string
+	if startsDay(messages, i) {
+		top = append(top, s.dividerLine(dayLabel(msg.Timestamp, l.now), s.subtle, l.lineWidth))
+	}
+	if l.firstUnread != "" && msg.ID == l.firstUnread {
+		top = append(top, s.dividerLine(fmt.Sprintf("unread · %d", len(l.unread)), s.accent,
+			l.lineWidth))
+	}
+	if len(top) == 0 && i > 0 && !continues(messages, i) {
+		top = append(top, "") // a gap before each new sender
+	}
+	l.dividers[i] = len(top)
+	lines = append(top, lines...)
+	l.blocks[i] = lines
+	l.kinds[i] = append(make([]rowKind, len(top)), kinds...)
+	return lines
+}
+
+// add appends rows from..to of block i to the window.
+func (l *chatLog) add(w *logWindow, i, from, to int) {
+	block := l.block(i)
+	w.lines = append(w.lines, block[from:to]...)
+	w.kinds = append(w.kinds, l.kinds[i][from:to]...)
+	for j := from; j < to; j++ {
+		if j < l.dividers[i] {
+			w.owners = append(w.owners, -1)
+		} else {
+			w.owners = append(w.owners, i)
+		}
+	}
+}
+
+// logWindow is the rows a chat shows, each with its message and kind.
+type logWindow struct {
+	lines  []string
+	owners []int
+	kinds  []rowKind
+}
+
+// selectedWindow is the most whole blocks around the selection that fit
+// height rows, older ones first, and where its top row would sit were it
+// drawn at the bottom of height rows: a row of a block above it when the
+// window falls short.
+func (l *chatLog) selectedWindow(height int) (logWindow, chatAnchor) {
+	available := max(1, height)
+	selected, messages := l.selected, l.messages
+	if len(messages) == 0 || selected < 0 || selected >= len(messages) {
+		return logWindow{lines: []string{}, owners: []int{}, kinds: []rowKind{}}, chatAnchor{}
+	}
+	shown := min(len(l.block(selected)), available)
+	start, end, used := selected, selected+1, shown
+	for start > 0 && used+len(l.block(start-1)) <= available {
 		start--
-		used += len(previous)
+		used += len(l.block(start))
 	}
-	for end < len(messages) {
-		next := block(end)
-		if used+len(next) > available {
-			break
-		}
+	for end < len(messages) && used+len(l.block(end)) <= available {
+		used += len(l.block(end))
 		end++
-		used += len(next)
 	}
-	lines := make([]string, 0, used+1)
-	owners := make([]int, 0, used+1)
-	kinds := make([]rowKind, 0, used+1)
+	var w logWindow
 	for i := start; i < end; i++ {
-		visible := block(i)
-		if i == selected && len(visible) > available {
-			visible = selectedBlock
+		to := len(l.block(i))
+		if i == selected {
+			to = shown
 		}
-		lines = append(lines, visible...)
-		kinds = append(kinds, blockKinds[i][:len(visible)]...)
-		for j := range visible {
-			if j < dividers[i] {
-				owners = append(owners, -1)
-			} else {
-				owners = append(owners, i)
-			}
+		l.add(&w, i, 0, to)
+	}
+	top := l.move(chatAnchor{id: messages[start].ID}, available-used)
+	return w, top
+}
+
+// scrolledWindow is height rows from anchor down, or the newest height rows
+// when it is at the bottom or that would run past the newest message. An
+// anchor whose message is gone shows the selection.
+func (l *chatLog) scrolledWindow(anchor chatAnchor, height int) logWindow {
+	height = max(1, height)
+	i := l.index(anchor)
+	if i < 0 && !anchor.bottom {
+		w, _ := l.selectedWindow(height)
+		return w
+	}
+	var w logWindow
+	if !anchor.bottom {
+		from := min(anchor.line, len(l.block(i)))
+		for ; i < len(l.messages) && len(w.lines) < height; i++ {
+			l.add(&w, i, from, min(len(l.block(i)), from+height-len(w.lines)))
+			from = 0
+		}
+		if len(w.lines) == height {
+			return w
 		}
 	}
-	return lines, owners, kinds
+	// The newest rows, older blocks first; the caller keeps the last height.
+	start, used := len(l.messages), 0
+	for start > 0 && used < height {
+		start--
+		used += len(l.block(start))
+	}
+	w = logWindow{}
+	for i := start; i < len(l.messages); i++ {
+		l.add(&w, i, 0, len(l.block(i)))
+	}
+	return w
+}
+
+// index is the anchor's message, or -1.
+func (l *chatLog) index(a chatAnchor) int {
+	if a.bottom {
+		return -1
+	}
+	for i, msg := range l.messages {
+		if msg.ID == a.id {
+			return i
+		}
+	}
+	return -1
+}
+
+// move scrolls anchor up by delta rows (down when negative), stopping at the
+// oldest row; past the newest it is at the bottom, as is an anchor whose
+// message is gone.
+func (l *chatLog) move(a chatAnchor, delta int) chatAnchor {
+	i, line := l.index(a), a.line
+	switch {
+	case a.bottom:
+		i, line = len(l.messages), 0
+	case i < 0:
+		return chatAnchor{bottom: true}
+	}
+	line -= delta
+	for line < 0 && i > 0 {
+		i--
+		line += len(l.block(i))
+	}
+	if line < 0 {
+		return chatAnchor{id: l.messages[0].ID}
+	}
+	for i < len(l.messages) && line >= len(l.block(i)) {
+		line -= len(l.block(i))
+		i++
+	}
+	if i >= len(l.messages) {
+		return chatAnchor{bottom: true}
+	}
+	return chatAnchor{id: l.messages[i].ID, line: line}
+}
+
+// scroll scrolls anchor up by delta rows (down when negative) in a window
+// height rows tall, and reports whether the window then starts at the oldest
+// row. A window that reaches the newest row is at the bottom, so new
+// messages show.
+func (l *chatLog) scroll(a chatAnchor, delta, height int) (chatAnchor, bool) {
+	if len(l.messages) == 0 {
+		return chatAnchor{bottom: true}, true
+	}
+	if a.bottom {
+		a = l.move(a, height) // the newest rows' top
+	}
+	a = l.move(a, delta)
+	if !a.bottom {
+		rows := -a.line
+		for i := l.index(a); i < len(l.messages) && rows <= height; i++ {
+			rows += len(l.block(i))
+		}
+		if rows <= height {
+			a = chatAnchor{bottom: true}
+		}
+	}
+	top := a
+	if a.bottom {
+		top = l.move(a, height)
+	}
+	return a, top.id == l.messages[0].ID && top.line == 0
 }
 
 // continues reports whether messages[i] follows one from the same sender

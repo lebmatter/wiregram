@@ -88,7 +88,9 @@ thread they reply in, as context), into a modal, names and what is asked of
 you in bold: c copies it, r writes it again. Alt+R rewrites the draft in the input. The chat's messages go to
 that provider.
 
-The mouse wheel scrolls the list under the pointer, or the thread pane.
+The mouse wheel scrolls the chat or the thread pane without moving the
+selected message (Up and Down bring it back into view), or moves the
+selection of the list under the pointer.
 Clicking a chat,
 account, card, menu row or picker entry opens it, as Enter would. Clicking a
 message selects it. Clicking the blank part of its row, beside the text, in
