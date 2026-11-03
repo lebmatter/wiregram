@@ -90,6 +90,8 @@ thread they reply in, as context), into a modal, names and what is asked of
 you in bold: c copies it, r writes it again. Alt+R rewrites the draft in the input. The chat's messages go to
 that provider.
 
+Hovering underlines what a click there would act on: a key, a name, a
+reaction, the replies chip, an attachment's tag or a button.
 The mouse wheel scrolls the chat or the thread pane without moving the
 selected message (Up and Down bring it back into view), or moves the
 selection of the list under the pointer.

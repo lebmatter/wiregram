@@ -8,7 +8,9 @@ AGENTS.md, whose durable rules were folded in here.)
 ## Project
 
 Wiregram is a minimal multi-backend chat client for the terminal, in Go. No cgo. Mouse input
-is the left and right click and the wheel. The wheel scrolls the chat (`scrollChat`, from a
+is the left and right click, the wheel and hover (`tea.MouseModeAllMotion`): each screen keeps
+the pointer and its `View` underlines what a click there would act on (`hover`, `hoverSpan`,
+`styles.hovered`, `internal/tui/hover.go`), found by probing the click's own hit tests. The wheel scrolls the chat (`scrollChat`, from a
 `chatAnchor` that ↑/↓ and jumps to a message clear) and the thread pane without moving the
 selection; over other lists it moves their selection as ↑/↓ would, without moving focus. A click on a row selects it and acts as Enter.
 A click on a key label (`labelKey`, `keyAt`: the footers, `modalKeys` strips through

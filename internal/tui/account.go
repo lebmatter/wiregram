@@ -41,8 +41,11 @@ type accountListModel struct {
 	online   string // the keys of the online accounts, to update widgets when it changes
 	quitting *confirmModal
 	menu     *contextMenu // a right click's menu of an account's actions
-	width    int
-	height   int
+	// pointerX and pointerY are where the mouse last moved, once pointing.
+	pointerX, pointerY int
+	pointing           bool
+	width              int
+	height             int
 }
 
 type accountsChanged struct{}
@@ -115,6 +118,10 @@ func (m accountListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if k, ok := wheelKey(msg); ok {
 			return m.Update(k)
 		}
+
+	case tea.MouseMotionMsg:
+		m.pointerX, m.pointerY, m.pointing = msg.X, msg.Y, true
+		return m, nil
 
 	case tea.MouseClickMsg:
 		if c := m.menu; c != nil {
@@ -352,10 +359,46 @@ func (m accountListModel) View() tea.View {
 	}
 	keys, notice := m.stripKeys()
 	content := body + "\n" + m.st.keyStrip(keys, notice, m.width)
+	if span, ok := m.hover(); ok {
+		content = m.st.hovered(content, span)
+	}
 	v := tea.NewView(content)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	return v
+}
+
+// hover is the key a click at the pointer would press, on the key strip or
+// the open modal's keys.
+func (m accountListModel) hover() (hoverSpan, bool) {
+	x, y := m.pointerX, m.pointerY
+	if !m.pointing {
+		return hoverSpan{}, false
+	}
+	if y == m.height-1 {
+		keys, notice := m.stripKeys()
+		label, a, b := stripKeySpan(keys, notice, m.width, x)
+		return hoverSpan{y, a, b}, clickable(label)
+	}
+	var keys []helpKey
+	var left, top, w, h int
+	switch {
+	case m.menu != nil:
+		left, top = m.menu.x, m.menu.y
+		w, h = m.menu.size()
+		keys = contextMenuKeys
+	case m.quitting != nil:
+		left, top, w, h = m.quitRect()
+		keys = m.quitting.stripKeys()
+	case m.widgets.modal != nil:
+		left, top, w, h = m.widgetModalRect()
+		keys = widgetModalKeys
+	}
+	if keys == nil || y != top+h-2 {
+		return hoverSpan{}, false
+	}
+	label, a, b := keySpan(keys, x-left-2, 2, w-4)
+	return hoverSpan{y, a + left + 2, b + left + 2}, clickable(label)
 }
 
 // frame is the screen above the footer, also the backdrop of the modals

@@ -45,6 +45,10 @@ Chat text wraps at 120 columns or the terminal width, whichever is smaller.
   <kbd>↑</kbd>/<kbd>↓</kbd> would, without moving focus.
 - A **click** on a chat, account, card, menu row or picker entry opens it, as
   <kbd>Enter</kbd> would.
+- **Hovering** underlines, in the accent, what a click at the pointer would act on: a
+  key, a sender's name or an `@name`, a reaction, the replies chip, an attachment's tag,
+  a game invite, or a button such as **upload+**. Rows of lists show their selection
+  instead.
 - A **click on a key** does what pressing it would: in the footer, in a modal's key line,
   under the selected Unread card, the thread pane's **esc close** and a reply's
   **(esc cancels)**.

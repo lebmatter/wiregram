@@ -110,6 +110,10 @@ type tuiModel struct {
 	// menu is a right click's menu of the actions on the row clicked.
 	menu  *contextMenu
 	aiSeq int
+	// pointerX and pointerY are where the mouse last moved, once pointing;
+	// what a click there would act on is underlined.
+	pointerX, pointerY int
+	pointing           bool
 }
 
 type tuiDialogsLoaded struct {
@@ -637,7 +641,9 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 		return m.handleWheel(msg)
 
 	case tea.MouseMotionMsg:
-		if mouse := msg.Mouse(); mouse.Button == tea.MouseLeft && m.chatOpen {
+		mouse := msg.Mouse()
+		m.pointerX, m.pointerY, m.pointing = mouse.X, mouse.Y, true
+		if mouse.Button == tea.MouseLeft && m.chatOpen {
 			m.chat = m.chat.dragTo(m.chatX(mouse.X), mouse.Y)
 		}
 		return m, nil
@@ -1193,11 +1199,26 @@ func (m tuiModel) handleClick(mouse tea.Mouse) (tuiModel, tea.Cmd) {
 // modalKeyAt is the key press of the key the open modal's strip draws at
 // column x and row y, so a click on it does what pressing it would.
 func (m tuiModel) modalKeyAt(x, y int) (tea.KeyPressMsg, bool) {
+	label, _, _, _ := m.modalKeySpan(x, y)
+	return labelKey(label)
+}
+
+// modalKeySpan is the label of the key the open modal's strip draws at
+// column x and row y, and its columns; open reports whether a modal is up
+// at all, so nothing under it takes the pointer.
+func (m tuiModel) modalKeySpan(x, y int) (label string, a, b int, open bool) {
 	var keys []helpKey
 	var left, top, w, h int
 	switch c, cx, cy, confirm := m.confirmShown(); {
-	case m.wiz != nil:
-		return tea.KeyPressMsg{}, false
+	case m.wiz != nil, m.welcome != nil, m.alert != nil, m.profile != nil:
+		return "", 0, 0, true
+	case m.composing():
+		left, top, w, h = composeRect(m.width, m.bodyHeight())
+		keys = composeKeys
+	case m.menu != nil:
+		left, top = m.menu.x, m.menu.y
+		w, h = m.menu.size()
+		keys = contextMenuKeys
 	case m.labels != nil:
 		left, top = m.labelsAt()
 		w, h = m.labels.size()
@@ -1226,12 +1247,53 @@ func (m tuiModel) modalKeyAt(x, y int) (tea.KeyPressMsg, bool) {
 		w, h = m.agentPane.picker.size()
 		keys = m.agentPane.picker.stripKeys()
 	default:
-		return tea.KeyPressMsg{}, false
+		return "", 0, 0, false
 	}
 	if y != top+h-2 { // the last row inside the bottom edge
-		return tea.KeyPressMsg{}, false
+		return "", 0, 0, true
 	}
-	return labelKey(keyAt(keys, x-left-2, 2, w-4))
+	label, a, b = keySpan(keys, x-left-2, 2, w-4)
+	return label, a + left + 2, b + left + 2, true
+}
+
+// hover is the cells a click at the pointer would act on: a key, or in the
+// chat a name, reaction, chip, attachment tag, invite or button. List rows
+// show their selection instead.
+func (m tuiModel) hover() (hoverSpan, bool) {
+	x, y := m.pointerX, m.pointerY
+	if !m.pointing || m.chatOpen && (m.chat.locked || m.chat.drag != nil && !m.chat.drag.done) {
+		return hoverSpan{}, false
+	}
+	if y >= m.bodyHeight() {
+		f := m.footerBar()
+		if f.line != "" {
+			return hoverSpan{}, false
+		}
+		badge := textfmt.DisplayWidth(f.badge)
+		label, a, b := footerKeySpan(f.keys, f.notice, m.width-badge, x-badge)
+		return hoverSpan{y, a + badge, b + badge}, clickable(label)
+	}
+	if label, a, b, open := m.modalKeySpan(x, y); open {
+		return hoverSpan{y, a, b}, clickable(label)
+	}
+	if left, width, _, ok := m.gameRect(); ok && x >= left && x < left+width {
+		return hoverSpan{}, false
+	}
+	if m.overList(x) || !m.paneOpen() {
+		return hoverSpan{}, false
+	}
+	px := m.chatX(x)
+	var a, b int
+	var ok bool
+	switch {
+	case m.mailOpen:
+		a, b, ok = m.mail.hoverSpan(px, y)
+	case m.unreadOpen:
+		a, b, ok = m.unread.hoverSpan(px, y)
+	case m.chatOpen && !m.agentOpen:
+		a, b, ok = m.chat.hoverSpan(px, y)
+	}
+	return hoverSpan{y, a + x - px, b + x - px}, ok
 }
 
 // handleWheel scrolls whichever list is under the pointer, as its up and
@@ -1743,11 +1805,15 @@ func (m tuiModel) footerBar() footerBar {
 }
 
 func (m tuiModel) View() tea.View {
-	v := tea.NewView(m.render())
+	screen := m.render()
+	if span, ok := m.hover(); ok {
+		screen = m.st.hovered(screen, span)
+	}
+	v := tea.NewView(screen)
 	v.AltScreen = true
-	// The mouse clicks and scrolls; this takes over native selection
+	// The mouse clicks, scrolls and hovers; this takes over native selection
 	// (Shift+drag in most terminals).
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	v.ReportFocus = true // terminals without focus events just never blur
 	return v
 }

@@ -92,20 +92,33 @@ func (s *styles) footer(keys []helpKey, notice string, width int) string {
 // footerKeyAt is the key press of the key footer(keys, notice, width) draws
 // at column x.
 func (s *styles) footerKeyAt(keys []helpKey, notice string, width, x int) (tea.KeyPressMsg, bool) {
+	label, _, _ := footerKeySpan(keys, notice, width, x)
+	return labelKey(label)
+}
+
+// footerKeySpan is the label of the key footer(keys, notice, width) draws at
+// column x, and its columns.
+func footerKeySpan(keys []helpKey, notice string, width, x int) (string, int, int) {
 	noticeWidth := textfmt.DisplayWidth(textfmt.Plain(notice))
 	if notice != "" && noticeWidth > width/2 {
-		return tea.KeyPressMsg{}, false
+		return "", 0, 0
 	}
 	if notice != "" {
 		width -= noticeWidth + 2
 	}
-	return labelKey(keyAt(keys, x, 2, width))
+	return keySpan(keys, x, 2, width)
 }
 
 // keyAt is the label of the "key desc" item drawn at column x of a line
 // width cells wide that sets them sep cells apart; items past the width are
 // not drawn.
 func keyAt(keys []helpKey, x, sep, width int) string {
+	label, _, _ := keySpan(keys, x, sep, width)
+	return label
+}
+
+// keySpan is keyAt's label with the columns [start, end) of its item.
+func keySpan(keys []helpKey, x, sep, width int) (label string, start, end int) {
 	at := 0
 	for _, k := range keys {
 		w := textfmt.DisplayWidth(k.key + " " + k.desc)
@@ -113,11 +126,35 @@ func keyAt(keys []helpKey, x, sep, width int) string {
 			break
 		}
 		if x >= at && x < at+w {
-			return k.key
+			return k.key, at, at + w
 		}
 		at += w + sep
 	}
-	return ""
+	return "", 0, 0
+}
+
+// clickable reports whether a click on a key label presses its key.
+func clickable(label string) bool {
+	_, ok := labelKey(label)
+	return ok
+}
+
+// hoverSpan is the cells under the pointer that a click acts on: row y,
+// columns [a, b).
+type hoverSpan struct{ y, a, b int }
+
+// hovered draws span's cells of screen underlined in the accent, the way a
+// link under the pointer shows it can be clicked.
+func (s *styles) hovered(screen string, span hoverSpan) string {
+	lines := strings.Split(screen, "\n")
+	if span.y < 0 || span.y >= len(lines) || span.a >= span.b {
+		return screen
+	}
+	line := lines[span.y]
+	lines[span.y] = cutCells(line, 0, span.a) +
+		s.accent.Underline(true).Render(ansi.Strip(cutCells(line, span.a, span.b))) + "\x1b[0m" +
+		cutCells(line, span.b, ansi.StringWidth(line))
+	return strings.Join(lines, "\n")
 }
 
 // labelKey is the key press a help label names. Labels such as ↑↓ or type
@@ -207,15 +244,23 @@ func (s *styles) keyStrip(keys []helpKey, notice string, width int) string {
 // stripKeyAt is the key press of the key keyStrip(keys, notice, width) draws
 // at column x.
 func (s *styles) stripKeyAt(keys []helpKey, notice string, width, x int) (tea.KeyPressMsg, bool) {
+	label, _, _ := stripKeySpan(keys, notice, width, x)
+	return labelKey(label)
+}
+
+// stripKeySpan is the label of the key keyStrip(keys, notice, width) draws at
+// column x, and its columns.
+func stripKeySpan(keys []helpKey, notice string, width, x int) (string, int, int) {
 	notice = textfmt.Plain(notice)
 	room := width - 1
 	if notice != "" {
 		if textfmt.DisplayWidth(notice) > width/2 {
-			return tea.KeyPressMsg{}, false
+			return "", 0, 0
 		}
 		room = width - textfmt.DisplayWidth(notice) - 3
 	}
-	return labelKey(keyAt(keys, x-1, 3, room))
+	label, a, b := keySpan(keys, x-1, 3, room)
+	return label, a + 1, b + 1 // past the strip's leading space
 }
 
 // header is the wordmark line on the screens outside an account.

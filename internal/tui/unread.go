@@ -234,19 +234,24 @@ func (m unreadModel) cardKeys(c unreadCard) []helpKey {
 // keyAt is the key press of the key the selected card lists at pane column x
 // and row y, so a click on it does what pressing it would.
 func (m unreadModel) keyAt(x, y int) (tea.KeyPressMsg, bool) {
+	if row, ok := m.keysRow(y); !ok || y != row {
+		return tea.KeyPressMsg{}, false
+	}
+	// Past the pane's and the card's edges and padding.
+	return labelKey(keyAt(m.cardKeys(m.cards[m.selected]), x-4, 3, m.cardInner()))
+}
+
+// keysRow is the pane row of the selected card's keys, when y is on that card.
+func (m unreadModel) keysRow(y int) (int, bool) {
 	i, ok := m.cardAt(y)
 	if !ok || i != m.selected {
-		return tea.KeyPressMsg{}, false
+		return 0, false
 	}
 	top := 1
 	for j := m.offset; j < i; j++ {
 		top += m.cardHeight(j)
 	}
-	if y != top+m.cardHeight(i)-2 { // the keys sit over the card's bottom edge
-		return tea.KeyPressMsg{}, false
-	}
-	// Past the pane's and the card's edges and padding.
-	return labelKey(keyAt(m.cardKeys(m.cards[i]), x-4, 3, m.cardInner()))
+	return top + m.cardHeight(i) - 2, true // over the card's bottom edge
 }
 
 // cardAt maps a click at pane row y to a card.

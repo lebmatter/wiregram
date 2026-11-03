@@ -95,6 +95,9 @@ type settingsModel struct {
 	notice       string
 	width        int
 	height       int
+	// pointerX and pointerY are where the mouse last moved, once pointing.
+	pointerX, pointerY int
+	pointing           bool
 }
 
 func newSettingsModel(ctx context.Context, mgr *account.AccountManager, active *account.Account, fromAccounts bool) settingsModel {
@@ -249,6 +252,9 @@ func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.handleKey(k.String())
 		}
+	case tea.MouseMotionMsg:
+		m.pointerX, m.pointerY, m.pointing = msg.X, msg.Y, true
+		return m, nil
 	case tea.MouseClickMsg:
 		return m.handleClick(msg.Mouse())
 	}
@@ -587,10 +593,36 @@ func (m settingsModel) View() tea.View {
 		box, _ := m.wiz.modal(m.width, m.bodyHeight())
 		body = m.st.overlay(body, box, m.width, m.bodyHeight())
 	}
-	v := tea.NewView(body + "\n" + m.footer())
+	screen := body + "\n" + m.footer()
+	if span, ok := m.hover(); ok {
+		screen = m.st.hovered(screen, span)
+	}
+	v := tea.NewView(screen)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	return v
+}
+
+// hover is the key a click at the pointer would press, in the footer or the
+// confirmation's keys.
+func (m settingsModel) hover() (hoverSpan, bool) {
+	x, y := m.pointerX, m.pointerY
+	switch {
+	case !m.pointing:
+		return hoverSpan{}, false
+	case y >= m.bodyHeight():
+		label, a, b := footerKeySpan(m.helpKeys(), m.footerNotice(), m.width, x)
+		return hoverSpan{y, a, b}, clickable(label)
+	case m.confirm != nil:
+		left, top := m.confirmPos()
+		w, h := m.confirm.size()
+		if y != top+h-2 {
+			return hoverSpan{}, false
+		}
+		label, a, b := keySpan(m.confirm.stripKeys(), x-left-2, 2, w-4)
+		return hoverSpan{y, a + left + 2, b + left + 2}, clickable(label)
+	}
+	return hoverSpan{}, false
 }
 
 // confirmPos is the top-left corner of the confirmation, centred on the screen.
