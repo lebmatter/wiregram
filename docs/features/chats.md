@@ -44,8 +44,7 @@ Each message is one block:
 - A 2-cell gutter, with `*` when the message was edited while you watched. The selected
   message has an accent bar there, its time in the accent and its block tinted.
 - `HH:MM` and the sender; your own messages are `you`. Channels drop the sender, and a
-  message soon after another from the same sender leaves the name out, its text lined up
-  under the text above.
+  message soon after another from the same sender leaves the name out.
 - The nick style, in **Settings → Chat…**, sets how the sender is drawn. `nick:` (the
   default) starts the text right after the name and wraps it under the time. `<nick>`
   pads every name to one column so all text lines up:
