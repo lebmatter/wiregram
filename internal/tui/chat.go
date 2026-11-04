@@ -1980,18 +1980,20 @@ func (m chatViewModel) messageLines(width, height int) []string {
 }
 
 // composer is the bordered input at the bottom of the chat, with the reply
-// bar above the text while replying.
+// bar above the text while replying, under a blank row that keeps it off the
+// last message.
 func (m chatViewModel) composer(width int, focused bool) []string {
 	border := m.st.border(focused)
 	if m.subMode == chatSubEdit {
-		return m.st.composerBox("Editing message", nil, "edit › ", m.editInput, width, colorYellow)
+		return append([]string{""}, m.st.composerBox("Editing message", nil, "edit › ",
+			m.editInput, width, colorYellow)...)
 	}
 	box := m.st.areaBox("message "+chatName(m.entry), m.replyBar(), m.input, width, border,
 		m.composerButtons())
 	if card := m.cardView(width); card != nil {
 		box = append(card, box...)
 	}
-	return box
+	return append([]string{""}, box...)
 }
 
 // cardMaxLines caps the text of the card over the composer; Edit shows it all.
@@ -2155,8 +2157,9 @@ func (m chatViewModel) cardAt(x, y int) (string, bool) {
 	inner, bodyHeight := m.width-4, m.height-2
 	composer := m.composer(inner, m.focused)
 	card := m.cardView(inner)
-	// Under the chat box's top edge; the buttons are the card's last inner row.
-	if y != 1+bodyHeight-len(composer)+len(card)-2 {
+	// Under the chat box's top edge and the composer's blank row; the buttons
+	// are the card's last inner row.
+	if y != 1+bodyHeight-len(composer)+len(card)-1 {
 		return "", false
 	}
 	col := x - 4 // the chat box's and the card's edges and padding

@@ -263,9 +263,10 @@ func (m chatViewModel) threadCloseAt(x, y int) bool {
 	return x >= end-len(" esc close ") && x < end
 }
 
+// threadComposer is the thread pane's input, under a blank row as in the chat.
 func (m chatViewModel) threadComposer(inner int, focused bool) []string {
-	return m.st.areaBox("reply in thread", nil, m.threadInput, inner, m.st.border(focused),
-		m.uploadButton())
+	return append([]string{""}, m.st.areaBox("reply in thread", nil, m.threadInput, inner,
+		m.st.border(focused), m.uploadButton())...)
 }
 
 // threadLines lays out the thread inner columns wide and returns, for each
