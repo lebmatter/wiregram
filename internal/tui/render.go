@@ -583,7 +583,8 @@ func (s *styles) messageHeader(msg backend.Message, entry backend.ChatEntry,
 	}
 	if !s.nickColumn {
 		if cont {
-			return stamp
+			// Line up with the text of the message it follows.
+			return stamp + strings.Repeat(" ", 1+textfmt.DisplayWidth(name+":"))
 		}
 		return stamp + " " + render(name+":")
 	}
