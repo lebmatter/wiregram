@@ -261,6 +261,8 @@ Keyboard shortcuts:
                       message's actions
     Ctrl+U            Upload a file, in a modal over the chat (or click
                       upload+ at the end of the input)
+    Ctrl+V            Paste: an image on the clipboard opens the upload
+                      modal at its caption (wl-paste or xclip); else text
     Ctrl+F            Search, in a modal over the chat: chats and people,
                       then this chat's messages (Enter or a click goes to one)
     @                 Mention a member (group chats, at the start of a word):
@@ -337,6 +339,7 @@ Keyboard shortcuts:
     Enter             Reply in thread; with an empty input, open the
                       selected message's actions
     Ctrl+U            Upload a file into the thread (or click its upload+)
+    Ctrl+V            Paste, an image into the thread as in the chat
     @                 Mention a member, as in the chat
     Esc               Close thread
 

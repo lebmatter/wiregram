@@ -222,6 +222,8 @@ func (m chatViewModel) handleThreadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 			return m.startUpload(true)
 		}
 		return m, nil
+	case "ctrl+v":
+		return m.pasteClipboard(true)
 	case "enter":
 		text := strings.TrimSpace(m.threadInput.Value())
 		if text == "" {

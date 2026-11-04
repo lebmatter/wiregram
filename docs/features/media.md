@@ -47,3 +47,9 @@ its input, opens the upload modal over it. Type a path, starting in the last fol
 the entries it matches are listed under it (<kbd>↑</kbd>/<kbd>↓</kbd> choose,
 <kbd>Tab</kbd> completes, <kbd>Enter</kbd> or a click opens a folder or picks a file).
 Add an optional caption and press <kbd>Enter</kbd>.
+
+<kbd>Ctrl+V</kbd> in either input pastes an image copied to the clipboard: it is saved
+to the media cache and the upload modal opens at its caption, where <kbd>Enter</kbd>
+sends it and <kbd>Esc</kbd> drops it. Terminals only paste text, so wiregram reads the
+image with `wl-paste` (Wayland) or `xclip` (X11); without them, or over SSH, and when
+the clipboard holds no image, <kbd>Ctrl+V</kbd> pastes text as before.

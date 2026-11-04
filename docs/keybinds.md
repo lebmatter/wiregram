@@ -86,6 +86,7 @@ it; on a provider it opens it, edits one of its rows in place
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Select message (<kbd>↑</kbd> at the top loads older ones) |
 | <kbd>Enter</kbd> | Send text; with an empty input, open the selected message's actions |
 | <kbd>Ctrl+U</kbd> | Upload a file, in a modal over the chat (or click <kbd>upload+</kbd> at the end of the input) |
+| <kbd>Ctrl+V</kbd> | Paste: an image on the clipboard opens the upload modal at its caption, anything else pastes as text |
 | <kbd>Ctrl+F</kbd> | Search, in a modal over the chat: chats and people, then this chat's messages (<kbd>Enter</kbd> or a click goes to one) |
 | <kbd>@</kbd> | Mention a member (group chats, at the start of a word) |
 | <kbd>Alt+T</kbd> | Open the selected message's thread beside the chat |
@@ -161,6 +162,7 @@ beside a message's text there (empty, to start a thread, when it has no replies)
 |-----|--------|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Move through the chat's messages |
 | <kbd>Ctrl+U</kbd> | Upload a file into the thread (or click its <kbd>upload+</kbd>) |
+| <kbd>Ctrl+V</kbd> | Paste, an image into the thread as in the chat |
 | <kbd>Enter</kbd> | Reply in thread; with an empty input, open the selected message's actions |
 | <kbd>@</kbd> | Mention a member, as in the chat |
 | <kbd>Esc</kbd> | Close thread |

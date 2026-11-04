@@ -138,7 +138,8 @@ wraps long text and grows with it up to eight rows, then scrolls. <kbd>Esc</kbd>
 
 - **Upload** with <kbd>Ctrl+U</kbd>: browse folders, or press <kbd>/</kbd> or
   <kbd>~</kbd> to type a path (<kbd>Tab</kbd> completes). Add an optional caption and
-  press <kbd>Enter</kbd>.
+  press <kbd>Enter</kbd>. <kbd>Ctrl+V</kbd> with an image copied opens the same modal at
+  its caption.
 - **Mention** with <kbd>@</kbd> at the start of a word in a group chat. A picker lists
   members; the pick becomes a real mention on each network: `@username` on Mattermost
   and Telegram, the Matrix ID on Matrix, `@number` on WhatsApp. Email has no mentions.

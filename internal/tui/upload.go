@@ -3,10 +3,13 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbletea/v2"
 
@@ -27,6 +30,7 @@ type uploadPanel struct {
 	step    uploadStep
 	prev    chatSubMode     // the chat or its thread, which Esc returns to
 	thread  bool            // the file is a reply in the open thread
+	pasted  bool            // the file came from the clipboard: no path to go back to
 	input   textinput.Model // the typed path, then the caption
 	path    string
 	size    int64
@@ -129,6 +133,10 @@ func (m chatViewModel) handleUploadKey(msg tea.KeyPressMsg) (chatViewModel, tea.
 
 	switch msg.String() {
 	case "esc", "ctrl+c":
+		if u.pasted {
+			m.subMode = u.prev
+			return m, nil
+		}
 		return m.typeUploadPath(u.matchPrefix)
 	case "enter":
 		caption, path, size := u.input.Value(), u.path, u.size
@@ -199,11 +207,117 @@ func (m chatViewModel) pickUpload(value string) (chatViewModel, tea.Cmd) {
 	// Esc from the caption goes back to the folder as it was typed.
 	typed := u.input.Value()
 	u.matchPrefix = typed[:strings.LastIndex(typed, string(filepath.Separator))+1]
+	return m, u.askCaption()
+}
+
+// askCaption moves the modal on to the caption of the chosen file.
+func (u *uploadPanel) askCaption() tea.Cmd {
 	u.step = uploadCaption
 	u.input = textinput.New()
 	u.input.Prompt = ""
 	u.input.Placeholder = "Add a caption (optional)"
-	return m, u.input.Focus()
+	return u.input.Focus()
+}
+
+// clipboardImage is an image pasted with Ctrl+V, saved to the media cache.
+type clipboardImage struct {
+	chatTag
+	path   string
+	thread bool
+	err    error
+}
+
+// clipboardImageTypes are the image types taken from the clipboard, best first.
+var clipboardImageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+// pasteClipboard is Ctrl+V in a composer: an image on the clipboard opens the
+// upload modal at its caption, anything else is pasted as text. Terminals
+// only ever paste text, so the image comes from the desktop's clipboard tool.
+func (m chatViewModel) pasteClipboard(thread bool) (chatViewModel, tea.Cmd) {
+	var list, read []string
+	switch {
+	case !m.caps.Upload || os.Getenv("SSH_TTY") != "":
+	case os.Getenv("WAYLAND_DISPLAY") != "":
+		list, read = []string{"wl-paste", "--list-types"}, []string{"wl-paste", "--type"}
+	case os.Getenv("DISPLAY") != "":
+		list = []string{"xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"}
+		read = []string{"xclip", "-selection", "clipboard", "-o", "-t"}
+	}
+	if list == nil {
+		return m, textarea.Paste
+	}
+	if _, err := exec.LookPath(list[0]); err != nil {
+		return m, textarea.Paste
+	}
+	// wl-paste on GNOME takes the focus for a moment, as wl-copy does.
+	m.copiedAt = time.Now()
+	tag := chatTag{m.entry.ID}
+	return m, func() tea.Msg {
+		out, err := exec.Command(list[0], list[1:]...).Output()
+		if err != nil {
+			return textarea.Paste()
+		}
+		offered := strings.Fields(string(out))
+		for _, mime := range clipboardImageTypes {
+			if slices.Contains(offered, mime) {
+				path, err := saveClipboard(append(read, mime), mime)
+				return clipboardImage{tag, path, thread, err}
+			}
+		}
+		return textarea.Paste()
+	}
+}
+
+// saveClipboard writes the clipboard's image, read with the command read,
+// to a file of its own in the media cache, pruned with the rest.
+func saveClipboard(read []string, mime string) (string, error) {
+	root, err := mediaCacheRoot()
+	if err != nil {
+		return "", err
+	}
+	if err := ensureMediaCache(root); err != nil {
+		return "", err
+	}
+	data, err := exec.Command(read[0], read[1:]...).Output()
+	if err != nil {
+		return "", fmt.Errorf("read the clipboard with %s: %w", read[0], err)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("the clipboard's image is empty")
+	}
+	name := "paste-" + time.Now().Format("2006-01-02-150405") + "." +
+		strings.TrimPrefix(mime, "image/")
+	path := filepath.Join(root, name)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", fmt.Errorf("save the pasted image: %w", err)
+	}
+	return path, nil
+}
+
+// uploadPasted opens the upload modal at the caption of a pasted image,
+// provided the composer it was pasted into is still on screen.
+func (m chatViewModel) uploadPasted(msg clipboardImage) (chatViewModel, tea.Cmd) {
+	if msg.err != nil {
+		m.notice = textfmt.CleanError(msg.err)
+		return m, nil
+	}
+	want := chatSubNone
+	if msg.thread {
+		want = chatSubThread
+	}
+	if m.subMode != want {
+		return m, nil
+	}
+	info, err := os.Stat(msg.path)
+	if err != nil {
+		m.notice = textfmt.CleanError(err)
+		return m, nil
+	}
+	kind, mime := backend.ClassifyUpload(msg.path)
+	m.upload = uploadPanel{prev: m.subMode, thread: msg.thread, lastDir: m.upload.lastDir,
+		pasted: true, path: msg.path, size: info.Size(), kind: uploadKindLabel(kind), mime: mime}
+	m.subMode = chatSubUpload
+	return m, m.upload.askCaption()
 }
 
 // uploadView is the upload modal: the typed path over the entries it
@@ -269,6 +383,9 @@ func (m chatViewModel) uploadClick(y int) (chatViewModel, tea.Cmd) {
 
 func (m chatViewModel) uploadHelp() []helpKey {
 	if m.upload.step == uploadCaption {
+		if m.upload.pasted {
+			return []helpKey{{"enter", "send"}, {"esc", "cancel"}}
+		}
 		return []helpKey{{"enter", "send"}, {"esc", "back"}}
 	}
 	if len(m.upload.matches) == 0 {

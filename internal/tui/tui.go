@@ -504,7 +504,7 @@ func (m tuiModel) update(msg tea.Msg) (tuiModel, tea.Cmd) {
 	case tea.BlurMsg:
 		// Leaving the terminal's tab or window locks the chat at once, unless
 		// focus went to a viewer for an attachment the user just clicked or
-		// to the clipboard tool copying a selection.
+		// to the clipboard tool copying a selection or reading a paste.
 		if m.chatOpen && m.chat.opening == nil && time.Since(m.chat.openedAt) > 5*time.Second &&
 			time.Since(m.chat.copiedAt) > 3*time.Second {
 			m.chat.locked = true

@@ -92,8 +92,8 @@ type chatViewModel struct {
 	// openedAt is when an attachment last went to the desktop's viewer, whose
 	// window takes focus; the root skips the blur lock just after it.
 	openedAt time.Time
-	// copiedAt is when a selection was last copied: wl-copy on GNOME takes
-	// the focus for a moment to reach the clipboard.
+	// copiedAt is when a selection was last copied or the clipboard read:
+	// wl-copy and wl-paste on GNOME take the focus for a moment to reach it.
 	copiedAt time.Time
 	spin     spinner.Model
 
@@ -711,6 +711,9 @@ func (m chatViewModel) update(msg tea.Msg) (chatViewModel, tea.Cmd) {
 		m.notice = textfmt.CleanError(msg.err)
 		return m, nil
 
+	case clipboardImage:
+		return m.uploadPasted(msg)
+
 	case mediaProgressTick:
 		if m.opening == nil {
 			return m, nil
@@ -1060,6 +1063,8 @@ func (m chatViewModel) handleKey(msg tea.KeyPressMsg) (chatViewModel, tea.Cmd) {
 			return m, nil
 		}
 		return m.startUpload(false)
+	case "ctrl+v":
+		return m.pasteClipboard(false)
 	case "alt+d", "alt+D":
 		if !m.caps.DeleteChat || !m.entry.IsDM {
 			return m, nil
