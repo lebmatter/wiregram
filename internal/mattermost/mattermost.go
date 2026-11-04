@@ -1537,6 +1537,11 @@ func (mb *MmBackend) CanMention(ch backend.ChatEntry) bool {
 
 func (mb *MmBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (backend.UserSearchBase, error) {
 	found, err := mb.MentionSearch(ctx, ch, "")
+	found = append([]backend.UserCandidate{
+		backend.ChatWide("all", "everyone in the channel"),
+		backend.ChatWide("channel", "everyone in the channel"),
+		backend.ChatWide("here", "everyone online in the channel"),
+	}, found...)
 	return backend.UserSearchBase{Heading: "Channel members", Base: found, Local: found}, err
 }
 

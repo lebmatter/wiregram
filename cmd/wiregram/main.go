@@ -268,6 +268,8 @@ Keyboard shortcuts:
     @                 Mention a member (group chats, at the start of a word):
                       channel members first on Mattermost; Telegram members
                       with a username; Matrix room members; WhatsApp group
+                      members. Everyone at once: @all, @channel or @here on
+                      Mattermost, @room on Matrix, @all on WhatsApp
     Alt+T             Open the selected message's thread beside the chat
     Alt+G             Challenge the chat to a game (DMs and groups; or click
                       game+ at the end of the input). Needs cloudflared

@@ -1392,6 +1392,7 @@ func (wa *WaBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (bac
 	}
 	wa.members[jid] = members
 	wa.mu.Unlock()
+	out = append([]backend.UserCandidate{backend.ChatWide("all", "everyone in the group")}, out...)
 	return backend.UserSearchBase{Heading: "Group members", Base: out, Local: out}, nil
 }
 
@@ -1399,16 +1400,20 @@ func (wa *WaBackend) MentionSearch(ctx context.Context, ch backend.ChatEntry, qu
 	return nil, nil
 }
 
-// mentionedMembers returns the participants of group jid written as @number in text.
+// mentionedMembers returns the participants of group jid written as @number in text,
+// or every participant for @all, which WhatsApp has no other way to send.
 func (wa *WaBackend) mentionedMembers(jid types.JID, text string) []string {
 	if jid.Server != types.GroupServer || !strings.Contains(text, "@") {
 		return nil
 	}
+	all := slices.ContainsFunc(strings.Fields(text), func(w string) bool {
+		return strings.TrimRight(w, ".,:;!?") == "@all"
+	})
 	wa.mu.Lock()
 	defer wa.mu.Unlock()
 	var out []string
 	for _, member := range wa.members[jid] {
-		if containsToken(text, "@"+member.User) {
+		if all && member.User != wa.Jid.User || containsToken(text, "@"+member.User) {
 			out = append(out, member.String())
 		}
 	}

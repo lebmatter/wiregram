@@ -102,6 +102,13 @@ type UserCandidate struct {
 	Raw     any
 }
 
+// ChatWide is a mention picker row for a word that notifies the whole chat,
+// such as Mattermost's @channel.
+func ChatWide(word, detail string) UserCandidate {
+	return UserCandidate{Key: "@" + word, Label: word + "  " + detail, Match: word,
+		Mention: "@" + word + " "}
+}
+
 // CandidateKind is what a search result opens: a person, a channel or a group.
 type CandidateKind int
 

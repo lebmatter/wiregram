@@ -1348,8 +1348,18 @@ func (mx *MxBackend) Send(ctx context.Context, ch backend.ChatEntry, text string
 		"msgtype": "m.text",
 		"body":    text,
 	}
+	// Servers that read m.mentions ignore an @room in the body without it.
+	mentions := map[string]any{}
 	if ids := mx.mentionedMembers(ch.ID.Id, text); len(ids) > 0 {
-		content["m.mentions"] = map[string]any{"user_ids": ids}
+		mentions["user_ids"] = ids
+	}
+	if slices.ContainsFunc(strings.Fields(text), func(w string) bool {
+		return strings.TrimRight(w, ".,:;!?") == "@room"
+	}) {
+		mentions["room"] = true
+	}
+	if len(mentions) > 0 {
+		content["m.mentions"] = mentions
 	}
 	if replyTo != "" {
 		content["m.relates_to"] = map[string]any{
@@ -2001,6 +2011,10 @@ func (mx *MxBackend) MentionBase(ctx context.Context, ch backend.ChatEntry) (bac
 	}
 	mx.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].Match < out[j].Match })
+	if mx.canNotifyRoom(ch.ID.Id, mx.UserID) {
+		out = append([]backend.UserCandidate{backend.ChatWide("room", "everyone in the room")},
+			out...)
+	}
 	return backend.UserSearchBase{Heading: "Room members", Base: out, Local: out}, nil
 }
 

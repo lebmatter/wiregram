@@ -141,7 +141,10 @@ wraps long text and grows with it up to eight rows, then scrolls. <kbd>Esc</kbd>
   its caption.
 - **Mention** with <kbd>@</kbd> at the start of a word in a group chat. A picker lists
   members; the pick becomes a real mention on each network: `@username` on Mattermost
-  and Telegram, the Matrix ID on Matrix, `@number` on WhatsApp. Email has no mentions.
+  and Telegram, the Matrix ID on Matrix, `@number` on WhatsApp. Above the members come
+  the network's words for everyone: `@all`, `@channel` and `@here` (those online) on
+  Mattermost, `@room` on Matrix when your power level allows it, and `@all` on WhatsApp,
+  sent as a mention of every member. Telegram has none. Email has no mentions.
 
 ## Forwarding
 
